@@ -66,8 +66,13 @@ func main() {
 				r.Get("/users/{id}", userHandler.GetUser())
 			})
 
-			// Start server
-			server.Run(cfg.Server.Host, cfg.Server.Port, r)
+			// Start server with graceful shutdown
+			server.Run(
+				cfg.Server.Host,
+				cfg.Server.Port,
+				r,
+				server.WithShutdownFunc(server.NewPoolShutdownFunc(pool)),
+			)
 			return nil
 		},
 	}
