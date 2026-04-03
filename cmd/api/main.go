@@ -64,6 +64,8 @@ func main() {
 			r.Route("/api/v1", func(r chi.Router) {
 				r.Post("/users", userHandler.CreateUser())
 				r.Get("/users/{id}", userHandler.GetUser())
+				r.Put("/users/{id}", userHandler.UpdateUser())
+				r.Delete("/users/{id}", userHandler.DeleteUser())
 			})
 
 			// Start server with graceful shutdown

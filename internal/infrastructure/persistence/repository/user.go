@@ -22,15 +22,22 @@ func NewUserRepository(db bun.IDB) user.Repository {
 
 // Create persists a new user
 func (r *userRepository) Create(ctx context.Context, u *user.User) error {
-	_, err := r.db.NewInsert().Model(u).Exec(ctx)
+	dbModel := toDBModel(u)
+	_, err := r.db.NewInsert().Model(dbModel).Exec(ctx)
+	if err == nil {
+		// Update domain entity with generated ID and timestamps
+		u.ID = dbModel.ID
+		u.CreatedAt = dbModel.CreatedAt
+		u.UpdatedAt = dbModel.UpdatedAt
+	}
 	return err
 }
 
 // GetByID retrieves a user by ID
 func (r *userRepository) GetByID(ctx context.Context, id int64) (*user.User, error) {
-	var u user.User
+	var dbModel userDBModel
 	err := r.db.NewSelect().
-		Model(&u).
+		Model(&dbModel).
 		Where("id = ?", id).
 		Scan(ctx)
 
@@ -40,14 +47,14 @@ func (r *userRepository) GetByID(ctx context.Context, id int64) (*user.User, err
 		}
 		return nil, err
 	}
-	return &u, nil
+	return toDomainEntity(&dbModel), nil
 }
 
 // GetByEmail retrieves a user by email
 func (r *userRepository) GetByEmail(ctx context.Context, email string) (*user.User, error) {
-	var u user.User
+	var dbModel userDBModel
 	err := r.db.NewSelect().
-		Model(&u).
+		Model(&dbModel).
 		Where("email = ?", email).
 		Scan(ctx)
 
@@ -57,17 +64,49 @@ func (r *userRepository) GetByEmail(ctx context.Context, email string) (*user.Us
 		}
 		return nil, err
 	}
-	return &u, nil
+	return toDomainEntity(&dbModel), nil
 }
 
 // Update updates an existing user
 func (r *userRepository) Update(ctx context.Context, u *user.User) error {
-	_, err := r.db.NewUpdate().Model(u).WherePK().Exec(ctx)
+	dbModel := toDBModel(u)
+	_, err := r.db.NewUpdate().Model(dbModel).WherePK().Exec(ctx)
+	if err == nil {
+		u.UpdatedAt = dbModel.UpdatedAt
+	}
 	return err
 }
 
 // Delete removes a user by ID
 func (r *userRepository) Delete(ctx context.Context, id int64) error {
-	_, err := r.db.NewDelete().Model((*user.User)(nil)).Where("id = ?", id).Exec(ctx)
+	_, err := r.db.NewDelete().Model((*userDBModel)(nil)).Where("id = ?", id).Exec(ctx)
 	return err
+}
+
+// toDomainEntity converts database model to domain entity
+func toDomainEntity(dbModel *userDBModel) *user.User {
+	if dbModel == nil {
+		return nil
+	}
+	return &user.User{
+		ID:        dbModel.ID,
+		Name:      dbModel.Name,
+		Email:     dbModel.Email,
+		CreatedAt: dbModel.CreatedAt,
+		UpdatedAt: dbModel.UpdatedAt,
+	}
+}
+
+// toDBModel converts domain entity to database model
+func toDBModel(u *user.User) *userDBModel {
+	if u == nil {
+		return nil
+	}
+	return &userDBModel{
+		ID:        u.ID,
+		Name:      u.Name,
+		Email:     u.Email,
+		CreatedAt: u.CreatedAt,
+		UpdatedAt: u.UpdatedAt,
+	}
 }

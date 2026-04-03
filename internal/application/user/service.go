@@ -17,11 +17,8 @@ func NewService(repo user.Repository) *Service {
 }
 
 // CreateUser creates a new user with the given name and email
-func (s *Service) CreateUser(ctx context.Context, name, email string) (*user.User, error) {
-	u := &user.User{
-		Name:  name,
-		Email: email,
-	}
+func (s *Service) CreateUser(ctx context.Context, req *user.CreateUserRequest) (*user.UserResponse, error) {
+	u := req.ToDomain()
 
 	if err := u.Validate(); err != nil {
 		return nil, err
@@ -31,32 +28,51 @@ func (s *Service) CreateUser(ctx context.Context, name, email string) (*user.Use
 		return nil, err
 	}
 
-	return u, nil
+	return user.ToUserResponse(u), nil
 }
 
 // GetUserByID retrieves a user by their ID
-func (s *Service) GetUserByID(ctx context.Context, id int64) (*user.User, error) {
+func (s *Service) GetUserByID(ctx context.Context, id int64) (*user.UserResponse, error) {
 	if id <= 0 {
-		return nil, user.ErrInvalidName
+		return nil, user.ErrUserNotFound
 	}
 
-	return s.repo.GetByID(ctx, id)
-}
-
-// GetUserByEmail retrieves a user by their email
-func (s *Service) GetUserByEmail(ctx context.Context, email string) (*user.User, error) {
-	return s.repo.GetByEmail(ctx, email)
-}
-
-// UpdateUser updates an existing user
-func (s *Service) UpdateUser(ctx context.Context, id int64, name, email string) (*user.User, error) {
 	u, err := s.repo.GetByID(ctx, id)
 	if err != nil {
 		return nil, err
 	}
+	if u == nil {
+		return nil, user.ErrUserNotFound
+	}
 
-	u.Name = name
-	u.Email = email
+	return user.ToUserResponse(u), nil
+}
+
+// GetUserByEmail retrieves a user by their email
+func (s *Service) GetUserByEmail(ctx context.Context, email string) (*user.UserResponse, error) {
+	u, err := s.repo.GetByEmail(ctx, email)
+	if err != nil {
+		return nil, err
+	}
+	if u == nil {
+		return nil, user.ErrUserNotFound
+	}
+
+	return user.ToUserResponse(u), nil
+}
+
+// UpdateUser updates an existing user
+func (s *Service) UpdateUser(ctx context.Context, id int64, req *user.UpdateUserRequest) (*user.UserResponse, error) {
+	u, err := s.repo.GetByID(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if u == nil {
+		return nil, user.ErrUserNotFound
+	}
+
+	u.Name = req.Name
+	u.Email = req.Email
 
 	if err := u.Validate(); err != nil {
 		return nil, err
@@ -66,10 +82,18 @@ func (s *Service) UpdateUser(ctx context.Context, id int64, name, email string) 
 		return nil, err
 	}
 
-	return u, nil
+	return user.ToUserResponse(u), nil
 }
 
 // DeleteUser deletes a user by their ID
 func (s *Service) DeleteUser(ctx context.Context, id int64) error {
+	u, err := s.repo.GetByID(ctx, id)
+	if err != nil {
+		return err
+	}
+	if u == nil {
+		return user.ErrUserNotFound
+	}
+
 	return s.repo.Delete(ctx, id)
 }

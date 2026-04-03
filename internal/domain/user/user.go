@@ -2,33 +2,48 @@ package user
 
 import (
 	"errors"
+	"strings"
 	"time"
-
-	"github.com/uptrace/bun"
 )
 
 var (
 	ErrInvalidName  = errors.New("invalid user name")
 	ErrInvalidEmail = errors.New("invalid email")
+	ErrUserNotFound = errors.New("user not found")
 )
 
 // User is the domain entity representing a user in the system
+// This is a pure domain entity without infrastructure concerns
 type User struct {
-	bun.BaseModel `bun:"table:users,alias:u"`
-	ID            int64     `bun:"id,pk,autoincrement"`
-	Name          string    `bun:"name,notnull"`
-	Email         string    `bun:"email,notnull,unique"`
-	CreatedAt     time.Time `bun:"created_at,notnull,default:now()"`
-	UpdatedAt     time.Time `bun:"updated_at,notnull,default:now()"`
+	ID        int64
+	Name      string
+	Email     string
+	CreatedAt time.Time
+	UpdatedAt time.Time
 }
 
-// Validate validates the user entity business rules
+// Validate validates the user entity against business rules
 func (u *User) Validate() error {
-	if u.Name == "" {
+	if strings.TrimSpace(u.Name) == "" {
 		return ErrInvalidName
 	}
-	if u.Email == "" {
+	if strings.TrimSpace(u.Email) == "" {
+		return ErrInvalidEmail
+	}
+	if !isValidEmail(u.Email) {
 		return ErrInvalidEmail
 	}
 	return nil
+}
+
+// isValidEmail performs basic email format validation
+func isValidEmail(email string) bool {
+	if len(email) < 5 {
+		return false
+	}
+	parts := strings.Split(email, "@")
+	if len(parts) != 2 {
+		return false
+	}
+	return parts[0] != "" && strings.Contains(parts[1], ".") && parts[1] != ""
 }
