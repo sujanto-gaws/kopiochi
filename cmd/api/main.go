@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/go-chi/chi/v5"
 	"github.com/rs/zerolog/log"
 	"github.com/spf13/cobra"
 
@@ -12,6 +11,7 @@ import (
 	"github.com/sujanto-gaws/kopiochi/internal/config"
 	"github.com/sujanto-gaws/kopiochi/internal/db"
 	"github.com/sujanto-gaws/kopiochi/internal/infrastructure/http/handlers"
+	"github.com/sujanto-gaws/kopiochi/internal/infrastructure/http/routes"
 	"github.com/sujanto-gaws/kopiochi/internal/infrastructure/persistence/repository"
 	"github.com/sujanto-gaws/kopiochi/internal/logger"
 	"github.com/sujanto-gaws/kopiochi/internal/server"
@@ -60,13 +60,7 @@ func main() {
 
 			// Setup router
 			r := server.NewRouter()
-			r.Get("/health", handlers.HealthCheck())
-			r.Route("/api/v1", func(r chi.Router) {
-				r.Post("/users", userHandler.CreateUser())
-				r.Get("/users/{id}", userHandler.GetUser())
-				r.Put("/users/{id}", userHandler.UpdateUser())
-				r.Delete("/users/{id}", userHandler.DeleteUser())
-			})
+			routes.Setup(r, userHandler)
 
 			// Start server with graceful shutdown
 			server.Run(
