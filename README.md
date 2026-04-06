@@ -1,6 +1,10 @@
 # Kopiochi
 
-A **Domain-Driven Design (DDD)** Go web API built with modern, production-ready technologies.
+> **🔥 Production-Ready DDD Go API Boilerplate**
+
+A **Domain-Driven Design (DDD)** Go web API boilerplate built with modern, production-ready technologies. Start your next Go project with clean architecture, plugin system, and code generation in seconds.
+
+**[📚 View Boilerplate Guide](BOILERPLATE.md)** | **[🔌 Plugin Documentation](PLUGIN_GUIDE.md)**
 
 ## 🏗️ Architecture
 
@@ -45,6 +49,25 @@ internal/
 
 ## 🛠️ Getting Started
 
+### Quick Start (Recommended)
+
+```bash
+# 1. Use as GitHub template or clone
+git clone https://github.com/sujanto-gaws/kopiochi.git myapi
+cd myapi
+rm -rf .git
+
+# 2. Initialize with your project name
+make init-project PROJECT=myapi AUTHOR="Your Name"
+# Or on Windows:
+# .\scripts\init.ps1 -ProjectName myapi -Author "Your Name"
+
+# 3. Start developing
+make run
+```
+
+**📖 See full setup instructions: [BOILERPLATE.md](BOILERPLATE.md)**
+
 ### Prerequisites
 
 - Go 1.25+
@@ -58,6 +81,9 @@ internal/
 git clone https://github.com/sujanto-gaws/kopiochi.git
 cd kopiochi
 
+# Initialize as your project
+make init-project PROJECT=myapi AUTHOR="Your Name"
+
 # Copy environment example
 cp .env.example .env
 
@@ -69,11 +95,46 @@ cp .env.example .env
 
 ```bash
 # Start the server
+make run
+# or
 go run ./cmd/api serve
 
 # Or with custom config
 go run ./cmd/api serve --config config/default.yaml
 ```
+
+## 💻 Development Workflow
+
+### Generate New Domain (CRUD)
+
+```bash
+# Generate Product domain with all CRUD operations
+make generate DOMAIN=Product FIELDS="name:string,description:string,price:float64,stock:int"
+
+# This creates:
+# ✅ Domain entity with validation
+# ✅ Repository interface
+# ✅ DTOs (Request/Response)
+# ✅ Application service
+# ✅ Database model & repository
+# ✅ HTTP handlers
+# ✅ Routes (manual registration needed)
+```
+
+### Common Commands
+
+```bash
+make help             # Show all commands
+make run              # Start server
+make build            # Build binary
+make test             # Run tests
+make test-coverage    # Run tests with coverage
+make lint             # Run linter
+make fmt              # Format code
+make docker-build     # Build Docker image
+```
+
+See [BOILERPLATE.md](BOILERPLATE.md) for complete workflow documentation.
 
 ### Running with Docker
 
