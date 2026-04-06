@@ -15,6 +15,7 @@ import (
 	"github.com/rs/zerolog/log"
 
 	zlog "github.com/sujanto-gaws/kopiochi/internal/middleware"
+	"github.com/sujanto-gaws/kopiochi/internal/plugin"
 )
 
 // ShutdownFunc is a function that performs cleanup during shutdown
@@ -25,6 +26,7 @@ type Server struct {
 	httpServer      *http.Server
 	shutdownFuncs   []ShutdownFunc
 	shutdownTimeout time.Duration
+	pluginRegistry  *plugin.Registry
 }
 
 // ServerOption is a function that configures the Server
@@ -41,6 +43,13 @@ func WithShutdownTimeout(timeout time.Duration) ServerOption {
 func WithShutdownFunc(fn ShutdownFunc) ServerOption {
 	return func(s *Server) {
 		s.shutdownFuncs = append(s.shutdownFuncs, fn)
+	}
+}
+
+// WithPluginRegistry sets the plugin registry for the server
+func WithPluginRegistry(registry *plugin.Registry) ServerOption {
+	return func(s *Server) {
+		s.pluginRegistry = registry
 	}
 }
 
@@ -117,10 +126,19 @@ func (s *Server) Run() {
 		log.Info().Msg("http server stopped")
 	}
 
-	// Execute cleanup functions (database pool, etc.)
+	// Execute cleanup functions (database pool, plugins, etc.)
 	for i, fn := range s.shutdownFuncs {
 		if err := fn(); err != nil {
 			log.Error().Err(err).Int("index", i).Msg("shutdown function error")
+		}
+	}
+
+	// Close plugin registry
+	if s.pluginRegistry != nil {
+		if err := s.pluginRegistry.Close(); err != nil {
+			log.Error().Err(err).Msg("plugin registry shutdown error")
+		} else {
+			log.Info().Msg("plugin registry closed")
 		}
 	}
 

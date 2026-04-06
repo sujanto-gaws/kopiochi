@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"net/http"
 	"os"
 
 	"github.com/rs/zerolog/log"
@@ -14,6 +15,7 @@ import (
 	"github.com/sujanto-gaws/kopiochi/internal/infrastructure/http/routes"
 	"github.com/sujanto-gaws/kopiochi/internal/infrastructure/persistence/repository"
 	"github.com/sujanto-gaws/kopiochi/internal/logger"
+	"github.com/sujanto-gaws/kopiochi/internal/plugin"
 	"github.com/sujanto-gaws/kopiochi/internal/server"
 )
 
@@ -37,6 +39,14 @@ func main() {
 			log.Logger = logger.Init(cfg.Log.Level, cfg.Log.Format)
 			log.Info().Msg("application starting")
 
+			// Initialize plugins
+			pluginRegistry, err := plugin.InitializeFromConfig(&cfg.Plugins)
+			if err != nil {
+				return fmt.Errorf("initialize plugins: %w", err)
+			}
+			defer pluginRegistry.Close()
+			log.Info().Strs("plugins", pluginRegistry.ListInitialized()).Msg("plugins initialized")
+
 			// Initialize database
 			dsn := db.BuildDSN(cfg.DB.Host, cfg.DB.Port, cfg.DB.User, cfg.DB.Password, cfg.DB.Name, cfg.DB.SSLMode)
 			bunDB, pool, err := db.NewDB(db.Config{
@@ -58,8 +68,17 @@ func main() {
 			// Infrastructure: HTTP Handler
 			userHandler := handlers.NewUserHandler(userSvc)
 
-			// Setup router
+			// Setup router with plugin middleware chain
 			r := server.NewRouter()
+
+			// Apply plugin middleware chain to router
+			middlewareChain := plugin.NewMiddlewareChainFromRegistry(pluginRegistry, plugin.GetMiddlewareNames(&cfg.Plugins))
+			if middlewareChain.Len() > 0 {
+				r.Use(func(next http.Handler) http.Handler {
+					return middlewareChain.Build(next)
+				})
+			}
+
 			routes.Setup(r, userHandler)
 
 			// Start server with graceful shutdown
@@ -68,6 +87,7 @@ func main() {
 				cfg.Server.Port,
 				r,
 				server.WithShutdownFunc(server.NewPoolShutdownFunc(pool)),
+				server.WithPluginRegistry(pluginRegistry),
 			)
 			return nil
 		},

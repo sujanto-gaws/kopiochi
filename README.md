@@ -36,6 +36,7 @@ internal/
 
 - ✅ **Domain-Driven Design** - Clean architecture with separation of concerns
 - ✅ **Dependency Injection** - Loose coupling between layers
+- ✅ **Plugin System** - Extensible middleware, auth, and cache plugins
 - ✅ **PostgreSQL** - Production-ready database with connection pooling
 - ✅ **Structured Logging** - JSON or console format with configurable levels
 - ✅ **Health Check Endpoint** - Ready for Kubernetes/container orchestration
@@ -157,6 +158,87 @@ kopiochi/
 ├── Dockerfile               # Docker build configuration
 ├── go.mod                   # Go module definition
 └── README.md
+```
+
+## 🔌 Plugin System
+
+Kopiochi includes a powerful, config-driven plugin system that allows you to easily extend functionality without code changes.
+
+### Available Plugins
+
+| Plugin | Type | Description |
+|--------|------|-------------|
+| `jwt-auth` | Authentication | JWT-based authentication with token generation |
+| `ratelimit` | Middleware | Request rate limiting per client IP |
+| `cors` | Middleware | Cross-Origin Resource Sharing support |
+
+### Configuration
+
+Enable and configure plugins in `config/default.yaml`:
+
+```yaml
+plugins:
+  # Middleware plugins (applied in order)
+  middleware:
+    - cors
+    - ratelimit
+  
+  # Authentication plugins
+  auth:
+    jwt:
+      enabled: true
+      provider: jwt-auth
+      config:
+        secret: "your-secret-key"
+        expiry: "24h"
+        issuer: "kopiochi"
+  
+  # Cache plugins (coming soon)
+  cache: {}
+  
+  # Custom plugins
+  custom: {}
+```
+
+### Creating Custom Plugins
+
+1. Create your plugin in `internal/plugin/<category>/`
+2. Implement the required interface:
+   - **MiddlewarePlugin**: `Name()`, `Initialize()`, `Close()`, `Middleware()`
+   - **AuthPlugin**: All middleware methods + `ExtractUserID()`
+   - **CachePlugin**: `Get()`, `Set()`, `Delete()`
+3. Register it in `internal/plugin/register.go`
+
+Example:
+```go
+// internal/plugin/middleware/myplugin.go
+package middleware
+
+type MyPlugin struct { /* ... */ }
+
+func (p *MyPlugin) Name() string { return "myplugin" }
+func (p *MyPlugin) Initialize(cfg map[string]interface{}) error { /* ... */ }
+func (p *MyPlugin) Close() error { /* ... */ }
+func (p *MyPlugin) Middleware() func(http.Handler) http.Handler {
+    return func(next http.Handler) http.Handler {
+        return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+            // Your middleware logic
+            next.ServeHTTP(w, r)
+        })
+    }
+}
+func (p *MyPlugin) Provider() interface{} { return p }
+```
+
+Then register it:
+```go
+// internal/plugin/register.go
+func RegisterBuiltinPlugins(registry *Registry) {
+    // ... existing plugins
+    registry.Register("myplugin", func() Plugin {
+        return &middlewarePluginAdapter{middleware.NewMyPlugin()}
+    })
+}
 ```
 
 ## 🧪 Testing
