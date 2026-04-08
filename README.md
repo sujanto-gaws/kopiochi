@@ -230,6 +230,7 @@ Kopiochi includes a powerful, config-driven plugin system that allows you to eas
 | Plugin | Type | Description |
 |--------|------|-------------|
 | `jwt-auth` | Authentication | JWT-based authentication with token generation |
+| `fido2-auth` | Authentication | FIDO2/WebAuthn passwordless authentication (passkeys) |
 | `ratelimit` | Middleware | Request rate limiting per client IP |
 | `cors` | Middleware | Cross-Origin Resource Sharing support |
 
@@ -247,12 +248,20 @@ plugins:
   # Authentication plugins
   auth:
     jwt:
-      enabled: true
+      enabled: false
       provider: jwt-auth
       config:
         secret: "your-secret-key"
         expiry: "24h"
         issuer: "kopiochi"
+    
+    fido2:
+      enabled: false
+      provider: fido2-auth
+      config:
+        rp_id: "localhost"
+        rp_origin: "http://localhost:3000"
+        rp_name: "kopiochi"
   
   # Cache plugins (coming soon)
   cache: {}
