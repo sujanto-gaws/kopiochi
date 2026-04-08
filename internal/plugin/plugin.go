@@ -41,6 +41,7 @@ type ProviderPlugin interface {
 
 // AuthPlugin is a specialized plugin for authentication providers.
 type AuthPlugin interface {
+	MiddlewarePlugin
 	ProviderPlugin
 
 	// AuthMiddleware returns authentication middleware

@@ -4,7 +4,7 @@ import (
 	"context"
 	"net/http"
 
-	"github.com/sujanto-gaws/kopiochi/internal/plugins/auth"
+	"github.com/sujanto-gaws/kopiochi/internal/plugin"
 	"github.com/sujanto-gaws/kopiochi/internal/plugins/middleware"
 )
 
@@ -29,9 +29,9 @@ func (a *middlewarePluginAdapter) Middleware() func(http.Handler) http.Handler {
 	return a.mw.Middleware()
 }
 
-// authPluginAdapter wraps auth.JWTPlugin to implement plugin interfaces
+// authPluginAdapter wraps auth plugins to implement plugin.Plugin interface
 type authPluginAdapter struct {
-	auth *auth.JWTPlugin
+	auth plugin.AuthPlugin
 }
 
 func (a *authPluginAdapter) Name() string {

@@ -14,6 +14,9 @@ func RegisterBuiltinPlugins(registry *plugin.Registry) {
 	registry.Register("jwt-auth", func() plugin.Plugin {
 		return &authPluginAdapter{auth.NewJWTPlugin()}
 	})
+	registry.Register("fido2-auth", func() plugin.Plugin {
+		return &authPluginAdapter{auth.NewFIDO2Plugin()}
+	})
 
 	// Middleware plugins
 	registry.Register("ratelimit", func() plugin.Plugin {
