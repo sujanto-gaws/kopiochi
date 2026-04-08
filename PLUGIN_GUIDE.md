@@ -29,7 +29,8 @@ internal/plugins/
 ├── register.go            # Built-in plugin registration
 ├── adapters.go            # Type adapters for registration
 ├── auth/
-│   └── jwt.go             # JWT authentication plugin
+│   ├── jwt.go             # JWT authentication plugin
+│   └── fido2.go           # FIDO2/WebAuthn passwordless authentication
 └── middleware/
     ├── ratelimit.go       # Rate limiting plugin
     └── cors.go            # CORS plugin
@@ -83,6 +84,7 @@ type AuthPlugin interface {
 
 **Built-in Examples:**
 - `jwt-auth` - JWT Bearer token authentication
+- `fido2-auth` - FIDO2/WebAuthn passwordless authentication (see [FIDO2_GUIDE.md](FIDO2_GUIDE.md))
 
 ### 3. CachePlugin
 
