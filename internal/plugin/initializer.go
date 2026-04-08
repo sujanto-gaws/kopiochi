@@ -7,12 +7,9 @@ import (
 )
 
 // InitializeFromConfig initializes all plugins from the application config.
-// It returns the registry with all plugins initialized and ready to use.
-func InitializeFromConfig(cfg *config.Plugins) (*Registry, error) {
-	registry := NewRegistry()
-	
-	// Register all built-in plugins
-	RegisterBuiltinPlugins(registry)
+// The registry must have plugins already registered via RegisterBuiltinPlugins().
+// It returns the same registry with all plugins initialized and ready to use.
+func InitializeFromConfig(registry *Registry, cfg *config.Plugins) (*Registry, error) {
 
 	// Initialize middleware plugins
 	for _, mwName := range cfg.Middleware {

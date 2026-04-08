@@ -4,22 +4,49 @@
 
 Kopiochi's plugin system provides a flexible, config-driven way to extend the API with middleware, authentication, cache providers, and custom functionality. Plugins are initialized at startup based on YAML configuration and can be easily enabled/disabled without code changes.
 
+**📚 Want to add your own plugins? See [USER_PLUGINS.md](USER_PLUGINS.md) for a complete guide.**
+
 ## Architecture
+
+The plugin system is separated into two parts:
+
+### 1. Plugin Core (`internal/plugin/`) - DO NOT MODIFY
 
 ```
 internal/plugin/
-├── plugin.go              # Core plugin interfaces
+├── plugin.go              # Core interfaces (Plugin, MiddlewarePlugin, AuthPlugin, etc.)
 ├── registry.go            # Plugin registry & lifecycle management
 ├── middleware.go          # Middleware chain builder
-├── initializer.go         # Config-driven plugin initialization
+└── initializer.go         # Config-driven plugin initialization
+```
+
+This is the **infrastructure layer**. Users interact with these interfaces but never modify them.
+
+### 2. Built-in Plugins (`internal/plugins/`) - Use as Examples
+
+```
+internal/plugins/
 ├── register.go            # Built-in plugin registration
+├── adapters.go            # Type adapters for registration
 ├── auth/
 │   └── jwt.go             # JWT authentication plugin
 └── middleware/
-    ├── types.go           # Shared middleware types
     ├── ratelimit.go       # Rate limiting plugin
     └── cors.go            # CORS plugin
 ```
+
+These are **implementations** that ship with Kopiochi. Use them as examples for your own plugins.
+
+### 3. Your Custom Plugins (`internal/myplugins/`) - Create This
+
+```
+internal/myplugins/
+├── compression.go         # Your compression plugin
+├── apilogger.go           # Your logging plugin
+└── customauth.go          # Your custom auth
+```
+
+This is where **you add your own plugins**. See [USER_PLUGINS.md](USER_PLUGINS.md) for the complete guide.
 
 ## Plugin Types
 
@@ -219,105 +246,27 @@ plugins:
 
 ## Creating Custom Plugins
 
-### Step 1: Create Plugin File
+**See the complete step-by-step guide: [USER_PLUGINS.md](USER_PLUGINS.md)**
 
-Create your plugin in `internal/plugin/<category>/`:
+Quick overview:
 
-```go
-// internal/plugin/middleware/compression.go
-package middleware
+1. **Create your plugin** in `internal/myplugins/` (not in `internal/plugin/`)
+2. **Implement interfaces** from `internal/plugin/plugin.go`
+3. **Register it** in `internal/plugins/register.go`
+4. **Enable it** in `config/default.yaml`
 
-import (
-    "compress/gzip"
-    "net/http"
-)
+**Examples to follow:**
+- `internal/plugins/auth/jwt.go` - Authentication plugin
+- `internal/plugins/middleware/ratelimit.go` - Middleware plugin
+- `internal/plugins/middleware/cors.go` - Middleware plugin
 
-// CompressionPlugin compresses HTTP responses
-type CompressionPlugin struct {
-    initialized bool
-    level       int
-}
+**Full examples with explanations:**
+- Request logger plugin
+- API key authentication plugin
+- Compression plugin
+- Database-access plugin
 
-func (p *CompressionPlugin) Name() string {
-    return "compression"
-}
-
-func (p *CompressionPlugin) Initialize(cfg map[string]interface{}) error {
-    if level, ok := cfg["level"].(float64); ok {
-        p.level = int(level)
-    } else {
-        p.level = gzip.DefaultCompression
-    }
-    p.initialized = true
-    return nil
-}
-
-func (p *CompressionPlugin) Close() error {
-    p.initialized = false
-    return nil
-}
-
-func (p *CompressionPlugin) Middleware() func(http.Handler) http.Handler {
-    return func(next http.Handler) http.Handler {
-        return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-            if !p.initialized {
-                next.ServeHTTP(w, r)
-                return
-            }
-            
-            // Add compression wrapper
-            gz := gzip.NewWriterLevel(w, p.level)
-            defer gz.Close()
-            
-            // Set content-encoding header
-            w.Header().Set("Content-Encoding", "gzip")
-            
-            // Call next handler
-            next.ServeHTTP(w, r)
-        })
-    }
-}
-
-func (p *CompressionPlugin) Provider() interface{} {
-    return p
-}
-
-// NewCompressionPlugin creates a new instance
-func NewCompressionPlugin() *CompressionPlugin {
-    return &CompressionPlugin{}
-}
-```
-
-### Step 2: Register the Plugin
-
-Add to `internal/plugin/register.go`:
-
-```go
-func RegisterBuiltinPlugins(registry *Registry) {
-    // ... existing plugins
-    
-    // Register compression middleware
-    registry.Register("compression", func() Plugin {
-        return &middlewarePluginAdapter{middleware.NewCompressionPlugin()}
-    })
-}
-```
-
-### Step 3: Enable in Configuration
-
-```yaml
-plugins:
-  middleware:
-    - cors
-    - compression  # Add your plugin
-```
-
-### Step 4: Build and Run
-
-```bash
-go build ./...
-go run ./cmd/api serve
-```
+All examples are in [USER_PLUGINS.md](USER_PLUGINS.md).
 
 ## Programmatic Access
 

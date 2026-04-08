@@ -1,3 +1,6 @@
+// Package plugin provides the core plugin system infrastructure for Kopiochi.
+// This package contains interfaces, registry, and middleware chain management.
+// For built-in plugins (JWT, CORS, RateLimit), see github.com/sujanto-gaws/kopiochi/internal/plugins
 package plugin
 
 import (
@@ -10,10 +13,10 @@ import (
 type Plugin interface {
 	// Name returns the unique identifier for this plugin
 	Name() string
-	
+
 	// Initialize sets up the plugin with the given configuration
 	Initialize(cfg map[string]interface{}) error
-	
+
 	// Close performs cleanup when the plugin is shut down
 	Close() error
 }
@@ -22,7 +25,7 @@ type Plugin interface {
 // It can be injected into the chi router middleware chain.
 type MiddlewarePlugin interface {
 	Plugin
-	
+
 	// Middleware returns the HTTP middleware handler
 	Middleware() func(http.Handler) http.Handler
 }
@@ -31,7 +34,7 @@ type MiddlewarePlugin interface {
 // Examples: cache provider, auth provider, storage provider.
 type ProviderPlugin interface {
 	Plugin
-	
+
 	// Provider returns the provider instance
 	Provider() interface{}
 }
@@ -39,10 +42,10 @@ type ProviderPlugin interface {
 // AuthPlugin is a specialized plugin for authentication providers.
 type AuthPlugin interface {
 	ProviderPlugin
-	
+
 	// AuthMiddleware returns authentication middleware
 	AuthMiddleware() func(http.Handler) http.Handler
-	
+
 	// ExtractUserID extracts user ID from request context
 	ExtractUserID(ctx context.Context) string
 }
@@ -50,13 +53,13 @@ type AuthPlugin interface {
 // CachePlugin is a specialized plugin for caching providers.
 type CachePlugin interface {
 	ProviderPlugin
-	
+
 	// Get retrieves a value from cache
 	Get(ctx context.Context, key string) (interface{}, error)
-	
+
 	// Set stores a value in cache
 	Set(ctx context.Context, key string, value interface{}) error
-	
+
 	// Delete removes a value from cache
 	Delete(ctx context.Context, key string) error
 }

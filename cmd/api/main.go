@@ -16,6 +16,7 @@ import (
 	"github.com/sujanto-gaws/kopiochi/internal/infrastructure/persistence/repository"
 	"github.com/sujanto-gaws/kopiochi/internal/logger"
 	"github.com/sujanto-gaws/kopiochi/internal/plugin"
+	"github.com/sujanto-gaws/kopiochi/internal/plugins"
 	"github.com/sujanto-gaws/kopiochi/internal/server"
 )
 
@@ -40,8 +41,12 @@ func main() {
 			log.Info().Msg("application starting")
 
 			// Initialize plugins
-			pluginRegistry, err := plugin.InitializeFromConfig(&cfg.Plugins)
-			if err != nil {
+			// Step 1: Create registry and register built-in plugins
+			pluginRegistry := plugin.NewRegistry()
+			plugins.RegisterBuiltinPlugins(pluginRegistry)
+
+			// Step 2: Initialize plugins from configuration
+			if _, err := plugin.InitializeFromConfig(pluginRegistry, &cfg.Plugins); err != nil {
 				return fmt.Errorf("initialize plugins: %w", err)
 			}
 			defer pluginRegistry.Close()
