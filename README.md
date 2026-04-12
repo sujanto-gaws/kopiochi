@@ -4,7 +4,7 @@
 
 A **Domain-Driven Design (DDD)** Go web API boilerplate built with modern, production-ready technologies. Start your next Go project with clean architecture, plugin system, and code generation in seconds.
 
-**[📚 View Boilerplate Guide](BOILERPLATE.md)** | **[🔌 Plugin Documentation](PLUGIN_GUIDE.md)** | **[📝 Swagger API Documentation](SWAGGER.md)**
+**[📚 View Boilerplate Guide](BOILERPLATE.md)** | **[🔌 Plugin Documentation](PLUGIN_GUIDE.md)** | **[📝 Swagger API Documentation](SWAGGER.md)** | **[🗄️ Database Migrations](MIGRATIONS.md)**
 
 ## 🏗️ Architecture
 
@@ -42,6 +42,7 @@ internal/
 - ✅ **Dependency Injection** - Loose coupling between layers
 - ✅ **Plugin System** - Extensible middleware, auth, and cache plugins
 - ✅ **Swagger/OpenAPI Documentation** - Auto-generated API documentation
+- ✅ **Database Migrations** - Version-controlled schema management with Goose
 - ✅ **PostgreSQL** - Production-ready database with connection pooling
 - ✅ **Structured Logging** - JSON or console format with configurable levels
 - ✅ **Health Check Endpoint** - Ready for Kubernetes/container orchestration
@@ -133,6 +134,8 @@ make test-coverage    # Run tests with coverage
 make lint             # Run linter
 make fmt              # Format code
 make swagger-docs     # Generate swagger documentation
+make migrate-up       # Run database migrations
+make migrate-status   # Check migration status
 make docker-build     # Build Docker image
 ```
 
@@ -217,15 +220,57 @@ curl http://localhost:8080/api/v1/users/1
 | `APP_LOG_LEVEL` | `info` | Log level (debug, info, warn, error) |
 | `APP_LOG_FORMAT` | `json` | Log format (json, console) |
 
-## 📁 Project Structure
+## �️ Database Migrations
+
+This project uses [Goose](https://github.com/pressly/goose) for version-controlled database migrations.
+
+### Quick Start
+
+```bash
+# Run all pending migrations
+make migrate-up
+
+# Check migration status
+make migrate-status
+
+# Create a new migration
+make migrate-create NAME=create_products_table
+
+# Rollback last migration
+make migrate-down
+```
+
+### Example Migration Commands
+
+```bash
+# Run migrations
+make migrate-up
+
+# Create migration
+make migrate-create NAME=add_users_index
+
+# Check status
+make migrate-status
+```
+
+**📖 See complete guide: [MIGRATIONS.md](MIGRATIONS.md)**
+
+## �📁 Project Structure
 
 ```
 kopiochi/
 ├── cmd/
-│   └── api/
-│       └── main.go          # Application entry point
+│   ├── api/
+│   │   └── main.go          # Application entry point
+│   ├── generator/
+│   │   └── main.go          # Code generator for CRUD operations
+│   └── migrate/
+│       └── main.go          # Database migration CLI
 ├── config/
 │   └── default.yaml         # Default configuration
+├── migrations/              # Database migrations (Goose)
+│   ├── 00001_create_users.sql
+│   └── 00002_create_products.sql
 ├── internal/
 │   ├── application/         # Application layer (use cases)
 │   │   └── user/

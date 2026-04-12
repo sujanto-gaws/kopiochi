@@ -116,6 +116,36 @@ swagger-serve: ## Serve swagger UI locally (requires python3)
 	@echo "Make sure to run 'make swagger-docs' first"
 	@echo "Start the server with: make run"
 
+# Database Migrations (Goose)
+migrate-up: ## Run all pending migrations
+	@echo "Running migrations up..."
+	$(GO) run ./cmd/migrate up --config $(CONFIG)
+
+migrate-down: ## Rollback the most recent migration
+	@echo "Rolling back last migration..."
+	$(GO) run ./cmd/migrate down --config $(CONFIG)
+
+migrate-status: ## Show migration status
+	@echo "Migration status:"
+	$(GO) run ./cmd/migrate status --config $(CONFIG)
+
+migrate-reset: ## Rollback all migrations
+	@echo "Resetting all migrations..."
+	$(GO) run ./cmd/migrate reset --config $(CONFIG)
+
+migrate-create: ## Create a new migration file (usage: make migrate-create NAME=create_products)
+	@if [ -z "$(NAME)" ]; then \
+		echo "Error: NAME is required. Usage: make migrate-create NAME=create_products"; \
+		exit 1; \
+	fi
+	@echo "Creating migration: $(NAME)..."
+	$(GO) run ./cmd/migrate create $(NAME) --type sql
+
+migrate-install: ## Install goose CLI tool
+	@echo "Installing goose CLI..."
+	go install github.com/pressly/goose/v3/cmd/goose@latest
+	@echo "Goose installed successfully"
+
 # Docker
 docker-build: ## Build Docker image
 	@echo "Building Docker image..."
