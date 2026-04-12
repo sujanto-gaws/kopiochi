@@ -101,6 +101,21 @@ generate-with-module: ## Generate with custom module path (usage: make generate-
 	@echo "Generating CRUD for $(DOMAIN) with module $(MODULE)..."
 	$(GO) run ./cmd/generator -domain $(DOMAIN) -fields "$(FIELDS)" -module $(MODULE)
 
+# Swagger/OpenAPI
+swagger-init: ## Initialize swagger annotations
+	@echo "Initializing swagger..."
+	swag init -g cmd/api/main.go -o docs --parseDependency --parseInternal
+
+swagger-docs: ## Generate swagger documentation
+	@echo "Generating swagger docs..."
+	swag init -g cmd/api/main.go -o docs --parseDependency --parseInternal
+	@echo "Swagger docs generated in docs/"
+
+swagger-serve: ## Serve swagger UI locally (requires python3)
+	@echo "Serving swagger UI at http://localhost:8080/swagger/index.html"
+	@echo "Make sure to run 'make swagger-docs' first"
+	@echo "Start the server with: make run"
+
 # Docker
 docker-build: ## Build Docker image
 	@echo "Building Docker image..."

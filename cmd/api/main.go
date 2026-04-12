@@ -20,6 +20,20 @@ import (
 	"github.com/sujanto-gaws/kopiochi/internal/server"
 )
 
+// @title Kopiochi API
+// @version 1.0
+// @description A Go Web API boilerplate with chi, bun, pgx, cobra, viper & zerolog
+// @description This API provides user management and authentication endpoints
+
+// @host localhost:8080
+// @BasePath /api/v1
+// @schemes http https
+
+// @securityDefinitions.apikey BearerAuth
+// @in header
+// @name Authorization
+// @description Type "Bearer" followed by a space and JWT token
+
 func main() {
 	rootCmd := &cobra.Command{
 		Use:   "kopiochi",

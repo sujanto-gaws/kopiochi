@@ -4,7 +4,7 @@
 
 A **Domain-Driven Design (DDD)** Go web API boilerplate built with modern, production-ready technologies. Start your next Go project with clean architecture, plugin system, and code generation in seconds.
 
-**[📚 View Boilerplate Guide](BOILERPLATE.md)** | **[🔌 Plugin Documentation](PLUGIN_GUIDE.md)**
+**[📚 View Boilerplate Guide](BOILERPLATE.md)** | **[🔌 Plugin Documentation](PLUGIN_GUIDE.md)** | **[📝 Swagger API Documentation](SWAGGER.md)**
 
 ## 🏗️ Architecture
 
@@ -41,6 +41,7 @@ internal/
 - ✅ **Domain-Driven Design** - Clean architecture with separation of concerns
 - ✅ **Dependency Injection** - Loose coupling between layers
 - ✅ **Plugin System** - Extensible middleware, auth, and cache plugins
+- ✅ **Swagger/OpenAPI Documentation** - Auto-generated API documentation
 - ✅ **PostgreSQL** - Production-ready database with connection pooling
 - ✅ **Structured Logging** - JSON or console format with configurable levels
 - ✅ **Health Check Endpoint** - Ready for Kubernetes/container orchestration
@@ -131,6 +132,7 @@ make test             # Run tests
 make test-coverage    # Run tests with coverage
 make lint             # Run linter
 make fmt              # Format code
+make swagger-docs     # Generate swagger documentation
 make docker-build     # Build Docker image
 ```
 
@@ -153,6 +155,34 @@ docker run -p 8080:8080 --env-file .env kopiochi
 | `GET` | `/health` | Health check |
 | `POST` | `/api/v1/users` | Create a new user |
 | `GET` | `/api/v1/users/{id}` | Get user by ID |
+| `PUT` | `/api/v1/users/{id}` | Update a user |
+| `DELETE` | `/api/v1/users/{id}` | Delete a user |
+
+### 📚 API Documentation (Swagger)
+
+This project includes auto-generated Swagger/OpenAPI documentation for all endpoints.
+
+**Quick Start:**
+```bash
+# 1. Generate docs
+make swagger-docs
+
+# 2. Start server
+make run
+
+# 3. Open browser
+# Navigate to: http://localhost:8080/swagger/index.html
+```
+
+**📖 See complete guide: [SWAGGER.md](SWAGGER.md)**
+
+#### What You Can Do
+- ✅ Browse all API endpoints with interactive UI
+- ✅ Test endpoints directly from the browser
+- ✅ View detailed request/response schemas
+- ✅ Authenticate with JWT to test protected endpoints
+- ✅ Export code examples in multiple languages
+- ✅ Download OpenAPI spec (JSON/YAML)
 
 ### Example Requests
 

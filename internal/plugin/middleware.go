@@ -22,14 +22,14 @@ func NewMiddlewareChain() *MiddlewareChain {
 // Only plugins that implement MiddlewarePlugin will be added.
 func NewMiddlewareChainFromRegistry(registry *Registry, pluginNames []string) *MiddlewareChain {
 	chain := NewMiddlewareChain()
-	
+
 	for _, name := range pluginNames {
 		mwPlugin := registry.GetMiddleware(name)
 		if mwPlugin != nil {
 			chain.Append(mwPlugin.Middleware())
 		}
 	}
-	
+
 	return chain
 }
 
@@ -37,7 +37,7 @@ func NewMiddlewareChainFromRegistry(registry *Registry, pluginNames []string) *M
 func (mc *MiddlewareChain) Append(mw func(http.Handler) http.Handler) {
 	mc.mu.Lock()
 	defer mc.mu.Unlock()
-	
+
 	mc.middleware = append(mc.middleware, mw)
 }
 
@@ -45,7 +45,7 @@ func (mc *MiddlewareChain) Append(mw func(http.Handler) http.Handler) {
 func (mc *MiddlewareChain) AppendMultiple(mws ...func(http.Handler) http.Handler) {
 	mc.mu.Lock()
 	defer mc.mu.Unlock()
-	
+
 	mc.middleware = append(mc.middleware, mws...)
 }
 
@@ -54,14 +54,14 @@ func (mc *MiddlewareChain) AppendMultiple(mws ...func(http.Handler) http.Handler
 func (mc *MiddlewareChain) Build(final http.Handler) http.Handler {
 	mc.mu.RLock()
 	defer mc.mu.RUnlock()
-	
+
 	handler := final
-	
+
 	// Apply in reverse order so first added is outermost
 	for i := len(mc.middleware) - 1; i >= 0; i-- {
 		handler = mc.middleware[i](handler)
 	}
-	
+
 	return handler
 }
 
@@ -69,7 +69,7 @@ func (mc *MiddlewareChain) Build(final http.Handler) http.Handler {
 func (mc *MiddlewareChain) Len() int {
 	mc.mu.RLock()
 	defer mc.mu.RUnlock()
-	
+
 	return len(mc.middleware)
 }
 
@@ -77,6 +77,6 @@ func (mc *MiddlewareChain) Len() int {
 func (mc *MiddlewareChain) Clear() {
 	mc.mu.Lock()
 	defer mc.mu.Unlock()
-	
+
 	mc.middleware = make([]func(http.Handler) http.Handler, 0)
 }

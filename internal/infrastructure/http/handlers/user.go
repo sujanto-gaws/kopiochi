@@ -22,6 +22,16 @@ func NewUserHandler(svc *appUser.Service) *UserHandler {
 }
 
 // CreateUser handles POST /users
+// @Summary Create a new user
+// @Description Create a new user with name and email
+// @Tags users
+// @Accept json
+// @Produce json
+// @Param request body user.CreateUserRequest true "User creation request"
+// @Success 201 {object} user.UserResponse "User created successfully"
+// @Failure 400 {object} map[string]string "Invalid request"
+// @Failure 500 {object} map[string]string "Internal server error"
+// @Router /users [post]
 func (h *UserHandler) CreateUser() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req user.CreateUserRequest
@@ -47,6 +57,16 @@ func (h *UserHandler) CreateUser() http.HandlerFunc {
 }
 
 // GetUser handles GET /users/{id}
+// @Summary Get a user by ID
+// @Description Retrieve a user by their unique ID
+// @Tags users
+// @Produce json
+// @Param id path int true "User ID"
+// @Success 200 {object} user.UserResponse "User found"
+// @Failure 400 {object} map[string]string "Invalid user ID"
+// @Failure 404 {object} map[string]string "User not found"
+// @Failure 500 {object} map[string]string "Internal server error"
+// @Router /users/{id} [get]
 func (h *UserHandler) GetUser() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		idStr := chi.URLParam(r, "id")
@@ -71,6 +91,18 @@ func (h *UserHandler) GetUser() http.HandlerFunc {
 }
 
 // UpdateUser handles PUT /users/{id}
+// @Summary Update an existing user
+// @Description Update a user's name and/or email by their ID
+// @Tags users
+// @Accept json
+// @Produce json
+// @Param id path int true "User ID"
+// @Param request body user.UpdateUserRequest true "User update request"
+// @Success 200 {object} user.UserResponse "User updated successfully"
+// @Failure 400 {object} map[string]string "Invalid request"
+// @Failure 404 {object} map[string]string "User not found"
+// @Failure 500 {object} map[string]string "Internal server error"
+// @Router /users/{id} [put]
 func (h *UserHandler) UpdateUser() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		idStr := chi.URLParam(r, "id")
@@ -104,6 +136,15 @@ func (h *UserHandler) UpdateUser() http.HandlerFunc {
 }
 
 // DeleteUser handles DELETE /users/{id}
+// @Summary Delete a user by ID
+// @Description Delete a user by their unique ID
+// @Tags users
+// @Param id path int true "User ID"
+// @Success 204 "User deleted successfully"
+// @Failure 400 {object} map[string]string "Invalid user ID"
+// @Failure 404 {object} map[string]string "User not found"
+// @Failure 500 {object} map[string]string "Internal server error"
+// @Router /users/{id} [delete]
 func (h *UserHandler) DeleteUser() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		idStr := chi.URLParam(r, "id")

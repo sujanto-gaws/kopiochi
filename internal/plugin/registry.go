@@ -8,8 +8,8 @@ import (
 // Registry manages all plugins in the application.
 // It provides centralized plugin discovery, initialization, and lifecycle management.
 type Registry struct {
-	mu       sync.RWMutex
-	plugins  map[string]Plugin
+	mu        sync.RWMutex
+	plugins   map[string]Plugin
 	factories map[string]PluginFactory
 }
 
@@ -29,12 +29,12 @@ func NewRegistry() *Registry {
 func (r *Registry) Register(name string, factory PluginFactory) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	
+
 	if _, exists := r.factories[name]; exists {
 		// Plugin already registered, skip silently
 		return
 	}
-	
+
 	r.factories[name] = factory
 }
 
@@ -43,7 +43,7 @@ func (r *Registry) Register(name string, factory PluginFactory) {
 func (r *Registry) Get(name string) Plugin {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	
+
 	return r.plugins[name]
 }
 
@@ -54,12 +54,12 @@ func (r *Registry) GetMiddleware(name string) MiddlewarePlugin {
 	if plugin == nil {
 		return nil
 	}
-	
+
 	mw, ok := plugin.(MiddlewarePlugin)
 	if !ok {
 		return nil
 	}
-	
+
 	return mw
 }
 
@@ -70,12 +70,12 @@ func (r *Registry) GetAuth(name string) AuthPlugin {
 	if plugin == nil {
 		return nil
 	}
-	
+
 	auth, ok := plugin.(AuthPlugin)
 	if !ok {
 		return nil
 	}
-	
+
 	return auth
 }
 
@@ -86,12 +86,12 @@ func (r *Registry) GetCache(name string) CachePlugin {
 	if plugin == nil {
 		return nil
 	}
-	
+
 	cache, ok := plugin.(CachePlugin)
 	if !ok {
 		return nil
 	}
-	
+
 	return cache
 }
 
@@ -99,20 +99,20 @@ func (r *Registry) GetCache(name string) CachePlugin {
 func (r *Registry) Initialize(name string, cfg map[string]interface{}) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	
+
 	factory, exists := r.factories[name]
 	if !exists {
 		return fmt.Errorf("plugin factory not found: %s", name)
 	}
-	
+
 	// Create plugin instance
 	plugin := factory()
-	
+
 	// Initialize with configuration
 	if err := plugin.Initialize(cfg); err != nil {
 		return fmt.Errorf("failed to initialize plugin %s: %w", name, err)
 	}
-	
+
 	r.plugins[name] = plugin
 	return nil
 }
@@ -121,13 +121,13 @@ func (r *Registry) Initialize(name string, cfg map[string]interface{}) error {
 // The config should be in format: {"plugin_name": {"key": "value"}, ...}
 func (r *Registry) InitializeAll(configs map[string]map[string]interface{}) []error {
 	var errs []error
-	
+
 	for name, cfg := range configs {
 		if err := r.Initialize(name, cfg); err != nil {
 			errs = append(errs, err)
 		}
 	}
-	
+
 	return errs
 }
 
@@ -135,16 +135,16 @@ func (r *Registry) InitializeAll(configs map[string]map[string]interface{}) []er
 func (r *Registry) Close() error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	
+
 	var firstErr error
-	
+
 	for name, plugin := range r.plugins {
 		if err := plugin.Close(); err != nil && firstErr == nil {
 			firstErr = fmt.Errorf("failed to close plugin %s: %w", name, err)
 		}
 		delete(r.plugins, name)
 	}
-	
+
 	return firstErr
 }
 
@@ -152,12 +152,12 @@ func (r *Registry) Close() error {
 func (r *Registry) List() []string {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	
+
 	names := make([]string, 0, len(r.factories))
 	for name := range r.factories {
 		names = append(names, name)
 	}
-	
+
 	return names
 }
 
@@ -165,12 +165,12 @@ func (r *Registry) List() []string {
 func (r *Registry) ListInitialized() []string {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	
+
 	names := make([]string, 0, len(r.plugins))
 	for name := range r.plugins {
 		names = append(names, name)
 	}
-	
+
 	return names
 }
 
@@ -178,7 +178,7 @@ func (r *Registry) ListInitialized() []string {
 func (r *Registry) IsInitialized(name string) bool {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	
+
 	_, exists := r.plugins[name]
 	return exists
 }

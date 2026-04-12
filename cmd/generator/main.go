@@ -581,6 +581,16 @@ func New{{.Domain}}Handler(svc *app{{.DomainLower}}.Service) *{{.Domain}}Handler
 }
 
 // Create{{.Domain}} handles POST /{{.DomainLower}}s
+// @Summary Create a new {{.DomainLower}}
+// @Description Create a new {{.DomainLower}} with the provided data
+// @Tags {{.DomainLower}}s
+// @Accept json
+// @Produce json
+// @Param request body {{.DomainLower}}.Create{{.Domain}}Request true "{{.Domain}} creation request"
+// @Success 201 {object} {{.DomainLower}}.{{.Domain}}Response "{{.Domain}} created successfully"
+// @Failure 400 {object} map[string]string "Invalid request"
+// @Failure 500 {object} map[string]string "Internal server error"
+// @Router /{{.DomainLower}}s [post]
 func (h *{{.Domain}}Handler) Create{{.Domain}}() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req {{.DomainLower}}.Create{{.Domain}}Request
@@ -605,6 +615,16 @@ func (h *{{.Domain}}Handler) Create{{.Domain}}() http.HandlerFunc {
 }
 
 // Get{{.Domain}} handles GET /{{.DomainLower}}s/{id}
+// @Summary Get a {{.DomainLower}} by ID
+// @Description Retrieve a {{.DomainLower}} by its unique ID
+// @Tags {{.DomainLower}}s
+// @Produce json
+// @Param id path int true "{{.Domain}} ID"
+// @Success 200 {object} {{.DomainLower}}.{{.Domain}}Response "{{.Domain}} found"
+// @Failure 400 {object} map[string]string "Invalid {{.DomainLower}} ID"
+// @Failure 404 {object} map[string]string "{{.DomainLower}} not found"
+// @Failure 500 {object} map[string]string "Internal server error"
+// @Router /{{.DomainLower}}s/{id} [get]
 func (h *{{.Domain}}Handler) Get{{.Domain}}() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		idStr := chi.URLParam(r, "id")
@@ -629,6 +649,15 @@ func (h *{{.Domain}}Handler) Get{{.Domain}}() http.HandlerFunc {
 }
 
 // GetAll{{.Domain}}s handles GET /{{.DomainLower}}s
+// @Summary Get all {{.DomainLower}}s with pagination
+// @Description Retrieve a paginated list of {{.DomainLower}}s
+// @Tags {{.DomainLower}}s
+// @Produce json
+// @Param page query int false "Page number" default(1)
+// @Param limit query int false "Items per page" default(20)
+// @Success 200 {object} map[string]interface{} "List of {{.DomainLower}}s"
+// @Failure 500 {object} map[string]string "Internal server error"
+// @Router /{{.DomainLower}}s [get]
 func (h *{{.Domain}}Handler) GetAll{{.Domain}}s() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		page, _ := strconv.Atoi(r.URL.Query().Get("page"))
@@ -657,6 +686,18 @@ func (h *{{.Domain}}Handler) GetAll{{.Domain}}s() http.HandlerFunc {
 }
 
 // Update{{.Domain}} handles PUT /{{.DomainLower}}s/{id}
+// @Summary Update an existing {{.DomainLower}}
+// @Description Update a {{.DomainLower}} by its ID
+// @Tags {{.DomainLower}}s
+// @Accept json
+// @Produce json
+// @Param id path int true "{{.Domain}} ID"
+// @Param request body {{.DomainLower}}.Update{{.Domain}}Request true "{{.Domain}} update request"
+// @Success 200 {object} {{.DomainLower}}.{{.Domain}}Response "{{.Domain}} updated successfully"
+// @Failure 400 {object} map[string]string "Invalid request"
+// @Failure 404 {object} map[string]string "{{.DomainLower}} not found"
+// @Failure 500 {object} map[string]string "Internal server error"
+// @Router /{{.DomainLower}}s/{id} [put]
 func (h *{{.Domain}}Handler) Update{{.Domain}}() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		idStr := chi.URLParam(r, "id")
@@ -690,6 +731,15 @@ func (h *{{.Domain}}Handler) Update{{.Domain}}() http.HandlerFunc {
 }
 
 // Delete{{.Domain}} handles DELETE /{{.DomainLower}}s/{id}
+// @Summary Delete a {{.DomainLower}} by ID
+// @Description Delete a {{.DomainLower}} by its unique ID
+// @Tags {{.DomainLower}}s
+// @Param id path int true "{{.Domain}} ID"
+// @Success 204 "{{.DomainLower}} deleted successfully"
+// @Failure 400 {object} map[string]string "Invalid {{.DomainLower}} ID"
+// @Failure 404 {object} map[string]string "{{.DomainLower}} not found"
+// @Failure 500 {object} map[string]string "Internal server error"
+// @Router /{{.DomainLower}}s/{id} [delete]
 func (h *{{.Domain}}Handler) Delete{{.Domain}}() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		idStr := chi.URLParam(r, "id")
