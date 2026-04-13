@@ -182,21 +182,65 @@ make build            # Build binary
 
 ### 2. Generate Your First Domain
 
+You have two options for generating CRUD domains:
+
+#### Option A: Generate from Explicit Fields
+
 ```bash
 # Generate Product CRUD
 make generate DOMAIN=Product FIELDS="name:string,description:string,price:float64,stock:int"
-
-# Files created:
-# - internal/domain/product/entity.go
-# - internal/domain/product/repository.go
-# - internal/domain/product/dto.go
-# - internal/application/product/service.go
-# - internal/infrastructure/persistence/repository/product.go
-# - internal/infrastructure/persistence/repository/model.go
-# - internal/infrastructure/http/handlers/product.go
-
-# Update routes in: internal/infrastructure/http/routes/routes.go
 ```
+
+#### Option B: Generate from Existing Database Table
+
+If you already have a table in your database, the generator can read the schema directly:
+
+```bash
+# Read schema from database (uses DB config from config/default.yaml)
+go run cmd/generator/main.go -domain Product -table products
+
+# With custom config file
+go run cmd/generator/main.go -domain Product -table products -config config/production.yaml
+```
+
+The generator will:
+- Connect to your database using the config from `config/default.yaml`
+- Read column names, data types, and nullable constraints from `information_schema.columns`
+- Automatically skip internal columns (`id`, `created_at`, `updated_at`)
+- Map PostgreSQL types to Go types (`varchar` → `string`, `bigint` → `int64`, etc.)
+- Convert `snake_case` column names to `CamelCase` for Go field names
+
+#### Generated Files
+
+Both methods generate the following files:
+
+```
+internal/
+├── domain/product/
+│   ├── entity.go          # Domain entity with validation
+│   ├── repository.go      # Repository interface
+│   └── dto.go             # Request/Response DTOs
+├── application/product/
+│   └── service.go         # Business logic layer
+└── infrastructure/
+    ├── persistence/
+    │   ├── repository/
+    │   │   └── product_repository.go  # Repository implementation
+    │   └── models/
+    │       └── product_model.go       # Database model
+    └── http/
+        └── handlers/
+            └── product_handler.go     # HTTP handlers
+```
+
+#### Auto-Wiring
+
+The generator automatically:
+1. **Updates routes** - Adds handler parameter and route definitions to `internal/infrastructure/http/routes/routes.go`
+2. **Wires dependencies** - Adds repository, service, and handler initialization to `cmd/api/main.go`
+3. **Registers routes** - Adds the new handler to `routes.Setup()` call
+
+No manual file moving or route editing required!
 
 ### 3. Add Routes
 

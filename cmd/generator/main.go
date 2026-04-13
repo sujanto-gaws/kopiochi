@@ -1,6 +1,7 @@
 package main
 
 import (
+	"database/sql"
 	"flag"
 	"fmt"
 	"os"
@@ -9,6 +10,9 @@ import (
 	"strings"
 	"text/template"
 	"unicode"
+
+	_ "github.com/jackc/pgx/v5/stdlib"
+	"go.yaml.in/yaml/v3"
 )
 
 // Config holds the generation configuration
@@ -46,16 +50,22 @@ type TemplateData struct {
 
 func main() {
 	domain := flag.String("domain", "", "Domain name (e.g., Product, Order)")
-	fields := flag.String("fields", "name:string,description:string", "Fields as name:type pairs (e.g., name:string,price:float64)")
+	fields := flag.String("fields", "", "Fields as name:type pairs (e.g., name:string,price:float64). Optional if -table is provided")
 	module := flag.String("module", "github.com/sujanto-gaws/kopiochi", "Go module path")
 	output := flag.String("output", "internal", "Output directory")
 	author := flag.String("author", "", "Author name")
-	table := flag.String("table", "", "Database table name (default: pluralized domain)")
+	table := flag.String("table", "", "Database table name to read schema from (optional)")
+	configFile := flag.String("config", "config/default.yaml", "Path to config file for DB connection")
+
 	flag.Parse()
 
 	if *domain == "" {
 		fmt.Println("Error: -domain is required")
-		fmt.Println("Usage: go run cmd/generator/main.go -domain Product -fields \"name:string,price:float64,stock:int\"")
+		fmt.Println("Usage:")
+		fmt.Println("  With explicit fields:")
+		fmt.Println("    go run cmd/generator/main.go -domain Product -fields \"name:string,price:float64,stock:int\"")
+		fmt.Println("  From existing table schema:")
+		fmt.Println("    go run cmd/generator/main.go -domain Product -table products")
 		os.Exit(1)
 	}
 
@@ -69,12 +79,37 @@ func main() {
 		IncludeCRUD: true,
 	}
 
-	// Parse fields
-	config.Fields = parseFields(*fields)
-
 	// Generate table name if not provided
 	if config.TableName == "" {
 		config.TableName = toSnakeCase(config.Domain)
+	}
+
+	// Parse fields or read from database
+	if *fields != "" {
+		config.Fields = parseFields(*fields)
+	} else if *table != "" {
+		// Read DB config
+		dbConfig, err := loadDBConfig(*configFile)
+		if err != nil {
+			fmt.Printf("Error loading config: %v\n", err)
+			os.Exit(1)
+		}
+
+		// Read fields from database schema
+		dbFields, err := readTableSchema(dbConfig.Host, dbConfig.Port, dbConfig.User, dbConfig.Password, dbConfig.Name, config.TableName)
+		if err != nil {
+			fmt.Printf("Error reading table schema: %v\n", err)
+			fmt.Println("You can either fix the database connection or provide fields manually with -fields")
+			os.Exit(1)
+		}
+		config.Fields = dbFields
+		fmt.Printf("✓ Read %d columns from table '%s'\n", len(dbFields), config.TableName)
+	} else {
+		fmt.Println("Error: either -fields or -table must be provided")
+		fmt.Println("Usage:")
+		fmt.Println("  With explicit fields: -domain Product -fields \"name:string,price:float64\"")
+		fmt.Println("  From existing table:  -domain Product -table products")
+		os.Exit(1)
 	}
 
 	if err := generate(config); err != nil {
@@ -324,6 +359,145 @@ func findSetupSignature(content string) string {
 
 func contains(s, substr string) bool {
 	return strings.Contains(s, substr)
+}
+
+// dbConfig holds database connection settings from config file
+type dbConfig struct {
+	Host     string
+	Port     int
+	User     string
+	Password string
+	Name     string
+}
+
+// loadDBConfig reads database configuration from YAML file
+func loadDBConfig(configPath string) (*dbConfig, error) {
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		return nil, fmt.Errorf("read config file: %w", err)
+	}
+
+	var cfg struct {
+		DB struct {
+			Host     string `yaml:"host"`
+			Port     int    `yaml:"port"`
+			User     string `yaml:"user"`
+			Password string `yaml:"password"`
+			Name     string `yaml:"name"`
+		} `yaml:"db"`
+	}
+
+	if err := yaml.Unmarshal(data, &cfg); err != nil {
+		return nil, fmt.Errorf("parse config: %w", err)
+	}
+
+	return &dbConfig{
+		Host:     cfg.DB.Host,
+		Port:     cfg.DB.Port,
+		User:     cfg.DB.User,
+		Password: cfg.DB.Password,
+		Name:     cfg.DB.Name,
+	}, nil
+}
+
+// readTableSchema reads column information from PostgreSQL system tables
+func readTableSchema(host string, port int, user, pass, dbName, tableName string) ([]Field, error) {
+	dsn := fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=disable",
+		host, port, user, pass, dbName)
+
+	db, err := sql.Open("pgx", dsn)
+	if err != nil {
+		return nil, fmt.Errorf("open database: %w", err)
+	}
+	defer db.Close()
+
+	// Test connection
+	if err := db.Ping(); err != nil {
+		return nil, fmt.Errorf("connect to database: %w", err)
+	}
+
+	query := `
+		SELECT column_name, data_type, is_nullable
+		FROM information_schema.columns
+		WHERE table_name = $1
+		ORDER BY ordinal_position
+	`
+
+	rows, err := db.Query(query, tableName)
+	if err != nil {
+		return nil, fmt.Errorf("query columns: %w", err)
+	}
+	defer rows.Close()
+
+	var fields []Field
+	for rows.Next() {
+		var colName, dataType, isNullable string
+		if err := rows.Scan(&colName, &dataType, &isNullable); err != nil {
+			return nil, fmt.Errorf("scan row: %w", err)
+		}
+
+		// Skip internal columns
+		if colName == "id" || colName == "created_at" || colName == "updated_at" {
+			continue
+		}
+
+		fields = append(fields, Field{
+			Name:     capitalize(toCamelCase(colName)),
+			Type:     mapDBType(dataType),
+			JSONTag:  colName,
+			DBTag:    colName,
+			Required: isNullable == "NO",
+		})
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate rows: %w", err)
+	}
+
+	if len(fields) == 0 {
+		return nil, fmt.Errorf("table '%s' not found or has no columns", tableName)
+	}
+
+	return fields, nil
+}
+
+// toCamelCase converts snake_case to CamelCase
+func toCamelCase(s string) string {
+	parts := strings.Split(s, "_")
+	for i, part := range parts {
+		if len(part) > 0 {
+			parts[i] = strings.ToUpper(part[:1]) + part[1:]
+		}
+	}
+	return strings.Join(parts, "")
+}
+
+// mapDBType maps PostgreSQL data types to Go types
+func mapDBType(dbType string) string {
+	typeMap := map[string]string{
+		"character varying": "string",
+		"text":              "string",
+		"character":         "string",
+		"varchar":           "string",
+		"bigint":            "int64",
+		"integer":           "int64",
+		"smallint":          "int64",
+		"numeric":           "float64",
+		"real":              "float64",
+		"double precision":  "float64",
+		"decimal":           "float64",
+		"boolean":           "bool",
+		"timestamp":         "time.Time",
+		"date":              "time.Time",
+		"json":              "string",
+		"jsonb":             "string",
+		"uuid":              "string",
+	}
+
+	if goType, ok := typeMap[strings.ToLower(dbType)]; ok {
+		return goType
+	}
+	return "string"
 }
 
 // updateMainGo adds dependency injection for the new domain to main.go
