@@ -2,11 +2,12 @@ package db
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"time"
 
-	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/uptrace/bun"
 	"github.com/uptrace/bun/dialect/pgdialect"
 )
@@ -43,6 +44,21 @@ func NewDB(cfg Config) (*bun.DB, *pgxpool.Pool, error) {
 	// bun supports pgxpool directly
 	db := bun.NewDB(sqldb, pgdialect.New())
 	return db, pool, nil
+}
+
+// OpenDB opens a standard *sql.DB connection for use with migration tools
+func OpenDB(dsn string) (*sql.DB, error) {
+	db, err := sql.Open("pgx", dsn)
+	if err != nil {
+		return nil, fmt.Errorf("open database: %w", err)
+	}
+
+	if err := db.Ping(); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("ping database: %w", err)
+	}
+
+	return db, nil
 }
 
 // BuildDSN creates a PostgreSQL connection string

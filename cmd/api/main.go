@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"net/http"
 	"os"
 
 	"github.com/rs/zerolog/log"
@@ -14,8 +15,24 @@ import (
 	"github.com/sujanto-gaws/kopiochi/internal/infrastructure/http/routes"
 	"github.com/sujanto-gaws/kopiochi/internal/infrastructure/persistence/repository"
 	"github.com/sujanto-gaws/kopiochi/internal/logger"
+	"github.com/sujanto-gaws/kopiochi/internal/plugin"
+	"github.com/sujanto-gaws/kopiochi/internal/plugins"
 	"github.com/sujanto-gaws/kopiochi/internal/server"
 )
+
+// @title Kopiochi API
+// @version 1.0
+// @description A Go Web API boilerplate with chi, bun, pgx, cobra, viper & zerolog
+// @description This API provides user management and authentication endpoints
+
+// @host localhost:8080
+// @BasePath /api/v1
+// @schemes http https
+
+// @securityDefinitions.apikey BearerAuth
+// @in header
+// @name Authorization
+// @description Type "Bearer" followed by a space and JWT token
 
 func main() {
 	rootCmd := &cobra.Command{
@@ -36,6 +53,18 @@ func main() {
 			// Initialize logger
 			log.Logger = logger.Init(cfg.Log.Level, cfg.Log.Format)
 			log.Info().Msg("application starting")
+
+			// Initialize plugins
+			// Step 1: Create registry and register built-in plugins
+			pluginRegistry := plugin.NewRegistry()
+			plugins.RegisterBuiltinPlugins(pluginRegistry)
+
+			// Step 2: Initialize plugins from configuration
+			if _, err := plugin.InitializeFromConfig(pluginRegistry, &cfg.Plugins); err != nil {
+				return fmt.Errorf("initialize plugins: %w", err)
+			}
+			defer pluginRegistry.Close()
+			log.Info().Strs("plugins", pluginRegistry.ListInitialized()).Msg("plugins initialized")
 
 			// Initialize database
 			dsn := db.BuildDSN(cfg.DB.Host, cfg.DB.Port, cfg.DB.User, cfg.DB.Password, cfg.DB.Name, cfg.DB.SSLMode)
@@ -58,8 +87,17 @@ func main() {
 			// Infrastructure: HTTP Handler
 			userHandler := handlers.NewUserHandler(userSvc)
 
-			// Setup router
+			// Setup router with plugin middleware chain
 			r := server.NewRouter()
+
+			// Apply plugin middleware chain to router
+			middlewareChain := plugin.NewMiddlewareChainFromRegistry(pluginRegistry, plugin.GetMiddlewareNames(&cfg.Plugins))
+			if middlewareChain.Len() > 0 {
+				r.Use(func(next http.Handler) http.Handler {
+					return middlewareChain.Build(next)
+				})
+			}
+
 			routes.Setup(r, userHandler)
 
 			// Start server with graceful shutdown
@@ -68,6 +106,7 @@ func main() {
 				cfg.Server.Port,
 				r,
 				server.WithShutdownFunc(server.NewPoolShutdownFunc(pool)),
+				server.WithPluginRegistry(pluginRegistry),
 			)
 			return nil
 		},

@@ -8,6 +8,7 @@ import (
 	"github.com/uptrace/bun"
 
 	"github.com/sujanto-gaws/kopiochi/internal/domain/user"
+	"github.com/sujanto-gaws/kopiochi/internal/infrastructure/persistence/models"
 )
 
 // userRepository implements the user.Repository interface
@@ -35,7 +36,7 @@ func (r *userRepository) Create(ctx context.Context, u *user.User) error {
 
 // GetByID retrieves a user by ID
 func (r *userRepository) GetByID(ctx context.Context, id int64) (*user.User, error) {
-	var dbModel userDBModel
+	var dbModel models.UserDBModel
 	err := r.db.NewSelect().
 		Model(&dbModel).
 		Where("id = ?", id).
@@ -52,7 +53,7 @@ func (r *userRepository) GetByID(ctx context.Context, id int64) (*user.User, err
 
 // GetByEmail retrieves a user by email
 func (r *userRepository) GetByEmail(ctx context.Context, email string) (*user.User, error) {
-	var dbModel userDBModel
+	var dbModel models.UserDBModel
 	err := r.db.NewSelect().
 		Model(&dbModel).
 		Where("email = ?", email).
@@ -79,12 +80,12 @@ func (r *userRepository) Update(ctx context.Context, u *user.User) error {
 
 // Delete removes a user by ID
 func (r *userRepository) Delete(ctx context.Context, id int64) error {
-	_, err := r.db.NewDelete().Model((*userDBModel)(nil)).Where("id = ?", id).Exec(ctx)
+	_, err := r.db.NewDelete().Model((*models.UserDBModel)(nil)).Where("id = ?", id).Exec(ctx)
 	return err
 }
 
 // toDomainEntity converts database model to domain entity
-func toDomainEntity(dbModel *userDBModel) *user.User {
+func toDomainEntity(dbModel *models.UserDBModel) *user.User {
 	if dbModel == nil {
 		return nil
 	}
@@ -98,11 +99,11 @@ func toDomainEntity(dbModel *userDBModel) *user.User {
 }
 
 // toDBModel converts domain entity to database model
-func toDBModel(u *user.User) *userDBModel {
+func toDBModel(u *user.User) *models.UserDBModel {
 	if u == nil {
 		return nil
 	}
-	return &userDBModel{
+	return &models.UserDBModel{
 		ID:        u.ID,
 		Name:      u.Name,
 		Email:     u.Email,
