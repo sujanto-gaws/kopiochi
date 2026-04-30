@@ -1,6 +1,6 @@
 module github.com/sujanto-gaws/kopiochi
 
-go 1.25.0
+go 1.19
 
 require (
 	github.com/go-webauthn/webauthn v0.16.3
