@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -14,6 +15,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/rs/zerolog/log"
 
+	"github.com/sujanto-gaws/kopiochi/internal/config"
 	zlog "github.com/sujanto-gaws/kopiochi/internal/middleware"
 	"github.com/sujanto-gaws/kopiochi/internal/plugin"
 )
@@ -32,13 +34,6 @@ type Server struct {
 // ServerOption is a function that configures the Server
 type ServerOption func(*Server)
 
-// WithShutdownTimeout sets the shutdown timeout duration
-func WithShutdownTimeout(timeout time.Duration) ServerOption {
-	return func(s *Server) {
-		s.shutdownTimeout = timeout
-	}
-}
-
 // WithShutdownFunc adds a cleanup function to be called during shutdown
 func WithShutdownFunc(fn ShutdownFunc) ServerOption {
 	return func(s *Server) {
@@ -53,32 +48,39 @@ func WithPluginRegistry(registry *plugin.Registry) ServerOption {
 	}
 }
 
-// NewRouter creates a new chi router with middleware
-func NewRouter() *chi.Mux {
+// NewRouter creates a new chi router with core middleware applied.
+// Timeouts are sourced from cfg; additional middlewares are applied after the core stack.
+func NewRouter(cfg config.Server, mw ...func(http.Handler) http.Handler) *chi.Mux {
 	r := chi.NewRouter()
 
-	// Chi core middleware
+	// Core middleware stack (order matters)
 	r.Use(middleware.Recoverer)
 	r.Use(middleware.RequestID)
 	r.Use(middleware.RealIP)
-	r.Use(middleware.Timeout(60 * time.Second))
+	r.Use(middleware.Timeout(cfg.RequestTimeout))
 	r.Use(zlog.ZerologRequestLogger)
+
+	// Caller-supplied middleware applied after the core stack
+	if len(mw) > 0 {
+		r.Use(mw...)
+	}
 
 	return r
 }
 
-// NewServer creates a new server instance with options
-func NewServer(host string, port int, router *chi.Mux, opts ...ServerOption) *Server {
-	addr := fmt.Sprintf("%s:%d", host, port)
+// NewServer creates a new server instance from the provided config and options
+func NewServer(cfg config.Server, router *chi.Mux, opts ...ServerOption) *Server {
+	addr := fmt.Sprintf("%s:%d", cfg.Host, cfg.Port)
 	srv := &Server{
 		httpServer: &http.Server{
-			Addr:         addr,
-			Handler:      router,
-			ReadTimeout:  30 * time.Second,
-			WriteTimeout: 30 * time.Second,
-			IdleTimeout:  120 * time.Second,
+			Addr:              addr,
+			Handler:           router,
+			ReadTimeout:       cfg.ReadTimeout,
+			ReadHeaderTimeout: cfg.ReadHeaderTimeout,
+			WriteTimeout:      cfg.WriteTimeout,
+			IdleTimeout:       cfg.IdleTimeout,
 		},
-		shutdownTimeout: 30 * time.Second,
+		shutdownTimeout: cfg.ShutdownTimeout,
 		shutdownFuncs:   make([]ShutdownFunc, 0),
 	}
 
@@ -90,8 +92,8 @@ func NewServer(host string, port int, router *chi.Mux, opts ...ServerOption) *Se
 }
 
 // Run starts the server and handles graceful shutdown
-func Run(host string, port int, router *chi.Mux, opts ...ServerOption) {
-	srv := NewServer(host, port, router, opts...)
+func Run(cfg config.Server, router *chi.Mux, opts ...ServerOption) {
+	srv := NewServer(cfg, router, opts...)
 	srv.Run()
 }
 
@@ -112,52 +114,42 @@ func (s *Server) Run() {
 	}()
 
 	// Wait for interrupt signal
-	<-quit
-	log.Info().Msg("shutting down server gracefully...")
+	sig := <-quit
+	signal.Stop(quit)
+	log.Info().Str("signal", sig.String()).Msg("shutting down server gracefully...")
 
 	// Create shutdown context with timeout
 	ctx, cancel := context.WithTimeout(context.Background(), s.shutdownTimeout)
 	defer cancel()
 
-	// Shutdown HTTP server
-	if err := s.httpServer.Shutdown(ctx); err != nil {
-		log.Error().Err(err).Msg("http server shutdown error")
-	} else {
-		log.Info().Msg("http server stopped")
-	}
-
-	// Execute cleanup functions (database pool, plugins, etc.)
-	for i, fn := range s.shutdownFuncs {
-		if err := fn(); err != nil {
-			log.Error().Err(err).Int("index", i).Msg("shutdown function error")
-		}
-	}
-
-	// Close plugin registry
-	if s.pluginRegistry != nil {
-		if err := s.pluginRegistry.Close(); err != nil {
-			log.Error().Err(err).Msg("plugin registry shutdown error")
-		} else {
-			log.Info().Msg("plugin registry closed")
-		}
+	if err := s.Shutdown(ctx); err != nil {
+		log.Error().Err(err).Msg("shutdown completed with errors")
 	}
 
 	log.Info().Msg("server exited properly")
 }
 
-// Shutdown manually triggers server shutdown
+// Shutdown manually triggers server shutdown, collecting all errors.
 func (s *Server) Shutdown(ctx context.Context) error {
+	var errs []error
+
 	if err := s.httpServer.Shutdown(ctx); err != nil {
-		return fmt.Errorf("http server shutdown: %w", err)
+		errs = append(errs, fmt.Errorf("http server shutdown: %w", err))
 	}
 
-	for _, fn := range s.shutdownFuncs {
+	for i, fn := range s.shutdownFuncs {
 		if err := fn(); err != nil {
-			return fmt.Errorf("cleanup function: %w", err)
+			errs = append(errs, fmt.Errorf("shutdown func[%d]: %w", i, err))
 		}
 	}
 
-	return nil
+	if s.pluginRegistry != nil {
+		if err := s.pluginRegistry.Close(); err != nil {
+			errs = append(errs, fmt.Errorf("plugin registry shutdown: %w", err))
+		}
+	}
+
+	return errors.Join(errs...)
 }
 
 // NewShutdownFunc creates a shutdown function for pgxpool

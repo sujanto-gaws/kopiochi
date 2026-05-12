@@ -1,23 +1,31 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"strconv"
 
 	"github.com/go-chi/chi/v5"
 
-	appUser "github.com/sujanto-gaws/kopiochi/internal/application/user"
 	"github.com/sujanto-gaws/kopiochi/internal/domain/user"
 )
 
+// UserService is the set of application operations UserHandler depends on.
+type UserService interface {
+	CreateUser(ctx context.Context, req *user.CreateUserRequest) (*user.UserResponse, error)
+	GetUserByID(ctx context.Context, id int64) (*user.UserResponse, error)
+	UpdateUser(ctx context.Context, id int64, req *user.UpdateUserRequest) (*user.UserResponse, error)
+	DeleteUser(ctx context.Context, id int64) error
+}
+
 // UserHandler handles HTTP requests for user operations
 type UserHandler struct {
-	svc *appUser.Service
+	svc UserService
 }
 
 // NewUserHandler creates a new user handler
-func NewUserHandler(svc *appUser.Service) *UserHandler {
+func NewUserHandler(svc UserService) *UserHandler {
 	return &UserHandler{svc: svc}
 }
 
@@ -165,4 +173,13 @@ func (h *UserHandler) DeleteUser() http.HandlerFunc {
 
 		writeJSON(w, http.StatusNoContent, nil)
 	}
+}
+
+// RegisterRoutes implements RouteRegistrar.
+// All user CRUD routes require authentication and are mounted on g.Protected.
+func (h *UserHandler) RegisterRoutes(g RouterGroup) {
+	g.Protected.Post("/users", h.CreateUser())
+	g.Protected.Get("/users/{id}", h.GetUser())
+	g.Protected.Put("/users/{id}", h.UpdateUser())
+	g.Protected.Delete("/users/{id}", h.DeleteUser())
 }

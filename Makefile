@@ -11,6 +11,8 @@ DB_PORT?=5432
 DB_USER?=postgres
 DB_PASSWORD?=postgres
 DB_NAME?=kopiochi
+VERSION?=$(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
+LDFLAGS=-ldflags "-X github.com/sujanto-gaws/kopiochi/internal/version.Version=$(VERSION)"
 
 # Default target
 help: ## Show this help message
@@ -24,8 +26,8 @@ help: ## Show this help message
 
 # Build
 build: ## Build the application binary
-	@echo "Building $(BINARY_NAME)..."
-	$(GO) build -o bin/$(BINARY_NAME) ./cmd/api
+	@echo "Building $(BINARY_NAME) $(VERSION)..."
+	$(GO) build $(LDFLAGS) -o bin/$(BINARY_NAME) ./cmd/api
 
 # Run
 run: ## Run the application server

@@ -1,3 +1,6 @@
+// Package ofbizuser defines the Apache OFBiz UserLogin entity (table: user_login, PK: string).
+// This is a compatibility layer for systems running OFBiz. It is not related to the
+// primary auth identity in domain/auth or the profile user in domain/user.
 package ofbizuser
 
 import (
@@ -7,27 +10,27 @@ import (
 )
 
 var (
-	ErrInvalidUserLoginID  = errors.New("invalid user login ID")
-	ErrInvalidPassword     = errors.New("invalid password")
-	ErrUserLoginNotFound   = errors.New("user login not found")
-	ErrUserLoginDisabled   = errors.New("user login is disabled")
+	ErrInvalidUserLoginID = errors.New("invalid user login ID")
+	ErrInvalidPassword    = errors.New("invalid password")
+	ErrUserLoginNotFound  = errors.New("user login not found")
+	ErrUserLoginDisabled  = errors.New("user login is disabled")
 )
 
 // UserLogin is the domain entity representing an Apache OFBiz UserLogin
 // This is a pure domain entity without infrastructure concerns
 type UserLogin struct {
-	UserLoginID         string
-	CurrentPassword     string
-	PasswordHint        string
-	IsEnabled           bool
-	DisabledDateTime    *time.Time
+	UserLoginID            string
+	CurrentPassword        string
+	PasswordHint           string
+	IsEnabled              bool
+	DisabledDateTime       *time.Time
 	SuccessiveFailedLogins int
-	LastFailedLoginTime *time.Time
-	RequirePasswordChange bool
-	ExternalAuthID      string
-	PartyID             string
-	CreatedAt           time.Time
-	UpdatedAt           time.Time
+	LastFailedLoginTime    *time.Time
+	RequirePasswordChange  bool
+	ExternalAuthID         string
+	PartyID                string
+	CreatedAt              time.Time
+	UpdatedAt              time.Time
 }
 
 // Validate validates the UserLogin entity against business rules

@@ -5,19 +5,19 @@ import (
 	"net/http"
 	"os"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/rs/zerolog/log"
 	"github.com/spf13/cobra"
 
-	appUser "github.com/sujanto-gaws/kopiochi/internal/application/user"
+	"github.com/sujanto-gaws/kopiochi/cmd/api/container"
 	"github.com/sujanto-gaws/kopiochi/internal/config"
 	"github.com/sujanto-gaws/kopiochi/internal/db"
 	"github.com/sujanto-gaws/kopiochi/internal/infrastructure/http/handlers"
 	"github.com/sujanto-gaws/kopiochi/internal/infrastructure/http/routes"
-	"github.com/sujanto-gaws/kopiochi/internal/infrastructure/persistence/repository"
+	"github.com/sujanto-gaws/kopiochi/internal/infrastructure/http/server"
 	"github.com/sujanto-gaws/kopiochi/internal/logger"
 	"github.com/sujanto-gaws/kopiochi/internal/plugin"
 	"github.com/sujanto-gaws/kopiochi/internal/plugins"
-	"github.com/sujanto-gaws/kopiochi/internal/server"
 )
 
 // @title Kopiochi API
@@ -79,16 +79,14 @@ func main() {
 			defer pool.Close()
 			log.Info().Msg("database connected & bun ORM initialized")
 
-			// Dependency Injection (DDD)
-			// Infrastructure: Repository
-			userRepo := repository.NewUserRepository(bunDB)
-			// Application: Service
-			userSvc := appUser.NewService(userRepo)
-			// Infrastructure: HTTP Handler
-			userHandler := handlers.NewUserHandler(userSvc)
+			// Dependency Injection — all handler wiring lives in container.go
+			c, err := container.New(cfg, bunDB)
+			if err != nil {
+				return fmt.Errorf("build container: %w", err)
+			}
 
 			// Setup router with plugin middleware chain
-			r := server.NewRouter()
+			r := server.NewRouter(cfg.Server)
 
 			// Apply plugin middleware chain to router
 			middlewareChain := plugin.NewMiddlewareChainFromRegistry(pluginRegistry, plugin.GetMiddlewareNames(&cfg.Plugins))
@@ -98,12 +96,27 @@ func main() {
 				})
 			}
 
-			routes.Setup(r, userHandler)
+			// Resolve auth middleware from the jwt-auth plugin if initialized.
+			var authMiddleware func(http.Handler) http.Handler
+			if authPlugin := pluginRegistry.GetAuth("jwt-auth"); authPlugin != nil {
+				authMiddleware = authPlugin.AuthMiddleware()
+			}
+
+			// Build the router group: Protected applies auth middleware when available.
+			v1 := r.With() // scoped sub-router for /api/v1 context
+			var protected chi.Router
+			if authMiddleware != nil {
+				protected = v1.With(authMiddleware)
+			} else {
+				protected = v1
+			}
+			g := handlers.RouterGroup{Public: v1, Protected: protected}
+
+			routes.Setup(r, g, c.Registrars()...)
 
 			// Start server with graceful shutdown
 			server.Run(
-				cfg.Server.Host,
-				cfg.Server.Port,
+				cfg.Server,
 				r,
 				server.WithShutdownFunc(server.NewPoolShutdownFunc(pool)),
 				server.WithPluginRegistry(pluginRegistry),

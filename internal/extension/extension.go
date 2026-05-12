@@ -2,6 +2,7 @@ package extension
 
 import (
 	"context"
+	"net/http"
 )
 
 // Extension is the base interface for all extensions, similar to Yii modules.
@@ -63,25 +64,25 @@ type Service struct {
 type Application interface {
 	// Config returns the application configuration
 	Config() map[string]interface{}
-	
+
 	// Context returns the application context
 	Context() context.Context
-	
+
 	// RegisterService registers a service in the application container
 	RegisterService(name string, factory func() interface{})
-	
+
 	// GetService retrieves a service from the container
 	GetService(name string) (interface{}, bool)
-	
-	// AddRoute registers an HTTP route
-	AddRoute(method, path string, handler interface{})
-	
+
+	// AddRoute registers an HTTP route with the application router.
+	AddRoute(method, path string, handler http.HandlerFunc)
+
 	// On registers an event listener
 	On(event string, handler func(interface{}) error)
-	
+
 	// Trigger triggers an event with the given payload
 	Trigger(event string, payload interface{}) error
-	
+
 	// Logger returns the application logger
 	Logger() Logger
 }
@@ -89,15 +90,15 @@ type Application interface {
 // RouterRegistrar is the interface for registering HTTP routes
 type RouterRegistrar interface {
 	// GET registers a GET route
-	GET(path string, handler interface{})
+	GET(path string, handler http.HandlerFunc)
 	// POST registers a POST route
-	POST(path string, handler interface{})
+	POST(path string, handler http.HandlerFunc)
 	// PUT registers a PUT route
-	PUT(path string, handler interface{})
+	PUT(path string, handler http.HandlerFunc)
 	// DELETE registers a DELETE route
-	DELETE(path string, handler interface{})
+	DELETE(path string, handler http.HandlerFunc)
 	// Use registers middleware for a route group
-	Use(middleware ...interface{})
+	Use(mw ...func(http.Handler) http.Handler)
 	// Group creates a route group with a common prefix
 	Group(prefix string, fn func())
 }

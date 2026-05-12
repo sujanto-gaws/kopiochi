@@ -3,6 +3,8 @@ package handlers
 import (
 	"encoding/json"
 	"net/http"
+
+	"github.com/sujanto-gaws/kopiochi/internal/version"
 )
 
 // HealthCheck handles GET /health
@@ -16,7 +18,7 @@ func HealthCheck() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		response := map[string]interface{}{
 			"status":  "ok",
-			"version": "1.0.0",
+			"version": version.Version,
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)

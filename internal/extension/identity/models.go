@@ -1,9 +1,14 @@
+// This file defines the ASP.NET Identity-inspired data model for the identity extension
+// (tables: sec_user, sec_roles, sec_user_roles, sec_user_claim, sec_role_claim).
+// This is the most complete user/role/claims system in the codebase. It is distinct from:
+//   - domain/auth  (auth_users): the core login identity used by the HTTP auth layer
+//   - domain/user  (users): a simple profile CRUD entity
+//   - domain/ofbizuser (user_login): OFBiz compatibility
 package identity
 
 import (
+	"encoding/json"
 	"time"
-
-	"github.com/uptrace/bun"
 )
 
 // User represents the sec_user table entity
@@ -22,6 +27,8 @@ type User struct {
 	LockoutEnd           *time.Time `bun:"lockout_end"`
 	LockoutEnabled       bool       `bun:"lockout_enable,notnull,default:false"`
 	AccessFailedCount    int        `bun:"access_failed_count,notnull,default:0"`
+	CreatedAt            time.Time  `bun:"created_at,notnull,default:now()"`
+	UpdatedAt            time.Time  `bun:"updated_at,notnull,default:now()"`
 }
 
 // TableName overrides the table name used by Bun
@@ -106,20 +113,20 @@ func (UserToken) TableName() string {
 
 // UserPasskey represents the sec_user_passkeys table entity for FIDO2/WebAuthn credentials
 type UserPasskey struct {
-	ID                string     `bun:"id,pk"`
-	UserID            string     `bun:"sec_user_id,notnull"`
-	CredentialID      []byte     `bun:"credential_id,notnull"`
-	PublicKey         []byte     `bun:"public_key,notnull"`
-	Algorithm         int        `bun:"algorithm,notnull"`
-	Counter           int        `bun:"counter,notnull,default:0"`
-	Transports        bun.JSON   `bun:"transports"`
-	AAGUID            *string    `bun:"aaguid"` // UUID stored as string for compatibility
-	CreatedAt         time.Time  `bun:"created_at,notnull,default:now()"`
-	LastUsedAt        *time.Time `bun:"last_used_at"`
-	IsBackupEligible  bool       `bun:"is_backup_eligible,notnull,default:false"`
-	IsBackedUp        bool       `bun:"is_backed_up,notnull,default:false"`
-	AttestationObject []byte     `bun:"attestation_object"`
-	ClientDataJSON    bun.JSON   `bun:"client_data_json"`
+	ID                string          `bun:"id,pk"`
+	UserID            string          `bun:"sec_user_id,notnull"`
+	CredentialID      []byte          `bun:"credential_id,notnull"`
+	PublicKey         []byte          `bun:"public_key,notnull"`
+	Algorithm         int             `bun:"algorithm,notnull"`
+	Counter           int             `bun:"counter,notnull,default:0"`
+	Transports        json.RawMessage `bun:"transports"`
+	AAGUID            *string         `bun:"aaguid"` // UUID stored as string for compatibility
+	CreatedAt         time.Time       `bun:"created_at,notnull,default:now()"`
+	LastUsedAt        *time.Time      `bun:"last_used_at"`
+	IsBackupEligible  bool            `bun:"is_backup_eligible,notnull,default:false"`
+	IsBackedUp        bool            `bun:"is_backed_up,notnull,default:false"`
+	AttestationObject []byte          `bun:"attestation_object"`
+	ClientDataJSON    json.RawMessage `bun:"client_data_json"`
 }
 
 // TableName overrides the table name used by Bun

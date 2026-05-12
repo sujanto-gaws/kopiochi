@@ -1,6 +1,6 @@
 module github.com/sujanto-gaws/kopiochi
 
-go 1.19
+go 1.25.0
 
 require (
 	github.com/go-webauthn/webauthn v0.16.3
@@ -10,10 +10,12 @@ require (
 	github.com/spf13/viper v1.21.0
 	github.com/swaggo/http-swagger/v2 v2.0.2
 	github.com/swaggo/swag v1.8.1
+	golang.org/x/crypto v0.49.0
 )
 
 require (
 	github.com/KyleBanks/depth v1.2.1 // indirect
+	github.com/boombuler/barcode v1.0.1-0.20190219062509-6c824513bacc // indirect
 	github.com/fxamacker/cbor/v2 v2.9.1 // indirect
 	github.com/go-openapi/jsonpointer v0.19.6 // indirect
 	github.com/go-openapi/jsonreference v0.20.2 // indirect
@@ -41,7 +43,6 @@ require (
 	github.com/vmihailenco/tagparser/v2 v2.0.0 // indirect
 	github.com/x448/float16 v0.8.4 // indirect
 	go.uber.org/multierr v1.11.0 // indirect
-	golang.org/x/crypto v0.49.0 // indirect
 	golang.org/x/sync v0.20.0 // indirect
 	golang.org/x/tools v0.42.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
@@ -53,6 +54,7 @@ require (
 	github.com/go-viper/mapstructure/v2 v2.5.0 // indirect
 	github.com/jackc/pgx/v5 v5.9.1
 	github.com/pelletier/go-toml/v2 v2.2.4 // indirect
+	github.com/pquerna/otp v1.5.0
 	github.com/rs/zerolog v1.35.0
 	github.com/sagikazarmark/locafero v0.11.0 // indirect
 	github.com/sourcegraph/conc v0.3.1-0.20240121214520-5f936abd7ae8 // indirect
@@ -63,7 +65,7 @@ require (
 	github.com/subosito/gotenv v1.6.0 // indirect
 	github.com/uptrace/bun v1.2.18
 	github.com/uptrace/bun/dialect/pgdialect v1.2.18
-	go.yaml.in/yaml/v3 v3.0.4 // indirect
+	go.yaml.in/yaml/v3 v3.0.4
 	golang.org/x/sys v0.42.0 // indirect
 	golang.org/x/text v0.35.0 // indirect
 )

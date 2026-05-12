@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -381,13 +382,13 @@ func (s *service) RegisterPasskey(ctx context.Context, userID, id string, creden
 		PublicKey:         publicKey,
 		Algorithm:         algorithm,
 		Counter:           0,
-		Transports:        bunJSON(transports),
+		Transports:        marshalJSON(transports),
 		AAGUID:            stringPtr(aaguid),
 		CreatedAt:         time.Now(),
 		IsBackupEligible:  false,
 		IsBackedUp:        false,
 		AttestationObject: attestationObject,
-		ClientDataJSON:    bunJSON(clientDataJSON),
+		ClientDataJSON:    json.RawMessage(clientDataJSON),
 	}
 	return s.repo.AddPasskey(ctx, passkey)
 }
@@ -430,7 +431,11 @@ func stringPtr(s string) *string {
 	return &s
 }
 
-// bunJSON converts a slice to bun.JSON type
-func bunJSON(v interface{}) interface{} {
-	return v
+// marshalJSON marshals a value to json.RawMessage, returning nil on error.
+func marshalJSON(v interface{}) json.RawMessage {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return nil
+	}
+	return b
 }

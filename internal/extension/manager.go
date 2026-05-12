@@ -3,22 +3,24 @@ package extension
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"sync"
 )
 
 // Manager handles the lifecycle and registration of all extensions.
 // Similar to Yii's module manager, it provides centralized extension management.
 type Manager struct {
-	mu           sync.RWMutex
-	extensions   map[string]Extension
-	configs      map[string]map[string]interface{}
-	services     map[string]interface{}
-	serviceMu    sync.RWMutex
+	mu            sync.RWMutex
+	extensions    map[string]Extension
+	configs       map[string]map[string]interface{}
+	services      map[string]interface{}
+	serviceMu     sync.RWMutex
 	eventHandlers map[string][]func(interface{}) error
-	eventMu      sync.RWMutex
-	ctx          context.Context
-	cancel       context.CancelFunc
-	logger       Logger
+	eventMu       sync.RWMutex
+	ctx           context.Context
+	cancel        context.CancelFunc
+	logger        Logger
+	routeAdder    func(method, path string, handler http.HandlerFunc)
 }
 
 // NewManager creates a new extension manager
@@ -29,9 +31,9 @@ func NewManager() *Manager {
 		configs:       make(map[string]map[string]interface{}),
 		services:      make(map[string]interface{}),
 		eventHandlers: make(map[string][]func(interface{}) error),
-		ctx:          ctx,
-		cancel:       cancel,
-		logger:       &defaultLogger{},
+		ctx:           ctx,
+		cancel:        cancel,
+		logger:        &defaultLogger{},
 	}
 }
 
@@ -208,10 +210,23 @@ func (m *Manager) GetService(name string) (interface{}, bool) {
 	return svc, exists
 }
 
-func (m *Manager) AddRoute(method, path string, handler interface{}) {
-	// Routes are registered through RouterRegistrar
-	// This is a placeholder for actual route registration logic
-	m.logger.Info("Route registered", "method", method, "path", path)
+func (m *Manager) AddRoute(method, path string, handler http.HandlerFunc) {
+	if m.routeAdder != nil {
+		m.routeAdder(method, path, handler)
+	} else {
+		m.logger.Warn("AddRoute called but no router set; call SetRouter first", "method", method, "path", path)
+	}
+}
+
+// SetRouter provides the function used to actually mount routes into the HTTP router.
+// Call this before Bootstrap so that routable extensions can register their routes.
+// Example:
+//
+//	manager.SetRouter(func(method, path string, h http.HandlerFunc) {
+//		r.Method(method, path, h)
+//	})
+func (m *Manager) SetRouter(fn func(method, path string, handler http.HandlerFunc)) {
+	m.routeAdder = fn
 }
 
 func (m *Manager) On(event string, handler func(interface{}) error) {
@@ -250,24 +265,25 @@ type routerRegistrar struct {
 	manager *Manager
 }
 
-func (r *routerRegistrar) GET(path string, handler interface{}) {
+func (r *routerRegistrar) GET(path string, handler http.HandlerFunc) {
 	r.manager.AddRoute("GET", path, handler)
 }
 
-func (r *routerRegistrar) POST(path string, handler interface{}) {
+func (r *routerRegistrar) POST(path string, handler http.HandlerFunc) {
 	r.manager.AddRoute("POST", path, handler)
 }
 
-func (r *routerRegistrar) PUT(path string, handler interface{}) {
+func (r *routerRegistrar) PUT(path string, handler http.HandlerFunc) {
 	r.manager.AddRoute("PUT", path, handler)
 }
 
-func (r *routerRegistrar) DELETE(path string, handler interface{}) {
+func (r *routerRegistrar) DELETE(path string, handler http.HandlerFunc) {
 	r.manager.AddRoute("DELETE", path, handler)
 }
 
-func (r *routerRegistrar) Use(middleware ...interface{}) {
-	// Middleware registration logic would go here
+func (r *routerRegistrar) Use(mw ...func(http.Handler) http.Handler) {
+	// Middleware registration; extensions may call this to apply group-level middleware.
+	// Hook into SetRouter equivalent if needed.
 }
 
 func (r *routerRegistrar) Group(prefix string, fn func()) {
