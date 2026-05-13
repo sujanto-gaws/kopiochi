@@ -53,7 +53,7 @@ func (r *UserRepo) FindByUsername(ctx context.Context, username string) (*domain
 	row := new(models.BunUser)
 	err := r.db.NewSelect().
 		Model(row).
-		Where("email = ?", username). // BunUser has no username column; email is the login identifier
+		Where("username = ?", username). // BunUser has no username column; email is the login identifier
 		Scan(ctx)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -71,6 +71,7 @@ func (r *UserRepo) Save(ctx context.Context, user *domain.User) error {
 	_, err := r.db.NewInsert().
 		Model(bunUser).
 		On("CONFLICT (id) DO UPDATE").
+		Set("username = EXCLUDE.username").
 		Set("email = EXCLUDED.email").
 		Set("name = EXCLUDED.name").
 		Set("roles = EXCLUDED.roles").
@@ -89,6 +90,7 @@ func (r *UserRepo) Save(ctx context.Context, user *domain.User) error {
 func fromDomainUser(u *domain.User) *models.BunUser {
 	return &models.BunUser{
 		ID:                  u.ID,
+		Username:            u.Username,
 		Email:               u.Email,
 		Name:                u.Name,
 		Roles:               u.Roles,
@@ -104,6 +106,7 @@ func fromDomainUser(u *domain.User) *models.BunUser {
 func toDomainUser(row *models.BunUser) *domain.User {
 	return &domain.User{
 		ID:                  row.ID,
+		Username:            row.Username,
 		Email:               row.Email,
 		Name:                row.Name,
 		Roles:               row.Roles,

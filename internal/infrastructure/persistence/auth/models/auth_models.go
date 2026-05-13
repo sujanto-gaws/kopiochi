@@ -13,6 +13,7 @@ type BunUser struct {
 	bun.BaseModel `bun:"table:auth_users,alias:u"`
 
 	ID                  uuid.UUID  `bun:"id,pk,type:uuid,default:gen_random_uuid()"`
+	Username            string     `bun:"username,notnull"`
 	Email               string     `bun:"email,notnull"`
 	Name                string     `bun:"name"`
 	Roles               []string   `bun:"roles,array"`

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"strings"
+	"time"
 
 	app "github.com/sujanto-gaws/kopiochi/internal/application/auth"
 	domain "github.com/sujanto-gaws/kopiochi/internal/domain/auth"
@@ -23,12 +24,13 @@ type AuthService interface {
 
 // AuthHandler handles HTTP requests for authentication operations
 type AuthHandler struct {
-	svc AuthService
+	svc        AuthService
+	refreshTTL time.Duration
 }
 
 // NewAuthHandler creates a new auth handler
-func NewAuthHandler(svc AuthService) *AuthHandler {
-	return &AuthHandler{svc: svc}
+func NewAuthHandler(svc AuthService, refreshTTL time.Duration) *AuthHandler {
+	return &AuthHandler{svc: svc, refreshTTL: refreshTTL}
 }
 
 // Login handles POST /auth/login
@@ -73,6 +75,8 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		writeProblemDetails(w, "internal_error", "Internal server error", http.StatusInternalServerError, "")
 		return
 	}
+	setRefreshCookie(w, resp.RefreshToken, h.refreshTTL)
+	resp.RefreshToken = ""
 	writeJSON(w, http.StatusOK, resp)
 }
 
@@ -96,6 +100,7 @@ func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
 		writeProblemDetails(w, "internal_error", "Logout failed", http.StatusInternalServerError, "")
 		return
 	}
+	clearRefreshCookie(w)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -200,6 +205,8 @@ func (h *AuthHandler) MFAVerify(w http.ResponseWriter, r *http.Request) {
 		writeOAuth2Error(w, "server_error", "Internal error", http.StatusInternalServerError)
 		return
 	}
+	setRefreshCookie(w, resp.RefreshToken, h.refreshTTL)
+	resp.RefreshToken = ""
 	writeJSON(w, http.StatusOK, resp)
 }
 
@@ -240,6 +247,8 @@ func (h *AuthHandler) Refresh(w http.ResponseWriter, r *http.Request) {
 		writeProblemDetails(w, "internal_error", "Internal error", http.StatusInternalServerError, "")
 		return
 	}
+	setRefreshCookie(w, resp.RefreshToken, h.refreshTTL)
+	resp.RefreshToken = ""
 	writeJSON(w, http.StatusOK, resp)
 }
 

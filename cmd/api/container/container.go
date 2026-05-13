@@ -61,7 +61,7 @@ func New(cfg *config.Config, db bun.IDB) (*Container, error) {
 		totpSvc,
 		mfaStore,
 	)
-	authHandler := handlers.NewAuthHandler(authSvc)
+	authHandler := handlers.NewAuthHandler(authSvc, cfg.Auth.RefreshTokenTTL)
 
 	// ── User ─────────────────────────────────────────────────────────────────
 	userRepo := repository.NewUserRepository(db)

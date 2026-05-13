@@ -11,6 +11,7 @@ import (
 
 type User struct {
 	ID          uuid.UUID
+	Username    string
 	Email       string
 	Name        string
 	Roles       []string

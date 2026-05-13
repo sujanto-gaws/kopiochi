@@ -3,7 +3,34 @@ package handlers
 import (
 	"encoding/json"
 	"net/http"
+	"time"
 )
+
+const refreshTokenCookie = "refresh_token"
+
+func setRefreshCookie(w http.ResponseWriter, token string, ttl time.Duration) {
+	http.SetCookie(w, &http.Cookie{
+		Name:     refreshTokenCookie,
+		Value:    token,
+		Path:     "/",
+		MaxAge:   int(ttl.Seconds()),
+		HttpOnly: true,
+		Secure:   true,
+		SameSite: http.SameSiteStrictMode,
+	})
+}
+
+func clearRefreshCookie(w http.ResponseWriter) {
+	http.SetCookie(w, &http.Cookie{
+		Name:     refreshTokenCookie,
+		Value:    "",
+		Path:     "/",
+		MaxAge:   -1,
+		HttpOnly: true,
+		Secure:   true,
+		SameSite: http.SameSiteStrictMode,
+	})
+}
 
 // errorResponse creates a standardized error JSON response
 func errorResponse(message string) map[string]string {
