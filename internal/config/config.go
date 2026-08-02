@@ -33,6 +33,14 @@ type Server struct {
 	// IP. The default is empty, meaning trust nothing: the socket address
 	// is always used. See internal/middleware.RealIP.
 	TrustedProxies []string `mapstructure:"trusted_proxies"`
+	// EnableHSTS gates the Strict-Transport-Security response header
+	// (internal/httpx.SecurityHeaders). It must only be turned on when TLS
+	// is actually terminated somewhere in front of this process -- this
+	// server always listens plain HTTP. Emitting HSTS unconditionally would,
+	// at best, be ignored by a client talking plain HTTP and, at worst, get
+	// cached by a browser against a plain-HTTP dev origin such as
+	// http://localhost and lock a developer out of it. Default: false.
+	EnableHSTS bool `mapstructure:"enable_hsts"`
 }
 
 type DB struct {
@@ -124,6 +132,9 @@ func Load(cfgPath string) (*Config, error) {
 	// Empty by default: trust no proxy, always use the socket address for
 	// the client IP. A permissive default here would be a security bug.
 	v.SetDefault("server.trusted_proxies", []string{})
+	// Off by default: this server always listens plain HTTP. Only flip this
+	// on for a deployment where TLS is genuinely terminated in front of it.
+	v.SetDefault("server.enable_hsts", false)
 	v.SetDefault("db.host", "localhost")
 	v.SetDefault("db.port", 5432)
 	v.SetDefault("db.sslmode", "disable")

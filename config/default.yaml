@@ -17,6 +17,12 @@ server:
   # always use the raw socket address. Only add entries here if the service
   # sits behind a proxy/load balancer you control, e.g. ["10.0.0.0/8"].
   trusted_proxies: []
+  # Emits Strict-Transport-Security (internal/httpx.SecurityHeaders). Only
+  # turn this on for a deployment where TLS is genuinely terminated in front
+  # of this process -- it always listens plain HTTP itself. Leaving this on
+  # for a plain-HTTP origin (e.g. local dev on http://localhost) can get the
+  # header cached by a browser and lock out later plain-HTTP access.
+  enable_hsts: false
 
 db:
   host: "localhost"
