@@ -25,6 +25,11 @@ type Server struct {
 	IdleTimeout       time.Duration `mapstructure:"idle_timeout"`
 	ShutdownTimeout   time.Duration `mapstructure:"shutdown_timeout"`
 	RequestTimeout    time.Duration `mapstructure:"request_timeout"`
+	// TrustedProxies lists CIDR ranges whose forwarded headers
+	// (X-Forwarded-For, X-Real-Ip) are honored when resolving the client
+	// IP. The default is empty, meaning trust nothing: the socket address
+	// is always used. See internal/middleware.RealIP.
+	TrustedProxies []string `mapstructure:"trusted_proxies"`
 }
 
 type DB struct {
@@ -101,6 +106,9 @@ func Load(cfgPath string) (*Config, error) {
 	v.SetDefault("server.idle_timeout", "120s")
 	v.SetDefault("server.shutdown_timeout", "30s")
 	v.SetDefault("server.request_timeout", "60s")
+	// Empty by default: trust no proxy, always use the socket address for
+	// the client IP. A permissive default here would be a security bug.
+	v.SetDefault("server.trusted_proxies", []string{})
 	v.SetDefault("db.host", "localhost")
 	v.SetDefault("db.port", 5432)
 	v.SetDefault("db.sslmode", "disable")

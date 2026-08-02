@@ -56,7 +56,13 @@ func NewRouter(cfg config.Server, mw ...func(http.Handler) http.Handler) *chi.Mu
 	// Core middleware stack (order matters)
 	r.Use(middleware.Recoverer)
 	r.Use(middleware.RequestID)
-	r.Use(middleware.RealIP)
+	// zlog.RealIP replaces chi's middleware.RealIP, which trusts forwarded
+	// headers from any peer unconditionally. Ours resolves the client IP
+	// from trusted proxies only (empty by default = trust nothing) and
+	// stores it in the request context for the request logger and the rate
+	// limiter to consume, instead of every consumer re-parsing headers
+	// itself. It must run before anything that keys or logs on client IP.
+	r.Use(zlog.RealIP(zlog.ParseTrustedProxies(cfg.TrustedProxies)))
 	r.Use(middleware.Timeout(cfg.RequestTimeout))
 	r.Use(zlog.ZerologRequestLogger)
 

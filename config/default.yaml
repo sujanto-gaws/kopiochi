@@ -7,6 +7,11 @@ server:
   idle_timeout: "120s"
   shutdown_timeout: "30s"
   request_timeout: "60s"
+  # CIDR allowlist of proxies whose X-Forwarded-For/X-Real-Ip headers are
+  # trusted when resolving the client IP. Empty (default) = trust nothing,
+  # always use the raw socket address. Only add entries here if the service
+  # sits behind a proxy/load balancer you control, e.g. ["10.0.0.0/8"].
+  trusted_proxies: []
 
 db:
   host: "localhost"
