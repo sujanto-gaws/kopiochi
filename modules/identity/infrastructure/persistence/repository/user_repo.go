@@ -71,7 +71,7 @@ func (r *UserRepo) Save(ctx context.Context, user *domain.User) error {
 	_, err := r.db.NewInsert().
 		Model(bunUser).
 		On("CONFLICT (id) DO UPDATE").
-		Set("username = EXCLUDE.username").
+		Set("username = EXCLUDED.username").
 		Set("email = EXCLUDED.email").
 		Set("name = EXCLUDED.name").
 		Set("roles = EXCLUDED.roles").
