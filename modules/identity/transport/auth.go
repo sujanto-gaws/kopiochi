@@ -8,12 +8,8 @@ import (
 	"strings"
 	"time"
 
-	// TODO(task 1.4/1.5): this is a temporary back-reference to the legacy
-	// handlers package, needed only for RouterGroup/RegisterRoutes so this move
-	// leaves the old main.go/routes.go wiring building unchanged. It goes away
-	// once RegisterRoutes is replaced by the self-contained Routes(chi.Router)
-	// method (see module.go).
-	"github.com/sujanto-gaws/kopiochi/internal/infrastructure/http/handlers"
+	"github.com/go-chi/chi/v5"
+
 	app "github.com/sujanto-gaws/kopiochi/modules/identity/application"
 	domain "github.com/sujanto-gaws/kopiochi/modules/identity/domain"
 )
@@ -32,11 +28,18 @@ type AuthService interface {
 type AuthHandler struct {
 	svc        AuthService
 	refreshTTL time.Duration
+	// authMW protects routes that require a valid access token. It is injected
+	// through NewAuthHandler and must never be nil — module.New fails closed
+	// (returns an error) rather than constructing a handler that would silently
+	// serve unprotected routes.
+	authMW func(http.Handler) http.Handler
 }
 
-// NewAuthHandler creates a new auth handler
-func NewAuthHandler(svc AuthService, refreshTTL time.Duration) *AuthHandler {
-	return &AuthHandler{svc: svc, refreshTTL: refreshTTL}
+// NewAuthHandler creates a new auth handler. authMW enforces a valid access
+// token on the protected routes mounted by Routes; callers must supply a
+// non-nil middleware.
+func NewAuthHandler(svc AuthService, refreshTTL time.Duration, authMW func(http.Handler) http.Handler) *AuthHandler {
+	return &AuthHandler{svc: svc, refreshTTL: refreshTTL, authMW: authMW}
 }
 
 // Login handles POST /auth/login
@@ -258,23 +261,31 @@ func (h *AuthHandler) Refresh(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
-// RegisterRoutes implements handlers.RouteRegistrar.
+// Routes mounts this module's endpoints onto the given router and declares
+// its own protection, rather than relying on the caller to pre-build public/
+// protected sub-routers. Mounting the group returned here under /api/v1
+// yields /api/v1/auth/login, /api/v1/auth/refresh, etc.
 //
 //	Public routes (no token required):
 //	  POST /auth/login
 //	  POST /auth/refresh
 //	  POST /auth/mfa/verify      (uses short-lived MFA token, not access token)
 //
-//	Protected routes (access token required):
+//	Protected routes (access token required, h.authMW applied):
 //	  POST /auth/logout
 //	  POST /auth/mfa/setup
 //	  POST /auth/mfa/setup/verify
-func (h *AuthHandler) RegisterRoutes(g handlers.RouterGroup) {
-	g.Public.Post("/auth/login", h.Login)
-	g.Public.Post("/auth/refresh", h.Refresh)
-	g.Public.Post("/auth/mfa/verify", h.MFAVerify)
+func (h *AuthHandler) Routes(r chi.Router) {
+	r.Route("/auth", func(r chi.Router) {
+		r.Post("/login", h.Login)
+		r.Post("/refresh", h.Refresh)
+		r.Post("/mfa/verify", h.MFAVerify)
 
-	g.Protected.Post("/auth/logout", h.Logout)
-	g.Protected.Post("/auth/mfa/setup", h.MFASetup)
-	g.Protected.Post("/auth/mfa/setup/verify", h.MFAVerifySetup)
+		r.Group(func(r chi.Router) {
+			r.Use(h.authMW)
+			r.Post("/logout", h.Logout)
+			r.Post("/mfa/setup", h.MFASetup)
+			r.Post("/mfa/setup/verify", h.MFAVerifySetup)
+		})
+	})
 }

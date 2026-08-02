@@ -26,6 +26,28 @@ type Container struct {
 	registrars []handlers.RouteRegistrar
 }
 
+// authRegistrar adapts the identity module's AuthHandler — whose Routes
+// method self-mounts on a chi.Router per the module.Module contract (see
+// modules/identity/module.go) — to the legacy handlers.RouteRegistrar
+// interface that routes.Setup still expects.
+//
+// This shim is scaffolding only: it exists so this task leaves main.go and
+// routes.go untouched (their migration to mounting module.Module.Routes
+// directly is task 1.4/1.5). Delete it once that migration lands.
+type authRegistrar struct {
+	h *identitytransport.AuthHandler
+}
+
+func (a authRegistrar) RegisterRoutes(g handlers.RouterGroup) {
+	g.Public.Post("/auth/login", a.h.Login)
+	g.Public.Post("/auth/refresh", a.h.Refresh)
+	g.Public.Post("/auth/mfa/verify", a.h.MFAVerify)
+
+	g.Protected.Post("/auth/logout", a.h.Logout)
+	g.Protected.Post("/auth/mfa/setup", a.h.MFASetup)
+	g.Protected.Post("/auth/mfa/setup/verify", a.h.MFAVerifySetup)
+}
+
 // New builds the full dependency graph and returns a ready Container.
 func New(cfg *config.Config, db bun.IDB) (*Container, error) {
 	// ── Shared infrastructure ────────────────────────────────────────────────
@@ -62,7 +84,10 @@ func New(cfg *config.Config, db bun.IDB) (*Container, error) {
 		totpSvc,
 		mfaStore,
 	)
-	authHandler := identitytransport.NewAuthHandler(authSvc, cfg.Auth.RefreshTokenTTL)
+	// authMW is derived from the same jwtSvc used to mint tokens, so it is
+	// guaranteed non-nil here — construction above already returned on error.
+	authMW := identitytransport.AuthRequired(jwtSvc)
+	authHandler := identitytransport.NewAuthHandler(authSvc, cfg.Auth.RefreshTokenTTL, authMW)
 
 	// ── User ─────────────────────────────────────────────────────────────────
 	userRepo := repository.NewUserRepository(db)
@@ -73,7 +98,7 @@ func New(cfg *config.Config, db bun.IDB) (*Container, error) {
 	// To add a new handler: wire it above and append it here.
 	return &Container{
 		registrars: []handlers.RouteRegistrar{
-			authHandler,
+			authRegistrar{h: authHandler},
 			userHandler,
 		},
 	}, nil
