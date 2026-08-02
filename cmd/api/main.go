@@ -9,7 +9,6 @@ import (
 	"github.com/rs/zerolog/log"
 	"github.com/spf13/cobra"
 
-	"github.com/sujanto-gaws/kopiochi/cmd/api/container"
 	"github.com/sujanto-gaws/kopiochi/internal/config"
 	"github.com/sujanto-gaws/kopiochi/internal/db"
 	"github.com/sujanto-gaws/kopiochi/internal/infrastructure/http/handlers"
@@ -79,10 +78,10 @@ func main() {
 			defer pool.Close()
 			log.Info().Msg("database connected & bun ORM initialized")
 
-			// Dependency Injection — all handler wiring lives in container.go
-			c, err := container.New(cfg, bunDB)
+			// Dependency Injection — all module wiring lives in container.go
+			app, err := BuildApp(cfg, bunDB, log.Logger)
 			if err != nil {
-				return fmt.Errorf("build container: %w", err)
+				return fmt.Errorf("build app: %w", err)
 			}
 
 			// Setup router with plugin middleware chain
@@ -112,7 +111,17 @@ func main() {
 			}
 			g := handlers.RouterGroup{Public: v1, Protected: protected}
 
-			routes.Setup(r, g, c.Registrars()...)
+			// app.Modules is bridged onto the legacy RouteRegistrar mechanism
+			// here so this commit can focus solely on BuildApp and the
+			// zero-module guard. The bridge (and the /api/v1 shadowing bug it
+			// preserves) is removed in the very next commit, which replaces
+			// routes.Setup with internal/httpx.Mount.
+			registrars := make([]handlers.RouteRegistrar, len(app.Modules))
+			for i, m := range app.Modules {
+				registrars[i] = moduleRegistrar{m}
+			}
+
+			routes.Setup(r, g, registrars...)
 
 			// Start server with graceful shutdown
 			server.Run(
