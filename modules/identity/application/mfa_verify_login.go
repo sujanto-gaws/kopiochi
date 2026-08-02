@@ -2,12 +2,17 @@ package auth
 
 import (
 	"context"
+
+	domain "github.com/sujanto-gaws/kopiochi/modules/identity/domain"
 )
 
 func (s *Service) VerifyMFA(ctx context.Context, mfaToken string, req MfaVerifyRequest) (*TokenResponse, error) {
-	// Validate the temporary MFA token
-	claims, err := s.tokenIssuer.Validate(mfaToken)
-	if err != nil || claims.Scope != "mfa" {
+	// Validate the temporary MFA token. want=domain.ClassMFA rejects, at the
+	// validation boundary, any token that isn't the half-authenticated MFA
+	// class -- in particular a fully-authenticated access token can never be
+	// replayed here to skip the second factor.
+	claims, err := s.tokenIssuer.Validate(mfaToken, domain.ClassMFA)
+	if err != nil {
 		return nil, ErrInvalidMFAToken
 	}
 	user, err := s.userRepo.FindByID(ctx, claims.Subject)

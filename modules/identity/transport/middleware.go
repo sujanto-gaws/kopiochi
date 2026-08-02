@@ -17,8 +17,13 @@ func AuthRequired(tokenIssuer domain.TokenIssuer) func(http.Handler) http.Handle
 				return
 			}
 			tokenStr := strings.TrimPrefix(header, "Bearer ")
-			claims, err := tokenIssuer.Validate(tokenStr)
-			if err != nil || claims.Scope != "access" {
+			// want=domain.ClassAccess makes it structurally impossible for a
+			// token minted for any other purpose (e.g. the short-lived MFA
+			// token) to be accepted here -- Validate rejects a class
+			// mismatch itself, rather than this middleware inspecting a
+			// convention-only field.
+			claims, err := tokenIssuer.Validate(tokenStr, domain.ClassAccess)
+			if err != nil {
 				http.Error(w, `{"error":"invalid token"}`, http.StatusUnauthorized)
 				return
 			}

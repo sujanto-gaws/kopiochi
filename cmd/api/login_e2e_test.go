@@ -146,11 +146,11 @@ func TestLogin_EndToEnd_ReturnsToken(t *testing.T) {
 	require.NotEmpty(t, tokenResp.AccessToken, "expected a non-empty access token in the login response")
 
 	// The load-bearing assertion: the token must actually verify against the
-	// app's own public key and carry the access-token scope/subject — a
+	// app's own public key and carry the access-token class/subject — a
 	// non-empty string alone proves nothing.
-	claims, err := jwtSvc.Validate(tokenResp.AccessToken)
+	claims, err := jwtSvc.Validate(tokenResp.AccessToken, domain.ClassAccess)
 	require.NoError(t, err, "access token returned by /api/v1/auth/login must verify via the app's own JWTService")
-	require.Equal(t, "access", claims.Scope, "token returned by a successful login must carry the access-token scope")
+	require.Equal(t, domain.ClassAccess, claims.Class, "token returned by a successful login must carry the access token class")
 	require.Equal(t, seeded.ID.String(), claims.Subject, "token subject must identify the user who logged in")
 }
 

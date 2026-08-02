@@ -72,15 +72,15 @@ func signRaw(t *testing.T, svc *JWTService, claims jwt.MapClaims) string {
 	return signed
 }
 
-func validClaims(svc *JWTService) jwt.MapClaims {
+func validClaims(svc *JWTService, cls domain.Class) jwt.MapClaims {
 	now := time.Now()
 	return jwt.MapClaims{
-		"sub":   uuid.NewString(),
-		"iss":   svc.issuer,
-		"aud":   svc.audience,
-		"scope": "access",
-		"iat":   now.Unix(),
-		"exp":   now.Add(15 * time.Minute).Unix(),
+		"sub": uuid.NewString(),
+		"iss": svc.issuer,
+		"aud": svc.audience,
+		"cls": string(cls),
+		"iat": now.Unix(),
+		"exp": now.Add(15 * time.Minute).Unix(),
 	}
 }
 
@@ -95,12 +95,12 @@ func TestValidate_RejectsWrongAlgorithm(t *testing.T) {
 	pubDER, err := x509.MarshalPKIXPublicKey(svc.publicKey)
 	require.NoError(t, err)
 
-	claims := validClaims(svc)
+	claims := validClaims(svc, domain.ClassAccess)
 	forged := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 	forgedToken, err := forged.SignedString(pubDER)
 	require.NoError(t, err)
 
-	_, err = svc.Validate(forgedToken)
+	_, err = svc.Validate(forgedToken, domain.ClassAccess)
 	require.Error(t, err, "an HS256 token signed with the RSA public key must never verify")
 }
 
@@ -110,12 +110,12 @@ func TestValidate_RejectsWrongAlgorithm(t *testing.T) {
 func TestValidate_RejectsNoneAlgorithm(t *testing.T) {
 	svc := newTestService(t)
 
-	claims := validClaims(svc)
+	claims := validClaims(svc, domain.ClassAccess)
 	unsigned := jwt.NewWithClaims(jwt.SigningMethodNone, claims)
 	unsignedToken, err := unsigned.SignedString(jwt.UnsafeAllowNoneSignatureType)
 	require.NoError(t, err)
 
-	_, err = svc.Validate(unsignedToken)
+	_, err = svc.Validate(unsignedToken, domain.ClassAccess)
 	require.Error(t, err, "an unsigned \"none\"-alg token must never verify")
 }
 
@@ -124,11 +124,11 @@ func TestValidate_RejectsNoneAlgorithm(t *testing.T) {
 func TestValidate_RejectsWrongIssuer(t *testing.T) {
 	svc := newTestService(t)
 
-	claims := validClaims(svc)
+	claims := validClaims(svc, domain.ClassAccess)
 	claims["iss"] = "some-other-service"
 	tokenStr := signRaw(t, svc, claims)
 
-	_, err := svc.Validate(tokenStr)
+	_, err := svc.Validate(tokenStr, domain.ClassAccess)
 	require.Error(t, err, "a token issued by a different iss must be rejected")
 }
 
@@ -138,11 +138,11 @@ func TestValidate_RejectsWrongIssuer(t *testing.T) {
 func TestValidate_RejectsWrongAudience(t *testing.T) {
 	svc := newTestService(t)
 
-	claims := validClaims(svc)
+	claims := validClaims(svc, domain.ClassAccess)
 	claims["aud"] = "some-other-audience"
 	tokenStr := signRaw(t, svc, claims)
 
-	_, err := svc.Validate(tokenStr)
+	_, err := svc.Validate(tokenStr, domain.ClassAccess)
 	require.Error(t, err, "a token minted for a different aud must be rejected")
 }
 
@@ -152,13 +152,38 @@ func TestValidate_RejectsWrongAudience(t *testing.T) {
 func TestValidate_RejectsExpired(t *testing.T) {
 	svc := newTestService(t)
 
-	claims := validClaims(svc)
+	claims := validClaims(svc, domain.ClassAccess)
 	claims["iat"] = time.Now().Add(-time.Hour).Unix()
 	claims["exp"] = time.Now().Add(-time.Minute).Unix()
 	tokenStr := signRaw(t, svc, claims)
 
-	_, err := svc.Validate(tokenStr)
+	_, err := svc.Validate(tokenStr, domain.ClassAccess)
 	require.Error(t, err, "an expired token must be rejected")
+}
+
+// TestValidate_RejectsMFATokenAsAccessToken is the Phase 2 exit criterion:
+// a short-lived, half-authenticated MFA token must never be accepted where
+// an access token is expected. This must fail structurally (the Validate API
+// requires the caller to state the expected class), not by an incidental
+// string comparison the caller could forget.
+func TestValidate_RejectsMFATokenAsAccessToken(t *testing.T) {
+	svc := newTestService(t)
+	user := testUser()
+
+	mfaToken, err := svc.IssueMFAToken(user)
+	require.NoError(t, err)
+
+	claims, err := svc.Validate(mfaToken, domain.ClassAccess)
+	require.Error(t, err, "an MFA token must never validate as an access token")
+	require.Nil(t, claims)
+	require.ErrorIs(t, err, domain.ErrWrongTokenClass)
+
+	// Control: the same token must validate successfully as what it
+	// actually is.
+	claims, err = svc.Validate(mfaToken, domain.ClassMFA)
+	require.NoError(t, err, "the MFA token must still validate as an MFA token")
+	require.Equal(t, domain.ClassMFA, claims.Class)
+	require.Equal(t, user.ID.String(), claims.Subject)
 }
 
 // TestValidate_AcceptsGenuineAccessToken is the control proving Validate
@@ -170,8 +195,8 @@ func TestValidate_AcceptsGenuineAccessToken(t *testing.T) {
 	tokenStr, err := svc.IssueAccessToken(user, 15*time.Minute)
 	require.NoError(t, err)
 
-	claims, err := svc.Validate(tokenStr)
+	claims, err := svc.Validate(tokenStr, domain.ClassAccess)
 	require.NoError(t, err)
-	require.Equal(t, "access", claims.Scope)
+	require.Equal(t, domain.ClassAccess, claims.Class)
 	require.Equal(t, user.ID.String(), claims.Subject)
 }

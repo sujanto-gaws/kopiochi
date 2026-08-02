@@ -69,6 +69,7 @@ func (s *JWTService) IssueAccessToken(user domain.User, ttl time.Duration) (stri
 		"roles":       user.Roles,
 		"permissions": user.Permissions,
 		"scope":       "access",
+		"cls":         string(domain.ClassAccess),
 		"iss":         s.issuer,
 		"aud":         s.audience,
 		"iat":         now.Unix(),
@@ -85,6 +86,7 @@ func (s *JWTService) IssueIDToken(user domain.User, clientID string) (string, er
 		"name":  user.Name,
 		"aud":   clientID,
 		"iss":   s.issuer,
+		"cls":   string(domain.ClassID),
 		"iat":   now.Unix(),
 		"exp":   now.Add(15 * time.Minute).Unix(),
 		"scope": "openid profile email",
@@ -97,6 +99,7 @@ func (s *JWTService) IssueMFAToken(user domain.User) (string, error) {
 	claims := jwt.MapClaims{
 		"sub":   user.ID.String(),
 		"scope": "mfa",
+		"cls":   string(domain.ClassMFA),
 		"iss":   s.issuer,
 		"aud":   s.audience,
 		"iat":   now.Unix(),
@@ -116,8 +119,11 @@ func (s *JWTService) sign(claims jwt.MapClaims) (string, error) {
 //     including "none" or any HMAC variant, is ever accepted;
 //   - iss matches s.issuer and aud matches s.audience;
 //   - exp is present (jwt.WithExpirationRequired) and not expired, allowing
-//     s.leeway for clock skew.
-func (s *JWTService) Validate(tokenStr string) (*domain.Claims, error) {
+//     s.leeway for clock skew;
+//   - the token's "cls" claim equals want — a token minted for a different
+//     class (e.g. an MFA token presented where an access token is expected)
+//     is rejected with ErrWrongTokenClass, structurally, not by convention.
+func (s *JWTService) Validate(tokenStr string, want domain.Class) (*domain.Claims, error) {
 	claims := jwt.MapClaims{}
 	parsed, err := jwt.ParseWithClaims(tokenStr, claims, func(token *jwt.Token) (interface{}, error) {
 		// Defense in depth: jwt.WithValidMethods below already rejects any
@@ -141,7 +147,12 @@ func (s *JWTService) Validate(tokenStr string) (*domain.Claims, error) {
 	if !parsed.Valid {
 		return nil, errors.New("invalid token")
 	}
-	// Extract into Claims struct
+
+	cls := domain.Class(getString(claims, "cls"))
+	if cls != want {
+		return nil, fmt.Errorf("%w: got %q, want %q", domain.ErrWrongTokenClass, cls, want)
+	}
+
 	c := &domain.Claims{
 		Subject:     getString(claims, "sub"),
 		Email:       getString(claims, "email"),
@@ -149,6 +160,7 @@ func (s *JWTService) Validate(tokenStr string) (*domain.Claims, error) {
 		Roles:       getStringSlice(claims, "roles"),
 		Permissions: getStringSlice(claims, "permissions"),
 		Scope:       getString(claims, "scope"),
+		Class:       cls,
 		IssuedAt:    getInt64(claims, "iat"),
 		ExpiresAt:   getInt64(claims, "exp"),
 	}
