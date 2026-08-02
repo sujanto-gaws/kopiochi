@@ -5,10 +5,10 @@ import (
 	"crypto/x509"
 	"encoding/pem"
 	"fmt"
+	"github.com/golang-jwt/jwt/v5"
+	domain "github.com/sujanto-gaws/kopiochi/internal/domain/auth"
 	"os"
 	"time"
-	domain "github.com/sujanto-gaws/kopiochi/internal/domain/auth"
-	"github.com/golang-jwt/jwt/v5"
 )
 
 type JWTService struct {
@@ -47,14 +47,14 @@ func (s *JWTService) IssueAccessToken(user domain.User, ttl time.Duration) (stri
 
 func (s *JWTService) IssueIDToken(user domain.User, clientID string) (string, error) {
 	claims := jwt.MapClaims{
-		"sub":         user.ID.String(),
-		"email":       user.Email,
-		"name":        user.Name,
-		"aud":         clientID,
-		"iss":         s.issuer,
-		"iat":         time.Now().Unix(),
-		"exp":         time.Now().Add(15 * time.Minute).Unix(),
-		"scope":       "openid profile email",
+		"sub":   user.ID.String(),
+		"email": user.Email,
+		"name":  user.Name,
+		"aud":   clientID,
+		"iss":   s.issuer,
+		"iat":   time.Now().Unix(),
+		"exp":   time.Now().Add(15 * time.Minute).Unix(),
+		"scope": "openid profile email",
 	}
 	token := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
 	return token.SignedString(s.privateKey)

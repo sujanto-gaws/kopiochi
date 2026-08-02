@@ -5,8 +5,8 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
-	"time"
 	domain "github.com/sujanto-gaws/kopiochi/internal/domain/auth"
+	"time"
 )
 
 func (s *Service) Login(ctx context.Context, req LoginRequest) (*TokenResponse, error) {
