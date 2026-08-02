@@ -1,22 +1,30 @@
 # Secret Management
 
-**Status:** Partially implemented — see [ADR-008](../adr/008%20-%20Configuration%20Precedence%20and%20Secret%20Handling.md)
+**Status:** Accepted — partially implemented — see [ADR-008](../adr/008%20-%20Configuration%20Precedence%20and%20Secret%20Handling.md)
 **Date:** 2026-08-02
-**Last verified:** 2026-08-02, after Phase 0
-**Severity:** Medium — the working tree is clean (Phase 0), but every value below
-remains in git history, nothing rejects a placeholder secret, and rotation of the
-exposed credentials is an out-of-repo action that cannot be verified from here.
+**Last verified:** 2026-08-02, after Phase 2
+**Severity:** Medium — every code-level problem below is now closed, but the
+exposed values remain in git history and rotation is an out-of-repo action that
+cannot be verified from here.
 
-Phase 0 status at a glance:
+Status at a glance, after Phase 0 and Phase 2.9:
 
 | Problem | State |
 |---|---|
 | 1. Credentials in `config/default.yaml` | **Fixed** in `b74b358` — still in history |
 | 2. RSA private key present and not ignored | **Fixed** in `8652534` — still in history |
 | 3. `.gitignore` malformed | **Fixed** in `4c72a83` |
-| 4. Nothing detects a placeholder | **Open** — Phase 2.9 |
-| 5. Secrets can reach the logs | **Open** — Phase 2.9 |
+| 4. Nothing detects a placeholder | **Fixed** in `acc057d` |
+| 5. Secrets can reach the logs | **Fixed** in `acc057d` |
 | Rotation of the exposed credentials | **Unverifiable from the repo** — see below |
+
+One item on this page was closed by deletion rather than by fixing: the JWT
+signing secret. Phase 2.6 (`0cf07d9`) removed the HS256 plugin, so there is no
+HMAC secret in the configuration surface at all — no `plugins.auth.jwt.config.secret`
+key, no `APP_JWT_SECRET` binding, no `.env.example` entry. The **rotation**
+obligation below is unaffected: `"your-secret-key-change-in-production"` is still
+in git history, and any token ever signed with it is still forgeable by anyone
+who reads that history. Deleting the code that used it does not un-expose it.
 
 ---
 
@@ -89,17 +97,48 @@ nothing. The file also lacked `bin/`, `keys/`, and `*.pem`.
 
 *Fixed in `4c72a83`; see [repository hygiene](../06-quality/repository-hygiene.md).*
 
-### 4. Nothing detects a placeholder
+### 4 (fixed). Nothing detects a placeholder
 
 `"your-secret-key-change-in-production"` is a functioning HMAC key as far as the
 code is concerned. Ship it and every token in production is forgeable by anyone
 who has read the repository.
 
-### 5. Secrets can reach the logs
+*Fixed in `acc057d`. `isPlaceholderSecret` (`config.go:200-208`) rejects three
+things: the empty string, anything with a `CHANGEME` prefix (case-insensitive),
+and the two values that were actually committed to this repository — `"postgres"`
+and `"your-secret-key-change-in-production"`. `Config.Validate` applies it to
+`db.password`, so a deployment carrying a leaked default cannot boot. Test:
+`TestLoad_RejectsPlaceholderSecrets`.*
+
+*Two design points worth keeping. The prefix check is deliberately broader than
+an exact-match blacklist, because `.env.example` ships `CHANGEME_SET_YOUR_OWN_DB_PASSWORD`
+and someone editing the trailing wording without generating a real secret should
+still be caught. And the check is applied **only** to fields that must hold a
+real secret — never to `db.user`, where `"postgres"` is an entirely ordinary
+value that would otherwise be rejected.*
+
+*The JWT-secret half of this problem was closed differently: `0cf07d9` deleted
+the secret, so its placeholder check went with it.*
+
+### 5 (fixed). Secrets can reach the logs
 
 `internal/config/config.go` produces a `Config` whose `DB.Password` is a plain
 `string`. Any `log.Info().Interface("config", cfg)` — a natural thing to add
 while debugging — prints the password. Nothing prevents it.
+
+*Fixed in `acc057d`. `internal/platform/secret` provides `secret.String`, and
+`Config.DB.Password` is now that type instead of `string`. `String()`,
+`GoString()`, and `MarshalJSON()` all return `[REDACTED]`, so `%v`, `%s`, `%#v`,
+`Interface("config", cfg)`, and any JSON config dump print the placeholder
+rather than the value. `Reveal()` is the only way out and is greppable in
+review. `UnmarshalJSON` is provided so the type can still be populated from a
+legitimate JSON source — only marshalling is one-way.*
+
+*`mapstructure` decodes into it with no custom hook, because the underlying kind
+is `string` and reflect's `SetString` path handles it; that is asserted rather
+than assumed, in `TestString_MapstructureDecode`. `TestString_RedactsInsideAStruct`
+covers the case this was written for — the whole `Config` being formatted at
+once.*
 
 ---
 
@@ -120,6 +159,10 @@ while debugging — prints the password. Nothing prevents it.
 _ = v.BindEnv("db.password", "APP_DB_PASSWORD")
 _ = v.BindEnv("identity.jwt_secret", "APP_IDENTITY_JWT_SECRET")
 ```
+
+*As shipped there is exactly one secret to bind — `db.password` — and its error
+is checked rather than discarded. The second line never became real: RS256 needs
+no shared secret, so the only key material is the PEM files, handled below.*
 
 `config/default.yaml` after cleanup:
 
@@ -166,7 +209,21 @@ func (c *Config) validateSecrets() error {
 
 A deployment carrying a leaked default now **cannot start**.
 
-### Redacted secret type
+*Shipped in `acc057d`, with `"changeme"` generalised to a `CHANGEME` **prefix**
+match. The `identity.jwt_secret` branch — placeholder plus minimum length — has
+no subject after `0cf07d9` and did not ship.*
+
+> **`"gaws"` is not in the shipped list.** `legacyPlaceholderSecrets`
+> (`config.go:190-193`) holds `"postgres"` and
+> `"your-secret-key-change-in-production"`; the sketch above also listed
+> `"gaws"`, which is the DB password that was actually committed. A deployment
+> still using it therefore boots without complaint. Whether to add it is a real
+> trade-off — it is a short, plausible value that someone may have chosen
+> legitimately, so an exact-match rule risks refusing a valid credential — but
+> the gap should be a decision on the record rather than an omission. Rotation
+> (below) closes it either way, and is the thing that actually matters.
+
+### Redacted secret type — shipped
 
 Make leaking a secret through logs or JSON structurally difficult:
 
@@ -265,16 +322,20 @@ the fix. Deleting them from the file leaves them in history.
 2. ⚠️ **Rotate the JWT secret.** Any token signed with the placeholder is
    forgeable; rotating invalidates outstanding tokens, so schedule it with a
    forced re-authentication. **Outstanding**, and unverifiable from the repo for
-   the same reason.
+   the same reason. *Note that `0cf07d9` deleting the HS256 plugin does not
+   discharge this: it means nothing in the current code will accept such a token,
+   which is a good outcome, but any deployment still running a pre-`0cf07d9`
+   build accepts them, and the value is still in history.*
 3. ⚠️ **Treat `keys/private.pem` as burned** if it has ever been shared or copied
    outside the developer machine; generate a fresh keypair with `make keys`.
    **Outstanding.**
 4. ⏳ **Purge history** in the same pass as the binary purge described in
    [repository hygiene](../06-quality/repository-hygiene.md) — one coordinated
    force-push rather than two. Scheduled as Phase 5.1; not started.
-5. **Then** land the code changes. Partially done: `BindEnv` (`b74b358`),
-   repaired `.gitignore` (`4c72a83`), and `.githooks/` (`9c302ad`) have shipped.
-   Placeholder validation and `secret.String` remain — Phase 2.9.
+5. ✅ **Then** land the code changes. **Done.** `BindEnv` (`b74b358`, extended in
+   `acc057d`), repaired `.gitignore` (`4c72a83`), `.githooks/` (`9c302ad`), and
+   — in Phase 2.9 (`acc057d`) — placeholder validation, `secret.String`, and
+   `Config.Validate()` called from `Load`.
 
 Order matters: rotate first, so the window where a leaked-but-live credential
 sits in history is as short as possible. Steps 1–3 are the ones still open, and

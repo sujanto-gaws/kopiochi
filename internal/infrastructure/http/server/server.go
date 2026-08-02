@@ -16,6 +16,7 @@ import (
 	"github.com/rs/zerolog/log"
 
 	"github.com/sujanto-gaws/kopiochi/internal/config"
+	"github.com/sujanto-gaws/kopiochi/internal/httpx"
 	zlog "github.com/sujanto-gaws/kopiochi/internal/middleware"
 	"github.com/sujanto-gaws/kopiochi/internal/plugin"
 )
@@ -56,7 +57,18 @@ func NewRouter(cfg config.Server, mw ...func(http.Handler) http.Handler) *chi.Mu
 	// Core middleware stack (order matters)
 	r.Use(middleware.Recoverer)
 	r.Use(middleware.RequestID)
-	r.Use(middleware.RealIP)
+	// Cheap and applies to every response, including ones later middleware
+	// or the router itself produces (panics recovered by Recoverer above,
+	// 404s, 405s): headers set here are already on the ResponseWriter by
+	// the time anything downstream writes a status.
+	r.Use(httpx.SecurityHeaders(httpx.SecurityHeadersConfig{EnableHSTS: cfg.EnableHSTS}))
+	// zlog.RealIP replaces chi's middleware.RealIP, which trusts forwarded
+	// headers from any peer unconditionally. Ours resolves the client IP
+	// from trusted proxies only (empty by default = trust nothing) and
+	// stores it in the request context for the request logger and the rate
+	// limiter to consume, instead of every consumer re-parsing headers
+	// itself. It must run before anything that keys or logs on client IP.
+	r.Use(zlog.RealIP(zlog.ParseTrustedProxies(cfg.TrustedProxies)))
 	r.Use(middleware.Timeout(cfg.RequestTimeout))
 	r.Use(zlog.ZerologRequestLogger)
 

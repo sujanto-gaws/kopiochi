@@ -54,7 +54,7 @@ require (
 require (
 	github.com/fsnotify/fsnotify v1.9.0 // indirect
 	github.com/go-chi/chi/v5 v5.2.5
-	github.com/go-viper/mapstructure/v2 v2.5.0 // indirect
+	github.com/go-viper/mapstructure/v2 v2.5.0
 	github.com/jackc/pgx/v5 v5.9.1
 	github.com/pelletier/go-toml/v2 v2.2.4 // indirect
 	github.com/pquerna/otp v1.5.0

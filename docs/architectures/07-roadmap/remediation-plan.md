@@ -1,8 +1,8 @@
 # Remediation Plan
 
-**Status:** In progress — Phase 0 ✅ complete, Phase 1 ✅ complete, Phases 2–5 not started
+**Status:** In progress — Phases 0, 1, and 2 ✅ complete; Phases 3–5 not started
 **Date:** 2026-08-02
-**Last verified:** 2026-08-02
+**Last verified:** 2026-08-02, after Phase 2
 
 A sequenced plan to move from [current state](../00-overview/current-state.md) to
 [target architecture](../00-overview/target-architecture.md). Ordered by
@@ -19,7 +19,7 @@ repository · ⏳ not started.
 |---|---|
 | **Phase 0** — Stop the bleeding | ✅ Complete (0.5's credential *rotation* excepted — see ⚠️ below) |
 | **Phase 1** — Make the application work | ✅ Complete — exit criteria met |
-| **Phase 2** — Close the security gaps | ⏳ Not started |
+| **Phase 2** — Close the security gaps | ✅ Complete — exit criteria met (`-race` coverage ⚠️ unavailable, see below) |
 | **Phase 3** — Consolidate the structure | ⏳ Not started |
 | **Phase 4** — Build the safety net | ⏳ Not started — no CI exists |
 | **Phase 5** — Cleanup and hardening | ⏳ Not started |
@@ -75,29 +75,49 @@ passes; ✅ tests 1.1(a) and 1.1(b) are green.
 
 ---
 
-## Phase 2 — Close the security gaps (2–3 days) — ⏳ NOT STARTED
+## Phase 2 — Close the security gaps (2–3 days) — ✅ COMPLETE
 
-Can run in parallel with Phase 1 after 1.4, since the middleware work is
-independent of module wiring.
+Could run in parallel with Phase 1 after 1.4, since the middleware work is
+independent of module wiring; in the event it ran after Phase 1.
 
-| # | Task | Effort | Doc |
-|---|------|--------|-----|
-| 2.1 | Rewrite the rate limiter: token bucket, lock released before `next.ServeHTTP`, TTL eviction, `max_keys` cap | M | [rate limiting](../04-security/rate-limiting.md) |
-| 2.2 | `RealIP` from trusted-proxy CIDRs only; rate limiter and logs consume the resolved IP | S | [middleware](../04-security/middleware-hardening.md) |
-| 2.3 | CORS: allowlist-only default, no origin reflection outside the list, always `Vary: Origin`, reject `*` + credentials at config load, stop 403-ing non-browser clients | S | [middleware](../04-security/middleware-hardening.md) |
-| 2.4 | Pin the JWT algorithm; validate `iss`, `aud`, `exp` with leeway | S | [tokens](../04-security/token-architecture.md) |
-| 2.5 | Introduce token classes (`cls`); `Validate(token, want Class)`; MFA tokens cannot access the API | M | [tokens](../04-security/token-architecture.md) |
-| 2.6 | Standardise on RS256; delete `internal/plugins/auth/jwt.go` | S | [tokens](../04-security/token-architecture.md) |
-| 2.7 | Auth middleware fails closed — a module needing auth fails to construct without a verifier | S | [middleware](../04-security/middleware-hardening.md) |
-| 2.8 | Add security response headers | S | [middleware](../04-security/middleware-hardening.md) |
-| 2.9 | Config: `BindEnv` for secrets, placeholder rejection, `secret.String`, `Validate()` incl. the timeout inversion | M | [config](../03-configuration/configuration-model.md) |
+| # | Status | Task | Effort | Doc |
+|---|--------|------|--------|-----|
+| 2.1 | ✅ `dcc6e5d`, `d130519` | Rewrite the rate limiter: token bucket, lock released before `next.ServeHTTP`, TTL eviction, `max_keys` cap. Clock injected for deterministic tests. `max_keys` **rejects new keys** rather than evicting — evict-oldest is gameable | M | [rate limiting](../04-security/rate-limiting.md) |
+| 2.2 | ✅ `333968c` | `RealIP` from trusted-proxy CIDRs only; rate limiter and logs consume the resolved IP. Shipped as `internal/middleware/clientip.go`, replacing chi's `RealIP`; empty trusted list (the default) means trust nothing | S | [middleware](../04-security/middleware-hardening.md) |
+| 2.3 | ✅ `87381d2` | CORS: allowlist-only default, no origin reflection outside the list, always `Vary: Origin`, reject `*` + credentials in `Config.Validate()`, stop 403-ing non-browser clients, preflight-only 204 | S | [middleware](../04-security/middleware-hardening.md) |
+| 2.4 | ✅ `e0da81e` | Pin the JWT algorithm (`jwt.WithValidMethods`, RS256 exactly); validate `iss`, `aud`, `exp` with `auth.token_leeway` (default 30s) | S | [tokens](../04-security/token-architecture.md) |
+| 2.5 | ✅ `946c1c8` | Introduce token classes (`cls`: `access`/`mfa`/`id`); `Validate(token, want Class)`; MFA tokens cannot access the API | M | [tokens](../04-security/token-architecture.md) |
+| 2.6 | ✅ `0cf07d9` | Standardise on RS256; delete `internal/plugins/auth/jwt.go` — with its registration, the `APP_JWT_SECRET` binding, its placeholder check, the `plugins.auth.jwt` config block, and its `.env.example` entries | S | [tokens](../04-security/token-architecture.md) |
+| 2.7 | ✅ `6d0c1b7`, `ef76759` | Auth middleware fails closed — a module needing auth fails to construct without a verifier. **Already done in Phase 1**; no Phase 2 commit was needed | S | [middleware](../04-security/middleware-hardening.md) |
+| 2.8 | ✅ `0968aae` | Add security response headers: `nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer`, route-scoped CSP (`default-src 'none'` for the API, relaxed for `/swagger/*`), HSTS gated on `server.enable_hsts` (default false) | S | [middleware](../04-security/middleware-hardening.md) |
+| 2.9 | ✅ `acc057d` | Config: `BindEnv` for `db.user`/`db.name` as well, placeholder rejection, `secret.String` on `DB.Password`, `Validate()` called from `Load` — and the timeout inversion **fixed**, `request_timeout` 60s → 25s | M | [config](../03-configuration/configuration-model.md) |
 
-**Exit criteria:** `TestRateLimitAllowsConcurrentRequests` passes;
-`TestValidate_RejectsMFATokenAsAccessToken` passes; the server refuses to start
-with a placeholder secret.
+**Exit criteria — all met:** ✅ `TestRateLimitAllowsConcurrentRequests` passes,
+unskipped and in the default suite; ✅
+`TestValidate_RejectsMFATokenAsAccessToken` passes; ✅ the server refuses to
+start with a placeholder `db.password` (`TestLoad_RejectsPlaceholderSecrets`).
 
-> 2.1 is the highest-impact single change in this plan — it currently caps the
-> server at one concurrent request.
+Six new test files landed with the phase — `cors_test.go`,
+`ratelimit_tokenbucket_test.go`, `clientip_test.go`, `security_headers_test.go`,
+`secret_test.go`, and `jwt_test.go` — taking the suite from 7 files to 13.
+
+> 2.1 was the highest-impact single change in this plan — it capped the server at
+> one concurrent request.
+
+> ⚠️ **`-race` coverage is outstanding and cannot be obtained here.** `go test
+> -race` fails on every package with `0xc0000139`; the local toolchain is
+> mingw-w64 GCC 8.1.0 (2018) and Go's Windows race runtime needs far newer. This
+> matters concretely: `dcc6e5d` — the concurrency fix — shipped with a data race
+> of its own on `p.now` / `p.initialized` / `p.burst`, found by **inspection**
+> and fixed in `d130519`. Phase 4.4's CI runs on Linux and would cover it. Until
+> then, concurrency correctness here is review-enforced. See
+> [testing strategy](../06-quality/testing-strategy.md#race-detection-is-outstanding).
+
+> **Not closed by this phase, and not to be read as closed:** `make generate` is
+> still broken (it exits 0 while leaving the tree non-compiling);
+> `.qwen/settings.json` and `.qwen/settings.json.orig` are still tracked and
+> still absent from `.gitignore`; and `BuildApp`'s zero-module guard is still
+> unreachable. None of these is a Phase 2 task; all three remain open.
 
 ---
 
@@ -203,7 +223,7 @@ Phase 0 ──▶ Phase 1 ──▶ Phase 3 ──▶ Phase 5
 | Milestone | Definition | After |
 |---|---|---|
 | **M1 — It works** | A real endpoint serves a real request against a real schema | Phase 1 |
-| **M2 — It's safe** | No credential leak, no auth bypass, handles concurrency | Phase 2 |
+| **M2 — It's safe** | No credential leak, no auth bypass, handles concurrency | Phase 2 — **reached**, with the caveat below |
 | **M3 — It's coherent** | One layout, one framework, enforced boundaries | Phase 3 |
 | **M4 — It's defended** | CI catches regressions; failures are observable | Phase 4 |
 | **M5 — It's clean** | Small repo, small binary, rotatable keys | Phase 5 |
@@ -231,13 +251,23 @@ when a request succeeds end to end, regardless of how many boxes are ticked. By
 that measure Phase 1 is done: `cmd/api/login_e2e_test.go` drives
 `POST /api/v1/auth/login` against a migrated database and gets a token back.
 
-Two caveats on "done" that the ticks do not capture:
+Three caveats on "done" that the ticks do not capture:
 
 - **Phase 0.5's rotation is unverifiable from here.** The repository can show
   that secrets left the working tree; it cannot show that the exposed values were
   rotated. Do not read the ✅ on the rest of Phase 0 as closing that exposure.
-- **Milestone M1 is reached, M2–M5 are not.** Nothing in Phases 2–5 has started,
-  and there is still no CI, so no exit criterion is enforced automatically.
+  Phase 2.6 deleting the HS256 plugin does not discharge it either — the secret
+  is still in history, and pre-`0cf07d9` builds still accept tokens signed with
+  it.
+- **M2 is reached on the "handles concurrency" criterion by inspection, not by
+  measurement.** `TestRateLimitAllowsConcurrentRequests` proves the server no
+  longer serialises, but `-race` cannot run in this environment, and a real race
+  did ship inside Phase 2 before being caught by review (`d130519`). Read M2 as
+  "the known unsafe behaviours are fixed and tested", not as "concurrency is
+  verified".
+- **Milestones M1 and M2 are reached, M3–M5 are not.** Nothing in Phases 3–5 has
+  started, and there is still no CI, so no exit criterion is enforced
+  automatically — including Phase 2's own.
 
 ---
 

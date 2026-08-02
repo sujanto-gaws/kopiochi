@@ -1,7 +1,13 @@
 # ADR-008: Configuration Precedence and Secret Handling
 
 ## Status
-**Proposed** – *Date: 2026-08-02*
+**Accepted — partially implemented** – *Date: 2026-08-02; status updated
+2026-08-02 after Phase 2.9 (`acc057d`)*
+
+Decisions 3, 4, 5, 6, and 9 have shipped and are covered by tests. Decisions 1,
+2, 7, and 8 have not — see [Implementation status](#implementation-status).
+This ADR was `Proposed` and is therefore revised in place; its Context and
+Decision remain append-only from here.
 
 ## Context
 
@@ -46,6 +52,17 @@ Further gaps:
   (`ratelimit.go:33`), so a YAML type error changes behaviour with no diagnostic.
 - **Secrets can reach logs.** `Config.DB.Password` is a plain `string`; a single
   `log.Debug().Interface("config", cfg)` prints it.
+
+> *Appended 2026-08-02, after Phase 2.* The Context above describes the state at
+> the time of the decision and is left as written. Three of its specifics have
+> since changed and would otherwise mislead a reader: the JWT signing secret and
+> its `plugins.auth.jwt.config.secret` key no longer exist (`0cf07d9` deleted the
+> HS256 plugin, so RS256 key files are the only signing material); the
+> `request_timeout` 60s / `write_timeout` 30s inversion is fixed, with
+> `request_timeout` now 25s; and `ratelimit.go:33` no longer exists, though the
+> unchecked-type-assertion pattern it illustrated still does. The exposed values
+> remain in git history regardless. See
+> [Implementation status](#implementation-status).
 
 ## Decision
 
@@ -103,19 +120,59 @@ Further gaps:
 
 ## Implementation Plan
 
-1. **Rotate first.** Change the database password everywhere `"gaws"` was used;
-   rotate the JWT secret; regenerate the RSA keypair if it has left the developer
-   machine.
-2. Register defaults for every key; add `BindEnv` for each secret.
-3. Add `secret.String` and change secret-bearing fields to use it.
-4. Implement `Validate()`, including placeholder rejection and the timeout
-   inversion check.
-5. Enable strict decoding; fix any keys it rejects.
-6. Strip secrets from `config/default.yaml`; add `config/example.env`.
-7. Repair `.gitignore` (`keys/`, `*.pem`, `.env*`); add `.githooks/pre-commit`.
-8. Add tests: env override, validation failures, unknown-key rejection.
-9. Purge history in the coordinated rewrite described in
+1. ⚠️ **Rotate first.** Change the database password everywhere `"gaws"` was
+   used; rotate the JWT secret; regenerate the RSA keypair if it has left the
+   developer machine. **Outstanding** — an out-of-repo action no commit can
+   demonstrate.
+2. ◐ Register defaults for every key; add `BindEnv` for each secret. *`BindEnv`
+   done for `db.password` (`b74b358`), `db.user`, and `db.name` (`acc057d`). The
+   per-key default sweep is **not** done.*
+3. ✅ `acc057d` — Add `secret.String` and change secret-bearing fields to use it.
+4. ✅ `acc057d` — Implement `Validate()`, including placeholder rejection and the
+   timeout inversion check. `Load` calls it, so the process fails closed.
+5. ⏳ Enable strict decoding; fix any keys it rejects. **Not done.**
+6. ✅ `b74b358`, `252efb2` — Strip secrets from `config/default.yaml`; document
+   every variable. *Shipped as `.env.example` at the repo root, not
+   `config/example.env`.*
+7. ✅ `4c72a83`, `9c302ad`, `1d3379e` — Repair `.gitignore` (`keys/`, `*.pem`,
+   `.env*`); add `.githooks/pre-commit`.
+8. ◐ Add tests: env override, validation failures, unknown-key rejection. *Env
+   override and validation failures shipped (17 tests in
+   `internal/config/config_test.go`). Unknown-key rejection cannot be written
+   until step 5 lands.*
+9. ⏳ Purge history in the coordinated rewrite described in
    [ADR-011](011%20-%20Build%20Artifacts%20Excluded%20from%20Version%20Control.md).
+   Scheduled as Phase 5.1.
+
+## Implementation status
+
+Against the nine decisions above, as of Phase 2.9 (`acc057d`) and 2.6
+(`0cf07d9`):
+
+| # | Decision | State |
+|---|---|---|
+| 1 | Precedence `flags > environment > file > defaults`, documented and tested | ◐ environment > file > defaults is implemented and tested (`TestLoad_EnvOverridesFileValue`). **Flags are not bound at all** — there is no `v.BindPFlags`, so the top of the precedence chain does not exist |
+| 2 | An explicit default registration for every key | ⏳ not done. Three keys got `BindEnv` instead, which fixes those three; a newly added key still needs one of its own or it is silently inert |
+| 3 | Secrets additionally bound with `BindEnv`, never in a committed file | ✅ `db.password` is the only remaining secret and is bound; `0cf07d9` removed the JWT secret entirely |
+| 4 | `Config.Validate()` runs during `Load` and fails closed | ✅ `config.go:172` — errors joined, so one boot reports every problem |
+| 5 | Known placeholders rejected at startup | ✅ `isPlaceholderSecret` — empty, `CHANGEME*` prefix, and the committed values. **Note `"gaws"` is not in the list**; see [secret management](../03-configuration/secret-management.md) |
+| 6 | Secrets use a redacting type | ✅ `internal/platform/secret.String` on `DB.Password`, 4 tests |
+| 7 | Strict decoding (`ErrorUnused`, `WeaklyTypedInput: false`) | ⏳ not done — `Load` still calls plain `v.Unmarshal` |
+| 8 | Typed config per module replaces `map[string]interface{}` | ⏳ not done — Phase 3.5. `Validate` reaches into `plugins.custom["cors"]` as an explicit stopgap |
+| 9 | Key material never lives in the repository | ✅ Phase 0 (`8652534`, `4c72a83`, `make keys`) |
+
+The four outstanding decisions (1's flag binding, 2, 7, 8) are interdependent and
+land with the Phase 3.5 config rework, not as separate items.
+
+## Compliance status
+
+Against the enforcement list below: `.githooks/pre-commit` is in place, and
+`secret.String` is available for the review rule to point at. `gitleaks` in CI,
+the "no non-empty `password`/`secret` in `config/default.yaml`" test, and the
+"every new key has a default and appears in the env example" rule all depend on
+a CI pipeline that does not exist (Phase 4.4). `TestLoad_DefaultYAMLIsValid`
+partially substitutes for the second by asserting the shipped defaults load and
+validate — it does not check for secrets.
 
 ## Compliance / Enforcement
 

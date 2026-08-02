@@ -64,13 +64,22 @@ Creates a chi router with a fixed core middleware stack, followed by any caller-
 
 **Core middleware stack (applied in order):**
 
-| Middleware              | Purpose                                                     |
-|-------------------------|-------------------------------------------------------------|
-| `middleware.Recoverer`  | Recovers from panics and returns 500                        |
-| `middleware.RequestID`  | Injects a unique `X-Request-Id` header per request          |
-| `middleware.RealIP`     | Extracts real client IP from `X-Forwarded-For` / `X-Real-IP`|
-| `middleware.Timeout`    | Cancels the request context after `cfg.RequestTimeout`      |
-| `ZerologRequestLogger`  | Structured request/response logging via zerolog             |
+| Middleware                 | Purpose                                                     |
+|----------------------------|-------------------------------------------------------------|
+| `middleware.Recoverer`     | chi's — recovers from panics and returns 500                |
+| `middleware.RequestID`     | Injects a unique `X-Request-Id` header per request          |
+| `httpx.SecurityHeaders`    | `nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer`, a route-scoped CSP, and HSTS when `cfg.EnableHSTS` |
+| `zlog.RealIP`              | Resolves the client IP into the request context. Honours `X-Forwarded-For` / `X-Real-Ip` **only** from CIDRs in `cfg.TrustedProxies`, which is empty by default — so the socket address is used unless a proxy is explicitly trusted |
+| `middleware.Timeout`       | Cancels the request context after `cfg.RequestTimeout`      |
+| `ZerologRequestLogger`     | Structured request/response logging via zerolog, using the resolved client IP |
+
+> `zlog.RealIP` is `internal/middleware.RealIP`, **not** chi's
+> `middleware.RealIP`. chi's version trusts forwarded headers from any peer,
+> which lets a directly-exposed client claim any IP — bypassing rate limits and
+> falsifying access logs. It was replaced for that reason. Downstream consumers
+> must read the resolved value with `middleware.ClientIP(ctx)` rather than
+> re-parsing the headers. See
+> [docs/architectures/04-security/middleware-hardening.md](docs/architectures/04-security/middleware-hardening.md).
 
 **Parameters:**
 
@@ -183,7 +192,7 @@ server:
   write_timeout: "30s"
   idle_timeout: "120s"
   shutdown_timeout: "30s"
-  request_timeout: "60s"
+  request_timeout: "25s"
 ```
 
 Values support Go duration strings (`"10s"`, `"1m30s"`, etc.) and can be overridden at runtime via environment variables with the `APP_` prefix and `.` → `_` substitution, e.g.:

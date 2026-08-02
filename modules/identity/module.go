@@ -31,6 +31,10 @@ type Config struct {
 	MFATemporaryTTL   time.Duration `mapstructure:"mfa_temporary_ttl"`
 	MaxFailedAttempts int           `mapstructure:"max_failed_attempts"`
 	LockDuration      time.Duration `mapstructure:"lock_duration"`
+	// TokenLeeway is the clock-skew allowance applied when validating a
+	// token's exp (and iat/nbf, if present). Kept small and non-zero: see
+	// docs/architectures/04-security/token-architecture.md.
+	TokenLeeway time.Duration `mapstructure:"token_leeway"`
 }
 
 // Validate rejects configuration that would silently produce an unusable or
@@ -58,6 +62,9 @@ func (c Config) Validate() error {
 	if c.MaxFailedAttempts <= 0 {
 		return errors.New("identity: max_failed_attempts must be positive")
 	}
+	if c.TokenLeeway < 0 {
+		return errors.New("identity: token_leeway must not be negative")
+	}
 	return nil
 }
 
@@ -80,7 +87,10 @@ func New(deps module.Deps, cfg Config) (*module.Module, error) {
 
 	bcryptHasher := hasher.BcryptHasher{}
 
-	jwtSvc, err := token.NewJWTService(cfg.PrivateKeyPath, cfg.PublicKeyPath, cfg.Issuer)
+	// audience is pinned to cfg.ClientID: every access/MFA token this
+	// service mints carries aud=cfg.ClientID, and Validate requires it on
+	// every token it verifies (see token-architecture.md, "aud").
+	jwtSvc, err := token.NewJWTService(cfg.PrivateKeyPath, cfg.PublicKeyPath, cfg.Issuer, cfg.ClientID, cfg.TokenLeeway)
 	if err != nil {
 		return nil, fmt.Errorf("identity: init jwt service: %w", err)
 	}

@@ -2,8 +2,10 @@
 
 **Status:** Proposed
 **Date:** 2026-08-02
-**Last verified:** 2026-08-02, after Phase 1 — every problem below is still live
-(Phase 3.9 has not run). Line references updated for the current tree.
+**Last verified:** 2026-08-02, after Phase 2 — every problem below is still live
+(Phase 3.9 has not run). Line references updated for the current tree. The one
+change since Phase 1 is in [Timeouts](#timeouts): the `request_timeout` /
+`write_timeout` inversion is fixed, and `Config.Validate` now rejects it.
 
 ---
 
@@ -236,6 +238,8 @@ prepare statements or verify schema), so the database must exist first.
 
 ## Timeouts
 
+*Resolved in Phase 2.9 (`acc057d`).*
+
 `config/default.yaml` sets sensible values already; keep them and make the
 relationship explicit:
 
@@ -244,15 +248,32 @@ relationship explicit:
 | `read_header_timeout` | 10s | Guards against Slowloris |
 | `read_timeout` | 30s | ≥ header timeout |
 | `write_timeout` | 30s | ≥ `request_timeout` or long responses are cut off |
-| `request_timeout` | 60s | ⚠️ currently **exceeds** `write_timeout` (30s) |
+| `request_timeout` | **25s** *(was 60s)* | ✅ now below `write_timeout` |
 | `idle_timeout` | 120s | Keep-alive reuse |
 | `shutdown_timeout` | 30s | ≥ `request_timeout` for a clean drain |
 
-The `request_timeout` (60s) > `write_timeout` (30s) inversion means a request
-allowed to run for 60 seconds has its connection torn down at 30. Either lower
-`request_timeout` to 25s or raise `write_timeout` above it. Config validation
-should reject the inversion at boot rather than leaving it to be discovered in
-production.
+The `request_timeout` (60s) > `write_timeout` (30s) inversion meant a request
+allowed to run for 60 seconds had its connection torn down at 30. The advice was
+to lower `request_timeout` to 25s or raise `write_timeout` above it, and to have
+config validation reject the inversion at boot rather than leaving it to be
+discovered in production. **Both happened:**
+
+- `request_timeout` is 25s, in `config/default.yaml` and in the default
+  registered by `Load` (`config.go:132`), so it holds even with no config file.
+  The YAML carries a comment explaining the constraint at the point of change.
+- `Config.Validate` rejects `request_timeout > write_timeout` **and**
+  `shutdown_timeout < request_timeout`, and `Load` calls it, so a future edit
+  that reintroduces the inversion fails at startup with a message naming both
+  values. Tests: `TestValidate_RejectsTimeoutInversion` and
+  `TestLoad_DefaultYAMLIsValid`.
+
+`middleware.Timeout(cfg.RequestTimeout)` in `server.NewRouter` and the
+`http.Server` write deadline in `NewServer` both read from the same validated
+config, so the two deadlines cannot drift apart at runtime.
+
+Nothing else on this page moved: the double-close, the `log.Fatal` in the serving
+goroutine, the swallowed `Run` error, the startup/teardown ordering, and the
+incomplete signal handling are all unchanged and remain Phase 3.9.
 
 ---
 

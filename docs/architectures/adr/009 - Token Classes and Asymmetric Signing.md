@@ -1,7 +1,14 @@
 # ADR-009: Token Classes and Asymmetric Signing
 
 ## Status
-**Proposed** – *Date: 2026-08-02*
+**Accepted — partially implemented** – *Date: 2026-08-02; status updated
+2026-08-02 after Phase 2.4/2.5/2.6 (`e0da81e`, `946c1c8`, `0cf07d9`)*
+
+Decisions 1, 2, 4, 5, and 9 have shipped and are covered by tests; decision 3
+shipped in a reduced form. Decisions 6, 7, and 8 have not — see
+[Implementation status](#implementation-status). This ADR was `Proposed` and is
+therefore revised in place; its Context and Decision remain append-only from
+here.
 
 ## Context
 
@@ -46,6 +53,17 @@ keypair. It is closer to correct: it *does* pin the signing method
 - `IssueIDToken` hardcodes a 15-minute TTL, ignoring configuration.
 - A single keypair with no `kid` header, so rotating the key invalidates every
   outstanding token at once.
+
+> *Appended 2026-08-02, after Phase 2.* The Context above describes the state at
+> the time of the decision and is left as written. **System A no longer exists:**
+> `0cf07d9` deleted `internal/plugins/auth/jwt.go`, its `RegisterBuiltinPlugins`
+> entry, the `APP_JWT_SECRET` binding and placeholder check, the
+> `plugins.auth.jwt` config block, and its `.env.example` entries. So A1–A3 were
+> resolved by deletion rather than by fixing, and the "two independent JWT
+> implementations" premise no longer holds. Of system B's four gaps, the first
+> two — no `iss`/`aud` validation and three token types sharing one validation
+> path — are fixed; the hardcoded ID-token TTL and the missing `kid` are not. See
+> [Implementation status](#implementation-status).
 
 ## Decision
 
@@ -103,25 +121,53 @@ keypair. It is closer to correct: it *does* pin the signing method
 
 ## Implementation Plan
 
-1. Add algorithm pinning plus `iss`/`aud` validation to system B — small,
-   isolated, and independently shippable. **Do this first.**
-2. Introduce the `Class` type and unified `Claims`; stamp `cls` on issue.
-3. Change `Validate` to require an expected class; update every call site.
-4. Point the auth middleware at the unified service; delete
-   `internal/plugins/auth/jwt.go`.
-5. Make `IssueIDToken` take a TTL; add `identity.id_token_ttl` to config.
-6. Add `kid` headers and the JWKS endpoint.
-7. Add refresh-token rotation with reuse detection.
-8. Add tests for every rejection path.
+1. ✅ `e0da81e` — Add algorithm pinning plus `iss`/`aud` validation to system B.
+   Shipped first, as advised.
+2. ✅ `946c1c8` — Introduce the `Class` type and unified `Claims`; stamp `cls` on
+   issue.
+3. ✅ `946c1c8` — Change `Validate` to require an expected class; update every
+   call site (`transport/middleware.go` → `ClassAccess`,
+   `application/mfa_verify_login.go` → `ClassMFA`).
+4. ✅ `6d0c1b7` (Phase 1) / `0cf07d9` — Point the auth middleware at the unified
+   service; delete `internal/plugins/auth/jwt.go`.
+5. ⏳ Make `IssueIDToken` take a TTL; add `identity.id_token_ttl` to config.
+   `IssueMFAToken` has the same defect and should be fixed alongside it —
+   `auth.mfa_temporary_ttl` is validated and then ignored.
+6. ⏳ Add `kid` headers and the JWKS endpoint — Phase 5.5.
+7. ⏳ Add refresh-token rotation with reuse detection — Phase 5.6.
+8. ✅ `e0da81e`, `946c1c8` — Add tests for every rejection path.
+
+## Implementation status
+
+| # | Decision | State |
+|---|---|---|
+| 1 | One token service; system A deleted | ✅ `0cf07d9`. The `AuthPlugin` *interface* survives because `fido2-auth` implements it; it goes with Phase 3.6 |
+| 2 | RS256 signing; HMAC removed | ✅ No HMAC code, secret, or config key remains anywhere in the tree |
+| 3 | Every token carries `cls`: `access`, `refresh`, `mfa`, `id` | ◐ Three classes shipped — `access`, `mfa`, `id`. **There is no `refresh` class**, because refresh tokens are opaque random values rather than JWTs and never pass through `Validate`. The decision's four-value enumeration was wrong about its own decision 8 |
+| 4 | `Validate(token, want Class)` with no default | ✅ Signature enforced by the `TokenIssuer` interface, so a call site cannot omit it |
+| 5 | Every parse validates alg, iss, aud, exp, with leeway | ✅ `WithValidMethods`, `WithIssuer`, `WithAudience`, `WithExpirationRequired`, `WithLeeway`. Leeway is configurable via `auth.token_leeway` rather than hardcoded at 30s — 30s is the default and the fallback |
+| 6 | Key rotation via `kid` + JWKS | ⏳ Phase 5.5. Now the largest remaining token gap: with HS256 gone, the RSA keypair is the only signing material |
+| 7 | All TTLs from configuration | ⏳ Access-token TTL is passed in; ID (15m) and MFA (5m) are still hardcoded in `jwt.go` |
+| 8 | Opaque refresh tokens, rotated, with reuse detection | ◐ Opaque and SHA-256-hashed already; rotation and reuse detection are Phase 5.6 |
+| 9 | Profile claims go in profile claims | ✅ `name` and `email` are their own claims; nothing writes to `iss`. The A3 overwrite bug died with system A |
 
 ## Compliance / Enforcement
 
 - Tests assert rejection of: wrong algorithm, wrong issuer, wrong audience,
   expired token, and **MFA token presented as an access token**.
+  ✅ *All five shipped in `modules/identity/infrastructure/token/jwt_test.go`,
+  plus `TestValidate_RejectsNoneAlgorithm` and
+  `TestValidate_AcceptsGenuineAccessToken`.*
 - Review rejects any `jwt.Parse*` call without `WithValidMethods`.
+  ✅ *There is exactly one `jwt.ParseWithClaims` in the tree and it has one.*
 - Review rejects any `Validate` call whose expected class is not explicit.
+  ✅ *Structurally enforced — the parameter is required, so this is now a
+  compiler rule rather than a review rule.*
 - No token value is ever logged; log `jti` instead.
+  ◐ *No token value is logged. There is no `jti` to log yet (decision 7 of the
+  claim mapping in [token architecture](../04-security/token-architecture.md)).*
 - `govulncheck` runs in CI to catch JWT library advisories.
+  ⏳ *No CI exists — Phase 4.4.*
 
 ## Related ADRs
 - [ADR-008: Configuration Precedence and Secret Handling](008%20-%20Configuration%20Precedence%20and%20Secret%20Handling.md)

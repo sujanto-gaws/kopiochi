@@ -20,6 +20,7 @@ func ZerologRequestLogger(next http.Handler) http.Handler {
 			Str("method", r.Method).
 			Str("path", r.URL.Path).
 			Str("request_id", middleware.GetReqID(r.Context())).
+			Str("client_ip", ClientIP(r.Context())).
 			Int("status", ww.Status()).
 			Int64("bytes_written", int64(ww.BytesWritten())).
 			Dur("duration_ms", time.Since(start)).

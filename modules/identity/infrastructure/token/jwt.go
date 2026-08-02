@@ -4,20 +4,42 @@ import (
 	"crypto/rsa"
 	"crypto/x509"
 	"encoding/pem"
+	"errors"
 	"fmt"
-	"github.com/golang-jwt/jwt/v5"
-	domain "github.com/sujanto-gaws/kopiochi/modules/identity/domain"
 	"os"
 	"time"
+
+	"github.com/golang-jwt/jwt/v5"
+
+	domain "github.com/sujanto-gaws/kopiochi/modules/identity/domain"
 )
+
+// defaultLeeway absorbs small clock skew between the process that minted a
+// token and the process validating it. It is used whenever the caller does
+// not configure a positive leeway explicitly.
+const defaultLeeway = 30 * time.Second
+
+// rs256Alg pins every token this service issues and verifies to RS256.
+// jwt.WithValidMethods below rejects any other alg — including "none" and
+// any HMAC variant — before the keyfunc is even invoked, which is what
+// makes the classic "confusion attack" (forging an HS256 token using the
+// RSA *public* key, which is public, as the HMAC secret) structurally
+// impossible rather than merely unlikely.
+var rs256Alg = jwt.SigningMethodRS256.Alg()
 
 type JWTService struct {
 	privateKey *rsa.PrivateKey
 	publicKey  *rsa.PublicKey
 	issuer     string
+	audience   string
+	leeway     time.Duration
 }
 
-func NewJWTService(privateKeyPath, publicKeyPath, issuer string) (*JWTService, error) {
+// NewJWTService builds a JWTService that signs with privateKey and verifies
+// with publicKey. Every token minted carries iss=issuer and aud=audience,
+// and Validate rejects any token whose alg, iss, aud, or exp does not match
+// (exp is checked with the given leeway to absorb clock skew).
+func NewJWTService(privateKeyPath, publicKeyPath, issuer, audience string, leeway time.Duration) (*JWTService, error) {
 	priv, err := loadRSAPrivateKey(privateKeyPath)
 	if err != nil {
 		return nil, err
@@ -26,10 +48,20 @@ func NewJWTService(privateKeyPath, publicKeyPath, issuer string) (*JWTService, e
 	if err != nil {
 		return nil, err
 	}
-	return &JWTService{privateKey: priv, publicKey: pub, issuer: issuer}, nil
+	if leeway <= 0 {
+		leeway = defaultLeeway
+	}
+	return &JWTService{
+		privateKey: priv,
+		publicKey:  pub,
+		issuer:     issuer,
+		audience:   audience,
+		leeway:     leeway,
+	}, nil
 }
 
 func (s *JWTService) IssueAccessToken(user domain.User, ttl time.Duration) (string, error) {
+	now := time.Now()
 	claims := jwt.MapClaims{
 		"sub":         user.ID.String(),
 		"email":       user.Email,
@@ -37,56 +69,90 @@ func (s *JWTService) IssueAccessToken(user domain.User, ttl time.Duration) (stri
 		"roles":       user.Roles,
 		"permissions": user.Permissions,
 		"scope":       "access",
+		"cls":         string(domain.ClassAccess),
 		"iss":         s.issuer,
-		"iat":         time.Now().Unix(),
-		"exp":         time.Now().Add(ttl).Unix(),
+		"aud":         s.audience,
+		"iat":         now.Unix(),
+		"exp":         now.Add(ttl).Unix(),
 	}
-	token := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
-	return token.SignedString(s.privateKey)
+	return s.sign(claims)
 }
 
 func (s *JWTService) IssueIDToken(user domain.User, clientID string) (string, error) {
+	now := time.Now()
 	claims := jwt.MapClaims{
 		"sub":   user.ID.String(),
 		"email": user.Email,
 		"name":  user.Name,
 		"aud":   clientID,
 		"iss":   s.issuer,
-		"iat":   time.Now().Unix(),
-		"exp":   time.Now().Add(15 * time.Minute).Unix(),
+		"cls":   string(domain.ClassID),
+		"iat":   now.Unix(),
+		"exp":   now.Add(15 * time.Minute).Unix(),
 		"scope": "openid profile email",
 	}
-	token := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
-	return token.SignedString(s.privateKey)
+	return s.sign(claims)
 }
 
 func (s *JWTService) IssueMFAToken(user domain.User) (string, error) {
+	now := time.Now()
 	claims := jwt.MapClaims{
 		"sub":   user.ID.String(),
 		"scope": "mfa",
+		"cls":   string(domain.ClassMFA),
 		"iss":   s.issuer,
-		"iat":   time.Now().Unix(),
-		"exp":   time.Now().Add(5 * time.Minute).Unix(),
+		"aud":   s.audience,
+		"iat":   now.Unix(),
+		"exp":   now.Add(5 * time.Minute).Unix(),
 	}
+	return s.sign(claims)
+}
+
+func (s *JWTService) sign(claims jwt.MapClaims) (string, error) {
 	token := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
 	return token.SignedString(s.privateKey)
 }
 
-func (s *JWTService) Validate(tokenStr string) (*domain.Claims, error) {
-	parsed, err := jwt.Parse(tokenStr, func(token *jwt.Token) (interface{}, error) {
-		if _, ok := token.Method.(*jwt.SigningMethodRSA); !ok {
+// Validate parses tokenStr, verifies its signature under the RS256 public
+// key, and requires:
+//   - alg == RS256, exactly (jwt.WithValidMethods) — no other algorithm,
+//     including "none" or any HMAC variant, is ever accepted;
+//   - iss matches s.issuer and aud matches s.audience;
+//   - exp is present (jwt.WithExpirationRequired) and not expired, allowing
+//     s.leeway for clock skew;
+//   - the token's "cls" claim equals want — a token minted for a different
+//     class (e.g. an MFA token presented where an access token is expected)
+//     is rejected with ErrWrongTokenClass, structurally, not by convention.
+func (s *JWTService) Validate(tokenStr string, want domain.Class) (*domain.Claims, error) {
+	claims := jwt.MapClaims{}
+	parsed, err := jwt.ParseWithClaims(tokenStr, claims, func(token *jwt.Token) (interface{}, error) {
+		// Defense in depth: jwt.WithValidMethods below already rejects any
+		// alg other than RS256 before this keyfunc runs, but keep the
+		// check here too so the keyfunc documents (and enforces) the same
+		// invariant if it is ever reused on its own.
+		if token.Method != jwt.SigningMethodRS256 {
 			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
 		}
 		return s.publicKey, nil
-	})
+	},
+		jwt.WithValidMethods([]string{rs256Alg}),
+		jwt.WithIssuer(s.issuer),
+		jwt.WithAudience(s.audience),
+		jwt.WithExpirationRequired(),
+		jwt.WithLeeway(s.leeway),
+	)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("parse token: %w", err)
 	}
-	claims, ok := parsed.Claims.(jwt.MapClaims)
-	if !ok || !parsed.Valid {
-		return nil, fmt.Errorf("invalid token")
+	if !parsed.Valid {
+		return nil, errors.New("invalid token")
 	}
-	// Extract into Claims struct
+
+	cls := domain.Class(getString(claims, "cls"))
+	if cls != want {
+		return nil, fmt.Errorf("%w: got %q, want %q", domain.ErrWrongTokenClass, cls, want)
+	}
+
 	c := &domain.Claims{
 		Subject:     getString(claims, "sub"),
 		Email:       getString(claims, "email"),
@@ -94,6 +160,7 @@ func (s *JWTService) Validate(tokenStr string) (*domain.Claims, error) {
 		Roles:       getStringSlice(claims, "roles"),
 		Permissions: getStringSlice(claims, "permissions"),
 		Scope:       getString(claims, "scope"),
+		Class:       cls,
 		IssuedAt:    getInt64(claims, "iat"),
 		ExpiresAt:   getInt64(claims, "exp"),
 	}

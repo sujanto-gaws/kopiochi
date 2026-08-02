@@ -64,7 +64,7 @@ func main() {
 			log.Info().Strs("plugins", pluginRegistry.ListInitialized()).Msg("plugins initialized")
 
 			// Initialize database
-			dsn := db.BuildDSN(cfg.DB.Host, cfg.DB.Port, cfg.DB.User, cfg.DB.Password, cfg.DB.Name, cfg.DB.SSLMode)
+			dsn := db.BuildDSN(cfg.DB.Host, cfg.DB.Port, cfg.DB.User, cfg.DB.Password.Reveal(), cfg.DB.Name, cfg.DB.SSLMode)
 			bunDB, pool, err := db.NewDB(db.Config{
 				DSN:      dsn,
 				MaxConns: cfg.DB.MaxConns,

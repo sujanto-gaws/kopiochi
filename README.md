@@ -424,14 +424,18 @@ Kopiochi includes a powerful, config-driven plugin system that allows you to eas
 
 | Plugin | Type | Description |
 |--------|------|-------------|
-| `jwt-auth` | Authentication | JWT-based authentication with token generation |
 | `fido2-auth` | Authentication | FIDO2/WebAuthn passkeys — **registered but not usable**, see [FIDO2_GUIDE.md](FIDO2_GUIDE.md) |
-| `ratelimit` | Middleware | Request rate limiting per client IP |
-| `cors` | Middleware | Cross-Origin Resource Sharing support |
+| `ratelimit` | Middleware | Token-bucket rate limiting, keyed on the resolved client IP |
+| `cors` | Middleware | Cross-Origin Resource Sharing — allowlist-only, deny by default |
 
 > Note: the request-authentication used by the API's own routes comes from the
 > `identity` module, not from an auth plugin. The auth plugins above are
 > optional extras.
+>
+> The `jwt-auth` plugin that used to be listed here **has been deleted**, along
+> with its `plugins.auth.jwt` config block and the `APP_JWT_SECRET` variable.
+> Tokens are RS256, issued and verified by `modules/identity`, configured under
+> `auth:` in `config/default.yaml`, and signed with the keypair from `make keys`.
 
 ### Configuration
 
@@ -444,15 +448,9 @@ plugins:
     - cors
     - ratelimit
   
-  # Authentication plugins
-  auth:
-    jwt:
-      enabled: false
-      provider: jwt-auth
-      config:
-        # secret intentionally omitted - set via APP_JWT_SECRET env var
-        expiry: "24h"
-        issuer: "kopiochi"
+  # Authentication plugins. Empty by default: the only registered auth plugin
+  # is fido2-auth, and the API's own authentication is not a plugin at all.
+  auth: {}
   
   # Cache plugins. `config/default.yaml` ships a disabled `redis` stanza, but
   # no cache plugin is registered in internal/plugins/register.go yet — leave
@@ -462,8 +460,19 @@ plugins:
       enabled: false
       provider: redis
   
-  # Custom plugins
+  # Custom plugins. Empty means CORS denies every origin and the rate limiter
+  # runs on its defaults — both safe. Add a `cors:` section here to allow
+  # specific frontends; see config/default.yaml for the shape.
   custom: {}
+```
+
+Server-level security settings live under `server:`:
+
+```yaml
+server:
+  request_timeout: "25s"    # must not exceed write_timeout; validated at boot
+  trusted_proxies: []       # CIDRs whose X-Forwarded-For is honoured; empty = trust nothing
+  enable_hsts: false        # only turn on where TLS is terminated in front of this process
 ```
 
 Enabling `fido2-auth` here will fail startup — see the compatibility note at the

@@ -83,8 +83,16 @@ type AuthPlugin interface {
 ```
 
 **Built-in Examples:**
-- `jwt-auth` - JWT Bearer token authentication
 - `fido2-auth` - FIDO2/WebAuthn passwordless authentication (see [FIDO2_GUIDE.md](FIDO2_GUIDE.md))
+
+> **`jwt-auth` has been removed.** The HS256 JWT plugin
+> (`internal/plugins/auth/jwt.go`) was deleted along with its `plugins.auth.jwt`
+> config block and its `APP_JWT_SECRET` variable. The API's own authentication
+> comes from the `identity` module's RS256 token service
+> (`modules/identity/infrastructure/token`), configured under `auth:` in
+> `config/default.yaml` — not from an auth plugin. See
+> [docs/architectures/04-security/token-architecture.md](docs/architectures/04-security/token-architecture.md).
+> `AuthPlugin` itself still exists for `fido2-auth` and third-party plugins.
 
 ### 3. CachePlugin
 
@@ -117,15 +125,12 @@ plugins:
     - cors
     - ratelimit
   
-  # Authentication plugins
-  auth:
-    jwt:
-      enabled: true
-      provider: jwt-auth
-      config:
-        secret: "${JWT_SECRET}"  # Use env var
-        expiry: "24h"
-        issuer: "kopiochi"
+  # Authentication plugins.
+  #
+  # Empty in the shipped config: the only registered auth plugin is
+  # fido2-auth, and the API's own authentication comes from the identity
+  # module (see the note under AuthPlugin above), not from here.
+  auth: {}
   
   # Cache plugins
   cache:
@@ -147,52 +152,41 @@ plugins:
 Plugin configuration can be overridden via environment variables:
 
 ```bash
-# JWT Auth
-APP_PLUGINS_AUTH_JWT_SECRET=my-secret
-APP_PLUGINS_AUTH_JWT_EXPIRY=48h
-
-# Rate Limiting
+# Which middleware plugins are active, in order
 APP_PLUGINS_MIDDLEWARE='["cors","ratelimit"]'
 ```
 
+> The `APP_PLUGINS_AUTH_JWT_SECRET` / `APP_PLUGINS_AUTH_JWT_EXPIRY` variables
+> previously listed here no longer exist — see the `jwt-auth` note above. Note
+> also that Viper's `AutomaticEnv` does not feed `Unmarshal`: a key reaches the
+> typed config only if it has a registered default or an explicit `BindEnv`. See
+> [docs/architectures/03-configuration/configuration-model.md](docs/architectures/03-configuration/configuration-model.md).
+
 ## Using Built-in Plugins
 
-### JWT Authentication
+### JWT Authentication — not a plugin
 
-**Enable in config:**
-```yaml
-plugins:
-  auth:
-    jwt:
-      enabled: true
-      provider: jwt-auth
-      config:
-        secret: "your-256-bit-secret"
-        expiry: "24h"
-```
+There is no JWT plugin. Tokens are issued and verified by the `identity`
+module's RS256 service, which is wired as a constructor dependency rather than
+looked up from the registry — a module that needs authentication cannot be built
+without a verifier, so protected routes cannot silently become public.
 
-**Generate tokens:**
+**Configure it** under `auth:` in `config/default.yaml` (key paths, issuer,
+client ID, TTLs, `token_leeway`), and generate the keypair with `make keys`.
+
+**Protect routes** by declaring them inside a module's own protected group; the
+module derives its `AuthRequired` middleware from the token service it built.
+See `modules/identity/transport/auth.go` for a working example.
+
+**Validate with an explicit token class.** `Validate` takes the class the caller
+expects, so an MFA token cannot be used where an access token is required:
+
 ```go
-// In your handler
-jwtPlugin := plugin.GetAuthPlugin(registry, &cfg.Plugins)
-if jwtPlugin != nil {
-    token, err := jwtPlugin.(*auth.JWTPlugin).GenerateToken(
-        "user-123", 
-        "John Doe", 
-        "john@example.com",
-    )
-}
+claims, err := tokenIssuer.Validate(tokenStr, domain.ClassAccess)
 ```
 
-**Protect routes:**
-```go
-// The middleware automatically validates tokens
-// and adds user info to context
-r.Use(jwtPlugin.AuthMiddleware())
-
-// Extract user ID in handler
-userID := jwtPlugin.ExtractUserID(r.Context())
-```
+Full detail:
+[docs/architectures/04-security/token-architecture.md](docs/architectures/04-security/token-architecture.md).
 
 ### Rate Limiting
 
@@ -204,15 +198,37 @@ plugins:
   
   custom:
     ratelimit:
-      requests: 100      # Max requests per window
-      window: "1m"       # Time window
+      # Token-bucket parameters:
+      rate: 100          # Sustained requests per minute
+      burst: 20          # Instantaneous allowance (bucket capacity)
+      ttl: "10m"         # Evict buckets idle this long
+      max_keys: 100000   # Hard cap on tracked keys
+      # Legacy fixed-window pair, still accepted and translated
+      # (burst = requests, rate = requests / window):
+      # requests: 100
+      # window: "1m"
 ```
 
 **Behavior:**
-- Tracks requests per client IP
-- Returns `429 Too Many Requests` when limit exceeded
-- Adds `X-RateLimit-Limit` and `X-RateLimit-Remaining` headers
-- Respects `X-Forwarded-For` for proxied requests
+- Token bucket per client key, refilled continuously — no fixed-window boundary
+  to burst across. The lock is released before the downstream handler runs, so
+  the limiter never serialises the server.
+- Returns `429 Too Many Requests` when the bucket is empty; a rejected request
+  does not consume a token.
+- Adds `RateLimit-Limit` and `RateLimit-Remaining` on **both** the success and
+  the 429 path, plus `Retry-After` on the 429. (These are the standardised
+  names; the old `X-RateLimit-*` forms are gone.)
+- Keys on the client IP resolved by `internal/middleware.RealIP` — which honours
+  `X-Forwarded-For` **only** from CIDRs listed in `server.trusted_proxies`, empty
+  by default. The limiter never reads that header itself; doing so was a trivial
+  bypass.
+- Idle buckets are evicted after `ttl`, and once `max_keys` is reached **new**
+  keys are rejected rather than existing ones evicted. A request rejected for
+  that reason gets `RateLimit-Remaining: 0` and a fixed 1s `Retry-After` for a
+  key that was never admitted.
+
+Detail:
+[docs/architectures/04-security/rate-limiting.md](docs/architectures/04-security/rate-limiting.md).
 
 ### CORS
 
@@ -239,8 +255,27 @@ plugins:
       max_age: 300
 ```
 
+**Behavior:**
+- **Allowlist-only, deny by default.** With no `cors` section (the shipped
+  default), no origin is granted `Access-Control-Allow-Origin`. A wildcard `"*"`
+  is honoured only if you list it explicitly, and combining it with
+  `allow_credentials: true` is rejected at config load — the process will not
+  start.
+- An allowed `Origin` is echoed back only after an exact allowlist match; an
+  unlisted one gets no header and **no 403** — the browser enforces, and 403-ing
+  would only break non-browser clients.
+- `Vary: Origin` is always set, including on non-CORS responses, so shared caches
+  cannot serve one origin's headers to another.
+- Only a genuine preflight (`OPTIONS` plus `Access-Control-Request-Method`) is
+  answered with 204; any other `OPTIONS` falls through to the router.
+
+Detail:
+[docs/architectures/04-security/middleware-hardening.md](docs/architectures/04-security/middleware-hardening.md).
+
 **Defaults:**
-- `allowed_origins`: `["*"]` (allow all)
+- `allowed_origins`: **empty — no origin is allowed.** (This used to default to
+  `["*"]`, allow-all. Permissive CORS must now be a deliberate, explicit
+  choice.)
 - `allowed_methods`: `["GET", "POST", "PUT", "DELETE", "OPTIONS"]`
 - `allowed_headers`: Common headers including `Authorization`
 - `allow_credentials`: `false`
@@ -258,9 +293,13 @@ Quick overview:
 4. **Enable it** in `config/default.yaml`
 
 **Examples to follow:**
-- `internal/plugins/auth/jwt.go` - Authentication plugin
 - `internal/plugins/middleware/ratelimit.go` - Middleware plugin
 - `internal/plugins/middleware/cors.go` - Middleware plugin
+- `internal/plugins/auth/fido2.go` - Authentication plugin (note: it cannot
+  currently be initialised from YAML — see [FIDO2_GUIDE.md](FIDO2_GUIDE.md))
+
+*`internal/plugins/auth/jwt.go` used to be listed here as the authentication
+example. It has been deleted.*
 
 **Full examples with explanations:**
 - Request logger plugin
@@ -282,12 +321,16 @@ if err != nil {
 }
 
 // Get a specific plugin
-authPlugin := registry.GetAuth("jwt-auth")
+authPlugin := registry.GetAuth("fido2-auth")
 cachePlugin := registry.GetCache("redis")
 
 // Use plugin methods
 userID := authPlugin.ExtractUserID(ctx)
 ```
+
+> For the API's *own* authenticated user, do not go through the registry at all —
+> read the claims the identity module's `AuthRequired` middleware put in the
+> request context.
 
 ### Access from Handlers
 
@@ -300,8 +343,10 @@ type UserHandler struct {
 }
 
 func (h *UserHandler) GetUser(w http.ResponseWriter, r *http.Request) {
-    // Extract authenticated user
-    userID := h.registry.GetAuth("jwt-auth").ExtractUserID(r.Context())
+    // Extract a user identified by an auth *plugin* (e.g. fido2-auth).
+    // For the API's own authentication, read the identity module's claims
+    // from the request context instead — see the note above.
+    userID := h.registry.GetAuth("fido2-auth").ExtractUserID(r.Context())
     
     // Your logic...
 }
