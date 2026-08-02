@@ -1,8 +1,9 @@
-```
 # Compiled and build artifacts
 *.o
 *.obj
 *.out
+bin/
+*.exe
 
 # Dependencies
 vendor/
@@ -25,8 +26,15 @@ vendor/
 coverage/
 htmlcov/
 .coverage
+coverage.*
 
 # Go-specific
 *.test
 *.prof
-```
+
+# Secrets / keys
+keys/
+*.pem
+
+# Archives
+*.zip
