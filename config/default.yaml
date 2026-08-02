@@ -12,7 +12,7 @@ db:
   host: "localhost"
   port: 5432
   user: "postgres"
-  password: "postgres"
+  # password intentionally omitted - set via APP_DB_PASSWORD env var
   name: "kopiochi"
   sslmode: "disable"
   max_conns: 10
@@ -47,7 +47,7 @@ plugins:
       enabled: false
       provider: jwt-auth
       config:
-        secret: "your-secret-key-change-in-production"
+        # secret intentionally omitted - set via APP_JWT_SECRET env var
         expiry: "24h"
         issuer: "kopiochi"
   
