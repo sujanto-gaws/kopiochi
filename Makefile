@@ -11,6 +11,7 @@ DB_PORT?=5432
 DB_USER?=postgres
 DB_PASSWORD?=postgres
 DB_NAME?=kopiochi
+CONFIG?=config/default.yaml
 VERSION?=$(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 LDFLAGS=-ldflags "-X github.com/sujanto-gaws/kopiochi/internal/version.Version=$(VERSION)"
 
@@ -76,15 +77,6 @@ vet: ## Run go vet
 	$(GO) vet ./...
 
 check: fmt vet tidy ## Run all code quality checks
-
-# Database
-db-migrate: ## Run database migrations (placeholder)
-	@echo "Running migrations..."
-	@echo "TODO: Implement migration runner"
-
-db-seed: ## Seed the database with test data (placeholder)
-	@echo "Seeding database..."
-	@echo "TODO: Implement seeder"
 
 # Code generation
 generate: ## Generate new CRUD domain (usage: make generate DOMAIN=Product FIELDS="name:string,price:float64")
