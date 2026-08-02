@@ -79,7 +79,7 @@ func TestRouteTable(t *testing.T) {
 	require.NotEmpty(t, app.Modules, "application must register at least one module")
 
 	r := server.NewRouter(cfg.Server)
-	httpx.Mount(r, app.Modules, httpx.Deps{})
+	httpx.Mount(r, app.Modules, httpx.Deps{Pinger: nil})
 
 	var got []string
 	err = chi.Walk(r, func(method, route string, _ http.Handler, _ ...func(http.Handler) http.Handler) error {
@@ -99,6 +99,7 @@ func TestRouteTable(t *testing.T) {
 
 	require.Contains(t, got, "GET /healthz")
 	require.Contains(t, got, "GET /readyz")
+	require.Contains(t, got, "GET /health") // deprecated alias for /healthz
 
 	require.Contains(t, got, "POST /api/v1/users")
 	require.Contains(t, got, "GET /api/v1/users/{id}")

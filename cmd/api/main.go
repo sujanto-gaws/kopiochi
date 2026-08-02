@@ -98,8 +98,10 @@ func main() {
 			// fail-closed auth middleware (see modules/identity/module.go) — main
 			// no longer derives protected-route middleware from the jwt-auth
 			// plugin, and there is no second router in scope for a module to
-			// mount onto by mistake.
-			httpx.Mount(r, app.Modules, httpx.Deps{})
+			// mount onto by mistake. /readyz pings pool directly (it satisfies
+			// httpx.Pinger) so orchestrators stop routing traffic the moment the
+			// database becomes unreachable.
+			httpx.Mount(r, app.Modules, httpx.Deps{Pinger: pool})
 
 			// Start server with graceful shutdown
 			server.Run(
