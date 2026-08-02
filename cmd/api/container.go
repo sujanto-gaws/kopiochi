@@ -51,6 +51,7 @@ func BuildApp(cfg *config.Config, db bun.IDB, log zerolog.Logger) (*App, error) 
 		MFATemporaryTTL:   cfg.Auth.MFATemporaryTTL,
 		MaxFailedAttempts: cfg.Auth.MaxFailedAttempts,
 		LockDuration:      cfg.Auth.LockDuration,
+		TokenLeeway:       cfg.Auth.TokenLeeway,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("build identity module: %w", err)
@@ -88,7 +89,7 @@ func BuildApp(cfg *config.Config, db bun.IDB, log zerolog.Logger) (*App, error) 
 // cost is that the RSA keys are parsed twice at startup; that trade-off is
 // preferable to coupling two otherwise-independent modules.
 func newUserModule(cfg *config.Config, db bun.IDB) (*module.Module, error) {
-	jwtSvc, err := token.NewJWTService(cfg.Auth.PrivateKeyPath, cfg.Auth.PublicKeyPath, cfg.Auth.Issuer)
+	jwtSvc, err := token.NewJWTService(cfg.Auth.PrivateKeyPath, cfg.Auth.PublicKeyPath, cfg.Auth.Issuer, cfg.Auth.ClientID, cfg.Auth.TokenLeeway)
 	if err != nil {
 		return nil, fmt.Errorf("init token verifier: %w", err)
 	}

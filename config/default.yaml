@@ -49,6 +49,9 @@ auth:
   mfa_temporary_ttl: "5m"
   max_failed_attempts: 5
   lock_duration: "15m"
+  # Clock-skew allowance applied when validating a token's exp (see
+  # docs/architectures/04-security/token-architecture.md). Keep this small.
+  token_leeway: "30s"
 
 # Plugin Configuration
 plugins:
@@ -56,7 +59,7 @@ plugins:
   middleware:
     - cors
     - ratelimit
-  
+
   # Authentication plugins
   auth:
     jwt:
@@ -66,7 +69,7 @@ plugins:
         # secret intentionally omitted - set via APP_JWT_SECRET env var
         expiry: "24h"
         issuer: "kopiochi"
-  
+
   # Cache plugins
   cache:
     redis:

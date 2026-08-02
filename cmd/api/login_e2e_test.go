@@ -106,7 +106,7 @@ func buildE2ERouter(t *testing.T, bunDB *bun.DB) (http.Handler, *token.JWTServic
 	// A second JWTService instance, built from the same key paths/issuer, so
 	// that validating the token below exercises the app's real verification
 	// logic (RS256 + public key) rather than merely re-parsing the JWT.
-	jwtSvc, err := token.NewJWTService(cfg.Auth.PrivateKeyPath, cfg.Auth.PublicKeyPath, cfg.Auth.Issuer)
+	jwtSvc, err := token.NewJWTService(cfg.Auth.PrivateKeyPath, cfg.Auth.PublicKeyPath, cfg.Auth.Issuer, cfg.Auth.ClientID, cfg.Auth.TokenLeeway)
 	require.NoError(t, err)
 
 	return r, jwtSvc

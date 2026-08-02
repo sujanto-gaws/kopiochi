@@ -69,6 +69,10 @@ type Auth struct {
 	MFATemporaryTTL   time.Duration `mapstructure:"mfa_temporary_ttl"`
 	MaxFailedAttempts int           `mapstructure:"max_failed_attempts"`
 	LockDuration      time.Duration `mapstructure:"lock_duration"`
+	// TokenLeeway is the clock-skew allowance applied when validating a
+	// token's exp. Kept small and non-zero (see
+	// docs/architectures/04-security/token-architecture.md).
+	TokenLeeway time.Duration `mapstructure:"token_leeway"`
 }
 
 type Plugins struct {
@@ -151,6 +155,7 @@ func Load(cfgPath string) (*Config, error) {
 	v.SetDefault("auth.mfa_temporary_ttl", "5m")
 	v.SetDefault("auth.max_failed_attempts", 5)
 	v.SetDefault("auth.lock_duration", "15m")
+	v.SetDefault("auth.token_leeway", "30s")
 	v.SetDefault("plugins.middleware", []string{})
 	v.SetDefault("plugins.auth", map[string]interface{}{})
 	v.SetDefault("plugins.cache", map[string]interface{}{})
@@ -320,6 +325,9 @@ func (c *Config) Validate() error {
 	}
 	if c.Auth.MaxFailedAttempts <= 0 {
 		errs = append(errs, errors.New("auth.max_failed_attempts must be positive"))
+	}
+	if c.Auth.TokenLeeway < 0 {
+		errs = append(errs, errors.New("auth.token_leeway must not be negative"))
 	}
 
 	return errors.Join(errs...)
