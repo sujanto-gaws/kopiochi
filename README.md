@@ -15,6 +15,9 @@ internal/
 ├── domain/           # Business entities, rules, and domain interfaces
 ├── application/      # Use cases and application services
 └── infrastructure/   # External concerns (HTTP, persistence, etc.)
+
+modules/             # Self-contained business modules, each with the same
+└── identity/        # domain/application/infrastructure/transport split
 ```
 
 ### Layer Responsibilities
@@ -24,6 +27,10 @@ internal/
 | **Domain** | Core business logic, entities, and repository interfaces |
 | **Application** | Use case orchestration and application services |
 | **Infrastructure** | HTTP handlers, database repositories, external integrations |
+
+Newer features live under `modules/<name>/` as a `module.Module`: they own
+their own routes and route protection, and the composition root
+(`BuildApp` in `cmd/api/container.go`) assembles them.
 
 ## 🚀 Tech Stack
 
@@ -45,7 +52,7 @@ internal/
 - ✅ **Database Migrations** - Version-controlled schema management with Goose
 - ✅ **PostgreSQL** - Production-ready database with connection pooling
 - ✅ **Structured Logging** - JSON or console format with configurable levels
-- ✅ **Health Check Endpoint** - Ready for Kubernetes/container orchestration
+- ✅ **Liveness & Readiness Probes** - `/healthz` and `/readyz` (real DB ping) for Kubernetes/container orchestration
 - ✅ **Environment Configuration** - Flexible config via YAML, env vars, or both
 - ✅ **Docker Support** - Multi-stage build for optimized container images
 
@@ -134,8 +141,18 @@ go run ./cmd/api serve --config config/default.yaml
 
 ### Generate New Domain (CRUD)
 
+> ⚠️ **`make generate` is currently broken — do not use it.** The generator
+> still writes to `internal/infrastructure/http/routes/routes.go`, a file that
+> was deleted when routing moved to `internal/httpx`, and it still injects
+> wiring into `cmd/api/main.go`, where the composition root no longer lives
+> (it is now `BuildApp` in `cmd/api/container.go`). A run generates the seven
+> domain files, prints a warning that it could not update routes, and then
+> adds an **unused import to `cmd/api/main.go` that breaks `go build ./...`**.
+> Repairing the generator is tracked as separate work; until then, add new
+> domains by hand and wire them into `BuildApp` as a `module.Module`.
+
 ```bash
-# Generate Product domain with all CRUD operations
+# Generate Product domain with all CRUD operations (see warning above)
 make generate DOMAIN=Product FIELDS="name:string,description:string,price:float64,stock:int"
 
 # This creates:
@@ -145,7 +162,7 @@ make generate DOMAIN=Product FIELDS="name:string,description:string,price:float6
 # ✅ Application service
 # ✅ Database model & repository
 # ✅ HTTP handlers
-# ✅ Routes (manual registration needed)
+# ❌ Route registration and DI wiring — broken, see warning above
 ```
 
 ### Common Commands
@@ -178,13 +195,42 @@ docker run -p 8080:8080 --env-file .env kopiochi
 
 ## 📡 API Endpoints
 
+Business routes are mounted under `/api/v1`; operational routes are
+unversioned. The authoritative list is `TestRouteTable` in
+`cmd/api/routes_test.go`, which walks the real chi tree built by
+`httpx.Mount`.
+
+**Operational (unversioned, unauthenticated)**
+
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| `GET` | `/health` | Health check |
-| `POST` | `/api/v1/users` | Create a new user |
-| `GET` | `/api/v1/users/{id}` | Get user by ID |
-| `PUT` | `/api/v1/users/{id}` | Update a user |
-| `DELETE` | `/api/v1/users/{id}` | Delete a user |
+| `GET` | `/healthz` | Liveness — process is up; touches no dependency |
+| `GET` | `/readyz` | Readiness — pings the database pool; `503` when unreachable |
+| `GET` | `/health` | **Deprecated** alias for `/healthz`; will be removed |
+| `GET` | `/swagger/*` | Swagger UI and `doc.json` |
+
+**Auth (`modules/identity`)**
+
+| Method | Endpoint | Auth | Description |
+|--------|----------|------|-------------|
+| `POST` | `/api/v1/auth/login` | none | Log in; `200` with tokens, or `202` + `mfa_token` when MFA is enabled |
+| `POST` | `/api/v1/auth/refresh` | none | Exchange a refresh token (JSON body or `refresh_token` cookie) for new tokens |
+| `POST` | `/api/v1/auth/mfa/verify` | `Bearer <mfa_token>` | Complete the MFA login step with a TOTP or backup code |
+| `POST` | `/api/v1/auth/logout` | `Bearer <access_token>` | Revoke the caller's refresh tokens and clear the cookie |
+| `POST` | `/api/v1/auth/mfa/setup` | `Bearer <access_token>` | Start MFA enrolment; returns a TOTP secret and QR code URL |
+| `POST` | `/api/v1/auth/mfa/setup/verify` | `Bearer <access_token>` | Confirm enrolment with a TOTP code; returns backup codes |
+
+**Users** — every user route requires a valid access token.
+
+| Method | Endpoint | Auth | Description |
+|--------|----------|------|-------------|
+| `POST` | `/api/v1/users` | `Bearer <access_token>` | Create a new user |
+| `GET` | `/api/v1/users/{id}` | `Bearer <access_token>` | Get user by ID |
+| `PUT` | `/api/v1/users/{id}` | `Bearer <access_token>` | Update a user |
+| `DELETE` | `/api/v1/users/{id}` | `Bearer <access_token>` | Delete a user |
+
+> The refresh token is returned as an HttpOnly cookie, not in the JSON body —
+> `access_token` is the only token in the response payload.
 
 ### 📚 API Documentation (Swagger)
 
@@ -214,16 +260,35 @@ make run
 
 ### Example Requests
 
+**Log in** (obtain an access token — every user route needs one):
+```bash
+curl -X POST http://localhost:8080/api/v1/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"username":"john","password":"s3cret"}'
+# => {"access_token":"eyJ...","token_type":"Bearer","expires_in":900}
+# The refresh token is set as an HttpOnly `refresh_token` cookie.
+```
+
 **Create User:**
 ```bash
 curl -X POST http://localhost:8080/api/v1/users \
+  -H "Authorization: Bearer $ACCESS_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"name":"John Doe","email":"john@example.com"}'
 ```
 
 **Get User:**
 ```bash
-curl http://localhost:8080/api/v1/users/1
+curl http://localhost:8080/api/v1/users/1 \
+  -H "Authorization: Bearer $ACCESS_TOKEN"
+```
+
+Omitting the `Authorization` header on a user route returns `401`.
+
+**Liveness / readiness:**
+```bash
+curl http://localhost:8080/healthz   # 200 while the process is serving
+curl http://localhost:8080/readyz    # 200 only when the database answers a ping
 ```
 
 ## ⚙️ Configuration
@@ -286,16 +351,27 @@ make migrate-status
 kopiochi/
 ├── cmd/
 │   ├── api/
-│   │   └── main.go          # Application entry point
+│   │   ├── main.go          # Application entry point (cobra `serve`)
+│   │   └── container.go     # Composition root: BuildApp() assembles all modules
 │   ├── generator/
-│   │   └── main.go          # Code generator for CRUD operations
+│   │   └── main.go          # Code generator for CRUD operations (currently broken)
 │   └── migrate/
 │       └── main.go          # Database migration CLI
 ├── config/
 │   └── default.yaml         # Default configuration
 ├── migrations/              # Database migrations (Goose)
 │   ├── 00001_create_users.sql
-│   └── 00002_create_products.sql
+│   ├── 00002_create_products.sql
+│   ├── 00003_create_auth_users.sql
+│   ├── 00004_create_auth_refresh_tokens.sql
+│   └── 00005_create_auth_mfa_backup_codes.sql
+├── modules/                 # Business modules (module.Module implementations)
+│   └── identity/            # Login, refresh, MFA, access-token middleware
+│       ├── module.go        # identity.New() → *module.Module
+│       ├── domain/
+│       ├── application/
+│       ├── infrastructure/  # hasher, mfa, token, persistence
+│       └── transport/       # HTTP handlers + Routes()
 ├── internal/
 │   ├── application/         # Application layer (use cases)
 │   │   └── user/
@@ -303,23 +379,42 @@ kopiochi/
 │   ├── config/              # Configuration loading
 │   ├── db/                  # Database connection setup
 │   ├── domain/              # Domain layer (entities, interfaces)
-│   │   └── user/
-│   │       ├── user.go
-│   │       ├── repository.go
-│   │       └── service.go
+│   │   ├── user/
+│   │   │   ├── user.go
+│   │   │   ├── repository.go
+│   │   │   └── service.go
+│   │   └── ofbizuser/
+│   ├── httpx/               # Route tree: /healthz, /readyz, /swagger + /api/v1 mount
+│   │   ├── routes.go        # httpx.Mount(r, modules, deps)
+│   │   └── health.go
+│   ├── module/              # module.Module / module.Deps contract
 │   ├── infrastructure/      # Infrastructure layer
 │   │   ├── http/
-│   │   │   └── handlers/
+│   │   │   ├── handlers/    # Legacy user handler (owns its own Routes())
+│   │   │   └── server/      # NewRouter, NewServer, Run, graceful shutdown
 │   │   └── persistence/
 │   │       └── repository/
+│   ├── extension/           # Extension framework
+│   ├── plugin/              # Plugin contracts, registry, initializer
+│   ├── plugins/             # Built-in plugins (auth, middleware) + register.go
 │   ├── logger/              # Logger initialization
-│   ├── middleware/          # HTTP middleware
-│   └── server/              # Server setup and run
+│   ├── middleware/          # HTTP middleware (zerolog request logger)
+│   ├── testutil/            # Test helpers (throwaway Postgres, etc.)
+│   └── version/             # Build version string
 ├── .env.example             # Environment variables template
 ├── Dockerfile               # Docker build configuration
 ├── go.mod                   # Go module definition
 └── README.md
 ```
+
+### How routing is wired
+
+`cmd/api/main.go` builds the router with `server.NewRouter`, calls
+`BuildApp` (`cmd/api/container.go`) to assemble the modules, then hands both to
+`httpx.Mount(r, app.Modules, httpx.Deps{Pinger: pool})`. `Mount` registers the
+operational endpoints and mounts every module's `Routes` under `/api/v1`. Each
+module declares its own auth middleware, so a module can never be mounted
+unprotected by accident.
 
 ## 🔌 Plugin System
 
@@ -330,9 +425,13 @@ Kopiochi includes a powerful, config-driven plugin system that allows you to eas
 | Plugin | Type | Description |
 |--------|------|-------------|
 | `jwt-auth` | Authentication | JWT-based authentication with token generation |
-| `fido2-auth` | Authentication | FIDO2/WebAuthn passwordless authentication (passkeys) |
+| `fido2-auth` | Authentication | FIDO2/WebAuthn passkeys — **registered but not usable**, see [FIDO2_GUIDE.md](FIDO2_GUIDE.md) |
 | `ratelimit` | Middleware | Request rate limiting per client IP |
 | `cors` | Middleware | Cross-Origin Resource Sharing support |
+
+> Note: the request-authentication used by the API's own routes comes from the
+> `identity` module, not from an auth plugin. The auth plugins above are
+> optional extras.
 
 ### Configuration
 
@@ -354,34 +453,34 @@ plugins:
         # secret intentionally omitted - set via APP_JWT_SECRET env var
         expiry: "24h"
         issuer: "kopiochi"
-    
-    fido2:
-      enabled: false
-      provider: fido2-auth
-      config:
-        rp_id: "localhost"
-        rp_origin: "http://localhost:3000"
-        rp_name: "kopiochi"
   
-  # Cache plugins (coming soon)
-  cache: {}
+  # Cache plugins. `config/default.yaml` ships a disabled `redis` stanza, but
+  # no cache plugin is registered in internal/plugins/register.go yet — leave
+  # it disabled.
+  cache:
+    redis:
+      enabled: false
+      provider: redis
   
   # Custom plugins
   custom: {}
 ```
 
+Enabling `fido2-auth` here will fail startup — see the compatibility note at the
+top of [FIDO2_GUIDE.md](FIDO2_GUIDE.md).
+
 ### Creating Custom Plugins
 
-1. Create your plugin in `internal/plugin/<category>/`
+1. Create your plugin in `internal/plugins/<category>/` (`auth/` or `middleware/`)
 2. Implement the required interface:
    - **MiddlewarePlugin**: `Name()`, `Initialize()`, `Close()`, `Middleware()`
    - **AuthPlugin**: All middleware methods + `ExtractUserID()`
    - **CachePlugin**: `Get()`, `Set()`, `Delete()`
-3. Register it in `internal/plugin/register.go`
+3. Register it in `internal/plugins/register.go`
 
 Example:
 ```go
-// internal/plugin/middleware/myplugin.go
+// internal/plugins/middleware/myplugin.go
 package middleware
 
 type MyPlugin struct { /* ... */ }
@@ -402,8 +501,8 @@ func (p *MyPlugin) Provider() interface{} { return p }
 
 Then register it:
 ```go
-// internal/plugin/register.go
-func RegisterBuiltinPlugins(registry *Registry) {
+// internal/plugins/register.go
+func RegisterBuiltinPlugins(registry *plugin.Registry) {
     // ... existing plugins
     registry.Register("myplugin", func() Plugin {
         return &middlewarePluginAdapter{middleware.NewMyPlugin()}

@@ -1,7 +1,8 @@
 # Remediation Plan
 
-**Status:** Proposed
+**Status:** In progress — Phase 0 ✅ complete, Phase 1 ✅ complete, Phases 2–5 not started
 **Date:** 2026-08-02
+**Last verified:** 2026-08-02
 
 A sequenced plan to move from [current state](../00-overview/current-state.md) to
 [target architecture](../00-overview/target-architecture.md). Ordered by
@@ -11,50 +12,70 @@ groundwork.
 Effort is expressed in relative sizes (S ≈ hours, M ≈ 1–2 days, L ≈ 3–5 days) for
 one engineer familiar with the codebase.
 
+Status legend: ✅ done · ◐ partially done · ⚠️ cannot be verified from the
+repository · ⏳ not started.
+
+| Phase | Status |
+|---|---|
+| **Phase 0** — Stop the bleeding | ✅ Complete (0.5's credential *rotation* excepted — see ⚠️ below) |
+| **Phase 1** — Make the application work | ✅ Complete — exit criteria met |
+| **Phase 2** — Close the security gaps | ⏳ Not started |
+| **Phase 3** — Consolidate the structure | ⏳ Not started |
+| **Phase 4** — Build the safety net | ⏳ Not started — no CI exists |
+| **Phase 5** — Cleanup and hardening | ⏳ Not started |
+
 ---
 
-## Phase 0 — Stop the bleeding (½ day)
+## Phase 0 — Stop the bleeding (½ day) — ✅ COMPLETE
 
 Small, independent, zero-risk changes that unblock everything else.
 
-| # | Task | Effort | Doc |
-|---|------|--------|-----|
-| 0.1 | Add `.gitattributes` (`* text=auto eol=lf`), `git add --renormalize .` as a **standalone commit** | S | [hygiene](../06-quality/repository-hygiene.md) |
-| 0.2 | Repair `.gitignore` — remove markdown fences, add `bin/`, `keys/`, `*.pem`, `*.exe`, `coverage.*`, `*.zip` | S | [hygiene](../06-quality/repository-hygiene.md) |
-| 0.3 | `git rm --cached bin/ .vscode/settings.json`; delete `claude-agents_1.zip` | S | [hygiene](../06-quality/repository-hygiene.md) |
-| 0.4 | Create `.githooks/pre-commit` blocking `*.pem`, `keys/`, `bin/`, `.env` | S | [secrets](../03-configuration/secret-management.md) |
-| 0.5 | **Rotate** the DB password and JWT secret; remove both from `config/default.yaml` | S | [secrets](../03-configuration/secret-management.md) |
-| 0.6 | Add `CONFIG ?= config/default.yaml` to the Makefile; delete the `db-migrate`/`db-seed` TODO targets | S | [migrations](../05-data/migration-strategy.md) |
+| # | Status | Task | Effort | Doc |
+|---|--------|------|--------|-----|
+| 0.1 | ✅ `b294de2` | Add `.gitattributes` (`* text=auto eol=lf`), `git add --renormalize .` as a **standalone commit** (`gofmt -s` followed in `3dbd1b4`) | S | [hygiene](../06-quality/repository-hygiene.md) |
+| 0.2 | ✅ `4c72a83` | Repair `.gitignore` — remove markdown fences, add `bin/`, `keys/`, `*.pem`, `*.exe`, `coverage.*`, `*.zip` | S | [hygiene](../06-quality/repository-hygiene.md) |
+| 0.3 | ✅ `1c5ac2c` | `git rm --cached bin/ .vscode/settings.json`. (The listed `claude-agents_1.zip` appears in no commit; `*.zip` is ignored regardless.) | S | [hygiene](../06-quality/repository-hygiene.md) |
+| 0.4 | ✅ `9c302ad`, `1d3379e` | Create `.githooks/pre-commit` blocking `*.pem`, `keys/`, `bin/`, `.env` | S | [secrets](../03-configuration/secret-management.md) |
+| 0.5 | ◐ / ⚠️ | Remove the DB password and JWT secret from `config/default.yaml` — ✅ `b74b358`, with `BindEnv` so `APP_*` actually works, and `252efb2` for `.env.example`. **Rotating** the exposed credentials is ⚠️ **outstanding**: it happens outside the repository and no commit can demonstrate it | S | [secrets](../03-configuration/secret-management.md) |
+| 0.6 | ✅ `657b2dc` | Add `CONFIG ?= config/default.yaml` to the Makefile; delete the `db-migrate`/`db-seed` TODO targets | S | [migrations](../05-data/migration-strategy.md) |
 
-**Exit criteria:** `gofmt -l .` returns nothing; no secret or binary is added by a
-fresh `git add .`; rotated credentials are live.
+**Exit criteria:** ✅ `gofmt -l .` returns nothing. ◐ No secret or binary is added
+by a fresh `git add .` — true for binaries, keys, and archives, but `.qwen/` is
+still **tracked** and still absent from `.gitignore`. ⚠️ Rotated credentials are
+live — unverifiable from the repository; must be confirmed by the environment
+owner. Until then, treat the exposed DB password and JWT secret as valid.
 
 > 0.1 must land before any other formatting-touching change, or every subsequent
 > diff will be whole-file noise.
 
 ---
 
-## Phase 1 — Make the application work (3–4 days)
+## Phase 1 — Make the application work (3–4 days) — ✅ COMPLETE
 
-The application currently serves no business routes. Nothing else matters until
-that is true.
+The application served no business routes under `/api/v1`. Nothing else mattered
+until that was fixed.
 
-| # | Task | Effort | Doc |
-|---|------|--------|-----|
-| 1.1 | Write the five priority-1 failing tests (empty container, route table, rate-limit concurrency, env override, schema drift) | M | [testing](../06-quality/testing-strategy.md) |
-| 1.2 | Add `internal/module` (`Deps`, `Module`) | S | [extensions](../01-modularity/extension-framework.md) |
-| 1.3 | Add `modules/identity/module.go` over the existing identity internals (move, don't rewrite) | M | [layout](../01-modularity/module-layout.md) |
-| 1.4 | Replace the empty container with `BuildApp`, including the zero-module guard | M | [DI](../02-composition/dependency-injection.md) |
-| 1.5 | Rewrite `routes.Setup` as `httpx.Mount`, passing the `/api/v1` group router into `Module.Routes` | S | [routing](../02-composition/routing-and-versioning.md) |
-| 1.6 | Write identity's real migrations (`app_user`, `role`, `refresh_token`, `mfa_secret`) matching the bun models | M | [migrations](../05-data/migration-strategy.md) |
-| 1.7 | Split `/api/health` into `/healthz` + `/readyz` (with a real DB ping) | S | [routing](../02-composition/routing-and-versioning.md) |
+| # | Status | Task | Effort | Doc |
+|---|--------|------|--------|-----|
+| 1.1 | ✅ `d92480c` | Write the five priority-1 failing tests (empty container, route table, rate-limit concurrency, env override, schema drift). Four pass; the rate-limit concurrency test is deliberately `t.Skip`ped until Phase 2.1, since the defect it asserts is still live | M | [testing](../06-quality/testing-strategy.md) |
+| 1.2 | ✅ `05b1051` | Add `internal/module` (`Deps`, `Module`). Shipped `Deps` carries `DB` and `Logger`; no `Clock` | S | [extensions](../01-modularity/extension-framework.md) |
+| 1.3 | ✅ `5f6edfe`, `6d0c1b7` | Add `modules/identity/module.go` over the existing identity internals (move, don't rewrite). The move was from `internal/{domain,application,infrastructure}/auth/**` — this also completes what Phase 3.3 was written to do | M | [layout](../01-modularity/module-layout.md) |
+| 1.4 | ✅ `ef76759` | Replace the container with `BuildApp`, including the zero-module guard. The guard is present but unreachable — two modules are appended unconditionally above it | M | [DI](../02-composition/dependency-injection.md) |
+| 1.5 | ✅ `4fdc609` | Rewrite `routes.Setup` as `httpx.Mount`, passing the `/api/v1` group router into `Module.Routes`; `RouterGroup`/`RouteRegistrar` and `internal/infrastructure/http/routes/` deleted | S | [routing](../02-composition/routing-and-versioning.md) |
+| 1.6 | ✅ `fbddccb` | Write identity's real migrations matching the bun models. **Shipped as `00003_create_auth_users`, `00004_create_auth_refresh_tokens`, `00005_create_auth_mfa_backup_codes`** — not the `app_user`/`role`/`refresh_token`/`mfa_secret` set named when this plan was written. There is no `role` table (roles and permissions are `TEXT[]` columns on `auth_users`) and no `mfa_secret` table (it is a column) | M | [migrations](../05-data/migration-strategy.md) |
+| 1.7 | ✅ `40887de` | Split `/api/health` into `/healthz` + `/readyz` (with a real DB ping); `/health` kept as a deprecated alias | S | [routing](../02-composition/routing-and-versioning.md) |
 
-**Exit criteria:** `POST /api/v1/auth/login` returns a token against a migrated
-database; `TestRouteTable` passes; tests 1.1(a) and 1.1(b) go green.
+**Exit criteria — all met:** ✅ `POST /api/v1/auth/login` returns a token against
+a migrated database (`cmd/api/login_e2e_test.go`, `720e580`); ✅ `TestRouteTable`
+passes; ✅ tests 1.1(a) and 1.1(b) are green.
+
+> Known follow-up from this phase: `make generate` is broken. `cmd/generator`
+> still writes to `internal/infrastructure/http/routes/routes.go`, which 1.5
+> deleted.
 
 ---
 
-## Phase 2 — Close the security gaps (2–3 days)
+## Phase 2 — Close the security gaps (2–3 days) — ⏳ NOT STARTED
 
 Can run in parallel with Phase 1 after 1.4, since the middleware work is
 independent of module wiring.
@@ -80,32 +101,51 @@ with a placeholder secret.
 
 ---
 
-## Phase 3 — Consolidate the structure (4–5 days)
+## Phase 3 — Consolidate the structure (4–5 days) — ⏳ NOT STARTED
 
 Now that the application works and is safe, remove the duplication. Doing this
 earlier risks deleting something that turns out to be load-bearing.
 
+> **Three tasks withdrawn.** This phase previously also contained 3.1 (split
+> `internal/utils`), 3.3 (move `extensions/identity/**` → `modules/identity/**`),
+> and 3.4 (consolidate three aquaculture fragments and write the missing
+> repository, estimated L). `internal/utils`, `extensions/`, and any aquaculture
+> file appear in no commit of this repository, so 3.1 and 3.4 had no subject and
+> have been deleted. The identity move in 3.3 was in fact performed in Phase 1
+> (`5f6edfe`, `6d0c1b7`) — from `internal/{domain,application,infrastructure}/auth/**`,
+> not from `extensions/` — and is done. Numbering is preserved so existing
+> references still resolve.
+
 | # | Task | Effort | Doc |
 |---|------|--------|-----|
-| 3.1 | Split `internal/utils` into `internal/platform/{paging,crypto,id}` and `internal/httpx`; delete `utils` | M | [deps](../01-modularity/dependency-rules.md) |
+| ~~3.1~~ | ~~Split `internal/utils`~~ — **withdrawn**, no such package has ever existed | — | [deps](../01-modularity/dependency-rules.md) |
 | 3.2 | Add `depguard` rules + the module-isolation test; wire into CI | S | [deps](../01-modularity/dependency-rules.md) |
-| 3.3 | Move `extensions/identity/**` → `modules/identity/**` (transport rename included) | M | [layout](../01-modularity/module-layout.md) |
-| 3.4 | Consolidate the three aquaculture fragments into `modules/aquaculture/`; write the repository that never existed | L | [layout](../01-modularity/module-layout.md) |
+| ~~3.3~~ | ~~Move identity into `modules/`~~ — **done in Phase 1** (`5f6edfe`, `6d0c1b7`) | — | [layout](../01-modularity/module-layout.md) |
+| ~~3.4~~ | ~~Consolidate aquaculture~~ — **withdrawn**, no aquaculture code has ever existed | — | [layout](../01-modularity/module-layout.md) |
 | 3.5 | Convert CORS and rate limiting to direct construction in `internal/httpx` | S | [extensions](../01-modularity/extension-framework.md) |
-| 3.6 | **Delete** `internal/extension/`, `internal/plugin/`, `internal/plugins/`, `examples/extension-demo/`, `internal/modules/`, `internal/domain/`, `internal/application/`, `extensions/` | M | [extensions](../01-modularity/extension-framework.md) |
-| 3.7 | `go mod tidy`; drop `go-webauthn`, `go-tpm`, `cbor` (and `otp`/`barcode` if MFA is deferred) | S | [hygiene](../06-quality/repository-hygiene.md) |
+| 3.6 | **Delete the dead frameworks:** `internal/extension/` (including `internal/extension/identity/`, 1,076 LOC, no importers), `internal/plugin/`, `internal/plugins/`, `examples/extension-demo/`. Must follow 3.5, which removes the last live consumer of `internal/plugin{,s}` | M | [extensions](../01-modularity/extension-framework.md) |
+| 3.6b | **Move, do not delete:** `internal/domain/user`, `internal/application/user`, and the matching persistence/handler code become `modules/user/`. These are **live** — `cmd/api/container.go` builds the `user` module from them — so `internal/domain/` and `internal/application/` may only be removed once nothing imports them | M | [layout](../01-modularity/module-layout.md) |
+| 3.7 | `go mod tidy`; drop `go-webauthn`, `go-tpm`, `cbor`, and `boombuler/barcode`. **Keep `pquerna/otp`** — `modules/identity/infrastructure/mfa/totp.go` uses it | S | [hygiene](../06-quality/repository-hygiene.md) |
 | 3.8 | Fix `BuildDSN` with `net/url`; configure the `sql.DB` pool; add connect timeouts | S | [persistence](../05-data/persistence-and-pooling.md) |
 | 3.9 | Lifecycle stack — single ownership, LIFO teardown, `Serve` returns errors instead of `log.Fatal` | M | [lifecycle](../02-composition/lifecycle-and-shutdown.md) |
 
-**Exit criteria:** exactly one module layout exists; the import linter passes; no
-0-byte files; module count and binary size both measurably down.
+**Exit criteria:** all business code lives under `modules/`; the import linter
+passes; `go build ./...` and the full test suite still pass after every deletion;
+module count and binary size both measurably down.
 
+> ⚠️ **3.6 as previously written was dangerous.** Its delete list included
+> `internal/domain/` and `internal/application/`, which hold the live
+> profile-user stack that `cmd/api/container.go` depends on. Deleting them breaks
+> the build. The task has been split: 3.6 deletes only what has no importer, and
+> 3.6b *moves* the live code. Verify each path with
+> `grep -rn "<import path>" --include=*.go .` before removing it.
+>
 > 3.6 is the step most likely to be deferred and must not be. Leaving the old
 > frameworks in place recreates the original problem.
 
 ---
 
-## Phase 4 — Build the safety net (3–4 days)
+## Phase 4 — Build the safety net (3–4 days) — ⏳ NOT STARTED
 
 | # | Task | Effort | Doc |
 |---|------|--------|-----|
@@ -122,7 +162,7 @@ earlier risks deleting something that turns out to be load-bearing.
 
 ---
 
-## Phase 5 — Cleanup and hardening (2–3 days)
+## Phase 5 — Cleanup and hardening (2–3 days) — ⏳ NOT STARTED
 
 | # | Task | Effort | Doc |
 |---|------|--------|-----|
@@ -174,10 +214,9 @@ Phase 0 ──▶ Phase 1 ──▶ Phase 3 ──▶ Phase 5
 
 | Risk | Mitigation |
 |---|---|
-| Phase 3 deletions remove something needed | Phase 1 wires and Phase 4 tests **before** Phase 3 deletes |
+| Phase 3 deletions remove something needed | Phase 1 wires and Phase 4 tests **before** Phase 3 deletes. Confirm no importer with `grep -rn` per path; 3.6's original delete list contained live code |
 | History rewrite loses work | Backup mirror; announced freeze; single coordinated rewrite |
 | Rotating the JWT secret logs everyone out | Schedule during a maintenance window; communicate |
-| Aquaculture repository is larger than estimated (3.4) | It is genuinely unwritten — treat the estimate as a floor and re-scope after 3.3 |
 | Line-ending normalisation conflicts with in-flight branches | Do 0.1 during a quiet period; rebase open branches immediately |
 
 ---
@@ -188,7 +227,17 @@ Each phase should become an issue with its tasks as a checklist. Each task
 references its topic document, so the rationale travels with the work.
 
 Progress is measured by the exit criteria, not by task count — Phase 1 is done
-when a request succeeds end to end, regardless of how many boxes are ticked.
+when a request succeeds end to end, regardless of how many boxes are ticked. By
+that measure Phase 1 is done: `cmd/api/login_e2e_test.go` drives
+`POST /api/v1/auth/login` against a migrated database and gets a token back.
+
+Two caveats on "done" that the ticks do not capture:
+
+- **Phase 0.5's rotation is unverifiable from here.** The repository can show
+  that secrets left the working tree; it cannot show that the exposed values were
+  rotated. Do not read the ✅ on the rest of Phase 0 as closing that exposure.
+- **Milestone M1 is reached, M2–M5 are not.** Nothing in Phases 2–5 has started,
+  and there is still no CI, so no exit criterion is enforced automatically.
 
 ---
 

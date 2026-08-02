@@ -9,7 +9,7 @@
 ✅ **Clean Architecture** - Strict DDD layer separation  
 ✅ **Production-Ready** - Graceful shutdown, structured logging, health checks  
 ✅ **Plugin System** - Extensible middleware, auth, and cache  
-✅ **Code Generator** - Auto-generate CRUD domains in seconds  
+⚠️ **Code Generator** - Auto-generate CRUD domains — **currently broken**, see [Generate Your First Domain](#2-generate-your-first-domain)  
 ✅ **Best Practices** - Dependency injection, interface-based design  
 ✅ **Modern Stack** - chi router, bun ORM, pgx, viper, zerolog  
 
@@ -135,28 +135,42 @@ The initialization script updates:
 myapi/
 ├── cmd/
 │   ├── api/              # Main API server entry point
+│   │   ├── main.go
+│   │   └── container.go  # Composition root: BuildApp() assembles all modules
+│   ├── generator/        # Code generator for new domains (currently broken)
 │   │   └── main.go
-│   └── generator/        # Code generator for new domains
+│   └── migrate/          # Database migration CLI
 │       └── main.go
 ├── config/
 │   └── default.yaml      # Default configuration
+├── migrations/           # Goose SQL migrations
+├── modules/              # Business modules (module.Module implementations)
+│   └── identity/         # Login, refresh, MFA + access-token middleware
+│       ├── module.go
+│       ├── domain/
+│       ├── application/
+│       ├── infrastructure/
+│       └── transport/
 ├── internal/
 │   ├── domain/           # Domain layer (entities, interfaces)
 │   ├── application/      # Application layer (use cases)
+│   ├── httpx/            # Route tree: /healthz, /readyz, /swagger + /api/v1
+│   ├── module/           # module.Module / module.Deps contract
 │   ├── infrastructure/   # Infrastructure layer (HTTP, DB)
 │   │   ├── http/
 │   │   │   ├── handlers/
-│   │   │   └── routes/
+│   │   │   └── server/   # NewRouter, NewServer, Run, graceful shutdown
 │   │   └── persistence/
 │   │       └── repository/
-│   ├── plugin/           # Plugin system
-│   │   ├── auth/
-│   │   └── middleware/
+│   ├── extension/        # Extension framework
+│   ├── plugin/           # Plugin contracts, registry, initializer
+│   ├── plugins/          # Built-in plugins (auth/, middleware/) + register.go
 │   ├── config/           # Configuration loader
 │   ├── db/               # Database connection
 │   ├── logger/           # Logger setup
 │   ├── middleware/       # HTTP middleware
-│   └── server/           # Server setup
+│   ├── testutil/         # Test helpers
+│   └── version/          # Build version string
 ├── scripts/
 │   ├── init.ps1          # Windows initialization script
 │   └── init.sh           # Linux/Mac initialization script
@@ -181,6 +195,29 @@ make build            # Build binary
 ```
 
 ### 2. Generate Your First Domain
+
+> ### ⚠️ The code generator is currently broken — do not use it
+>
+> Routing was restructured: `internal/infrastructure/http/routes/` was deleted
+> (`routes.Setup` no longer exists, replaced by `httpx.Mount`), and dependency
+> injection moved from `cmd/api/main.go` into `BuildApp` in
+> `cmd/api/container.go`. `cmd/generator/main.go` was not updated for either
+> change. It still compiles — the stale paths are runtime strings, not
+> imports — but a run leaves the repository in a broken state:
+>
+> - `updateRoutes` tries to read `internal/infrastructure/http/routes/routes.go`,
+>   which no longer exists. This is reported only as a warning, so the run
+>   still reports success.
+> - `updateMainGo` looks for repository/service/handler/`routes.Setup` wiring in
+>   `cmd/api/main.go`. None of it is there any more, so **no** wiring is added —
+>   but the import injection step still fires, leaving an unused
+>   `app<Domain> ".../internal/application/<domain>"` import in `main.go`.
+>   `go build ./...` then fails with `imported as app<Domain> and not used`.
+>
+> Repairing the generator is tracked as separate work. Until then, add domains
+> by hand: write the layers yourself and register the domain as a
+> `module.Module` in `BuildApp` (`cmd/api/container.go`). If you did run it,
+> revert the injected import in `cmd/api/main.go`.
 
 You have two options for generating CRUD domains:
 
@@ -233,32 +270,55 @@ internal/
             └── product_handler.go     # HTTP handlers
 ```
 
-#### Auto-Wiring
+#### Auto-Wiring (broken)
 
-The generator automatically:
-1. **Updates routes** - Adds handler parameter and route definitions to `internal/infrastructure/http/routes/routes.go`
-2. **Wires dependencies** - Adds repository, service, and handler initialization to `cmd/api/main.go`
-3. **Registers routes** - Adds the new handler to `routes.Setup()` call
-
-No manual file moving or route editing required!
+The generator was designed to also update routes and dependency injection
+automatically. Both targets have moved and neither step works any more — see
+the warning at the start of this section. Route registration and DI wiring must
+be done by hand.
 
 ### 3. Add Routes
 
-Edit `internal/infrastructure/http/routes/routes.go`:
+Routes are no longer registered in one central file. A handler owns its own
+routes and its own protection through a `Routes(chi.Router)` method, and
+`httpx.Mount` mounts each module's `Routes` under `/api/v1`.
+
+Give your handler a `Routes` method (see
+`internal/infrastructure/http/handlers/user.go` or
+`modules/identity/transport/auth.go` for working examples):
 
 ```go
-func Setup(r *chi.Mux, userHandler *handlers.UserHandler, productHandler *handlers.ProductHandler) {
-    // ... existing routes
-    
-    r.Route("/api/v1/products", func(r chi.Router) {
-        r.Post("/", productHandler.CreateProduct)
-        r.Get("/", productHandler.GetProducts)
-        r.Get("/{id}", productHandler.GetProductByID)
-        r.Put("/{id}", productHandler.UpdateProduct)
-        r.Delete("/{id}", productHandler.DeleteProduct)
+// Mounted under /api/v1, so these serve at /api/v1/products, etc.
+func (h *ProductHandler) Routes(r chi.Router) {
+    r.Group(func(r chi.Router) {
+        r.Use(h.authMW) // omit the group if the routes should be public
+        r.Post("/products", h.CreateProduct())
+        r.Get("/products/{id}", h.GetProduct())
+        r.Put("/products/{id}", h.UpdateProduct())
+        r.Delete("/products/{id}", h.DeleteProduct())
     })
 }
 ```
+
+Then register the module in the composition root, `cmd/api/container.go`:
+
+```go
+func BuildApp(cfg *config.Config, db bun.IDB, log zerolog.Logger) (*App, error) {
+    // ... existing modules
+
+    productMod, err := newProductModule(cfg, db)
+    if err != nil {
+        return nil, fmt.Errorf("build product module: %w", err)
+    }
+    mods = append(mods, productMod)
+
+    // ...
+}
+```
+
+where `newProductModule` returns a `*module.Module{Name: "product", Routes: productHandler.Routes}`.
+`cmd/api/routes_test.go` (`TestRouteTable`) walks the real router and is the
+place to assert your new paths.
 
 ### 4. Enable Plugins
 
@@ -275,8 +335,12 @@ plugins:
       enabled: true
       provider: jwt-auth
       config:
-        secret: "${JWT_SECRET}"
+        # secret is intentionally left out of YAML — supply it via the
+        # APP_JWT_SECRET environment variable, which internal/config binds
+        # to plugins.auth.jwt.config.secret. Viper does not expand
+        # "${JWT_SECRET}" placeholders.
         expiry: "24h"
+        issuer: "kopiochi"
 ```
 
 ### 5. Build and Deploy
@@ -305,7 +369,8 @@ make docker-run
 | `make test-coverage` | Run tests with coverage report |
 | `make lint` | Run linter |
 | `make fmt` | Format code |
-| `make generate DOMAIN=X FIELDS=Y` | Generate CRUD domain |
+| `make generate DOMAIN=X FIELDS=Y` | Generate CRUD domain — **broken, see above** |
+| `make migrate-up` / `make migrate-status` | Run / inspect database migrations |
 | `make docker-build` | Build Docker image |
 | `make clean` | Remove build artifacts |
 
@@ -333,19 +398,25 @@ func MyCustomMiddleware(next http.Handler) http.Handler {
 }
 ```
 
-2. Add to router in `internal/server/server.go`:
+2. Add to the core stack in `internal/infrastructure/http/server/server.go`:
 
 ```go
-func NewRouter() *chi.Mux {
+func NewRouter(cfg config.Server, mw ...func(http.Handler) http.Handler) *chi.Mux {
     r := chi.NewRouter()
-    
+
     r.Use(middleware.Recoverer)
     r.Use(middleware.RequestID)
     r.Use(MyCustomMiddleware)  // Add here
-    
+    // ... RealIP, Timeout, ZerologRequestLogger
+
     return r
 }
 ```
+
+`NewRouter` also accepts variadic middleware appended after the core stack, so
+a caller can pass one in instead of editing the core stack. (`cmd/api/main.go`
+currently applies the plugin middleware chain with a separate `r.Use(...)`
+after `NewRouter` returns.)
 
 ### Adding New Plugins
 

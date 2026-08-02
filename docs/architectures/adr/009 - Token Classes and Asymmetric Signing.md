@@ -23,9 +23,18 @@ is the one wired into `main.go`. Defects:
   (`jwt.go:158-168`). The middleware then reads `Issuer` back as the user's name
   (`jwt.go:123-125`), so every request sees the name `"kopiochi"`.
 
-**System B** — `extensions/identity/infrastructure/token/jwt.go`, RS256 with an
-RSA keypair. It is dead code, but closer to correct: it *does* pin the signing
-method (`jwt.go:75-77`). Remaining gaps:
+**System B** — `modules/identity/infrastructure/token/jwt.go`, RS256 with an RSA
+keypair. It is closer to correct: it *does* pin the signing method
+(`jwt.go:75-77`). Remaining gaps:
+
+> *An earlier revision of this Context cited System B as
+> `extensions/identity/infrastructure/token/jwt.go` and described it as dead code.
+> No `extensions/` directory appears in any commit of this repository, and since
+> `5f6edfe` this service has been the **live** verifier —
+> `modules/identity/transport/middleware.go` calls its `Validate`. The path has
+> been repointed and the "dead code" characterisation withdrawn. That makes the
+> gaps below the urgent ones, not the deferred ones. This ADR is `Proposed`, so
+> the Context is revised in place.*
 
 - No `iss` or `aud` validation, even though `IssueIDToken` sets `aud` to the
   client ID.

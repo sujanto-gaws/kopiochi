@@ -26,8 +26,8 @@ func (m *Manager) Bootstrap() error {
 }
 ```
 
-Imported by: `examples/extension-demo/main.go` and `extensions/identity/extension.go`.
-**Not imported by `cmd/`.**
+Imported by: `examples/extension-demo/main.go` and
+`internal/extension/identity/extension.go`. **Not imported by `cmd/`.**
 
 ### Framework B — `Registry` (`internal/plugin/` + `internal/plugins/`, ~500 LOC)
 
@@ -43,9 +43,33 @@ func (r *Registry) GetMiddleware(name string) MiddlewarePlugin
 
 Imported by `cmd/api/main.go:59-67`. **This is the live one.**
 
-The result: the entire identity extension is written against Framework A, which
-the server never instantiates. That is the direct mechanical reason ~2,000 LOC of
-working auth code is dead.
+### What Framework A actually costs
+
+> **Withdrawn.** An earlier revision of this document concluded here that "the
+> entire identity extension is written against Framework A, which the server
+> never instantiates", and that this was "the direct mechanical reason ~2,000 LOC
+> of working auth code is dead". That is not what happened. The live auth stack
+> was ordinary DDD code under `internal/{domain,application,infrastructure}/auth`,
+> reachable through the container the whole time; it was moved to
+> `modules/identity/**` in `5f6edfe`/`6d0c1b7` and is now served under
+> `/api/v1/auth/*`. No `extensions/` directory has ever existed in this
+> repository. The claim could not be substantiated and has been withdrawn.
+
+What Framework A does cost is a 1,076-LOC parallel identity implementation
+written against it:
+
+```
+internal/extension/identity/{extension,models,repository,service}.go   1,076 LOC
+```
+
+It has no transport layer, it duplicates concepts the live `modules/identity`
+owns, and `grep -rn "extension/identity" --include=*.go .` finds no importer. Its
+only reason to exist is that `internal/extension/` offered a registration
+mechanism; deleting the framework removes the reason to keep the copy. Together
+with `internal/extension/` itself (~600 LOC) and `examples/extension-demo/`, that
+is the whole of Framework A's footprint.
+
+The defects below are in the framework the server **does** run.
 
 ---
 
@@ -244,20 +268,23 @@ details in [`../04-security/middleware-hardening.md`](../04-security/middleware-
 
 ## Migration path
 
-1. Introduce `internal/module` with the `Deps`/`Module` types.
-2. Add `modules/identity/module.go` implementing `New()` over the **existing**
-   `extensions/identity` internals (move, do not rewrite, the domain/application
-   code).
-3. Wire it in `cmd/api/container.go`; verify routes respond.
-4. Convert CORS and rate limiting to direct construction in `internal/httpx`.
-5. Delete `internal/extension/`, `internal/plugin/`, `internal/plugins/`,
-   `internal/plugins/adapters.go`, and `examples/extension-demo/`.
-6. Drop `go-webauthn`, `go-tpm`, `otp`, and `barcode` from `go.mod` if the
+1. ✅ Introduce `internal/module` with the `Deps`/`Module` types — `05b1051`.
+2. ✅ Add `modules/identity/module.go` implementing `New()` over the **existing**
+   live auth internals, moved rather than rewritten, from
+   `internal/{domain,application,infrastructure}/auth/**` — `5f6edfe`, `6d0c1b7`.
+3. ✅ Wire it in `cmd/api/container.go`; verify routes respond — `ef76759`,
+   `4fdc609`.
+4. ⏳ Convert CORS and rate limiting to direct construction in `internal/httpx`.
+5. ⏳ Delete `internal/extension/` (including `internal/extension/identity/`),
+   `internal/plugin/`, `internal/plugins/`, `internal/plugins/adapters.go`, and
+   `examples/extension-demo/`.
+6. ⏳ Drop `go-webauthn`, `go-tpm`, `otp`, and `barcode` from `go.mod` if the
    corresponding features are not being reimplemented immediately.
 
-Steps 1–3 are additive and independently shippable. Step 5 is the one that
-removes ~1,100 LOC and must not be skipped — leaving the old frameworks in place
-recreates the exact situation this document exists to resolve.
+Steps 1–3 were additive and independently shippable, and have landed. Step 5 is
+the one that removes the duplicate frameworks and the 1,076-LOC dead identity
+copy, and must not be skipped — leaving them in place recreates the exact
+situation this document exists to resolve.
 
 ---
 

@@ -1,5 +1,39 @@
 # FIDO2/WebAuthn Authentication Plugin Guide
 
+> ## ⛔ Status: the `fido2-auth` plugin cannot currently be initialised
+>
+> **Read this before following any instruction below.** The plugin is
+> registered in `internal/plugins/register.go`, but it cannot be initialised
+> under *any* configuration, so enabling it in `config/default.yaml` makes the
+> server fail to start:
+>
+> `FIDO2Plugin.Initialize` (`internal/plugins/auth/fido2.go:92-100`) requires
+> `cfg["user_store"]` to be a live Go value satisfying the `UserStore`
+> interface. Plugin config reaches `Initialize` as the
+> `map[string]interface{}` that Viper decoded from YAML/env
+> (`config.PluginAuthConfig.Config`), and Viper can only ever produce strings,
+> numbers, booleans, slices and maps — never a Go interface implementation.
+> So the assertion fails every time:
+>
+> - omit `user_store` → `fido2-auth: user_store is required`
+> - set it in YAML → `fido2-auth: user_store must implement UserStore interface`
+>
+> `plugin.InitializeFromConfig` propagates that error and `cmd/api/main.go`
+> aborts startup with `initialize plugins: auth plugin fido2: ...`.
+>
+> Making this work needs a code change — a way to inject Go collaborators into
+> a plugin at composition time, rather than through Viper config. Until that
+> exists, treat this document as a **design reference for the intended
+> feature, not as working setup instructions**. The steps below have not been
+> executed end to end against the current codebase, and the wiring examples in
+> Implementation Steps 4 and 5 referenced APIs (`routes.Setup`,
+> `handlers.Health`) that were deleted in the routing restructure — those two
+> steps carry inline corrections.
+>
+> The authentication that the API actually ships with is the `identity`
+> module (`modules/identity`): password login, refresh tokens and TOTP MFA
+> under `/api/v1/auth/...`. See [README.md](README.md).
+
 ## 🎯 Overview
 
 The FIDO2 plugin provides **passwordless authentication** using WebAuthn/FIDO2 standards. Users can authenticate using:
@@ -40,6 +74,11 @@ github.com/google/uuid v1.6.0
 ## 🔧 Setup
 
 ### 1. Enable the Plugin
+
+> ⛔ Setting `enabled: true` here currently makes `go run ./cmd/api serve` exit
+> with `initialize plugins: auth plugin fido2: failed to initialize plugin
+> fido2-auth: fido2-auth: user_store is required`. `config/default.yaml` ships
+> without a `fido2` stanza for that reason. See the status note at the top.
 
 Edit `config/default.yaml`:
 
@@ -471,32 +510,52 @@ func (h *FIDO2Handler) GetUserInfo() http.HandlerFunc {
 
 ### Step 4: Register Routes
 
-Update `internal/infrastructure/http/routes/routes.go`:
+> Corrected for the current routing layout. There is no central
+> `routes.Setup` and no `handlers.Health` any more: `internal/infrastructure/http/routes/`
+> was deleted, health/readiness live in `internal/httpx`, and each handler
+> declares its own routes via a `Routes(chi.Router)` method that
+> `httpx.Mount` invokes inside the `/api/v1` group.
+
+Give the handler a `Routes` method — paths are relative to `/api/v1`, so they
+serve at `/api/v1/fido2/...`:
 
 ```go
-func Setup(r *chi.Mux, userHandler *handlers.UserHandler, fido2Handler *handlers.FIDO2Handler) {
-    // Health check
-    r.Get("/health", handlers.Health())
-
-    // FIDO2 routes
-    r.Route("/api/v1/fido2", func(r chi.Router) {
+// internal/infrastructure/http/handlers/fido2.go
+func (h *FIDO2Handler) Routes(r chi.Router) {
+    r.Route("/fido2", func(r chi.Router) {
         // Registration
-        r.Post("/register/begin", fido2Handler.BeginRegistration())
-        r.Post("/register/finish", fido2Handler.FinishRegistration())
-        
+        r.Post("/register/begin", h.BeginRegistration())
+        r.Post("/register/finish", h.FinishRegistration())
+
         // Login
-        r.Post("/login/begin", fido2Handler.BeginLogin())
-        r.Post("/login/finish", fido2Handler.FinishLogin())
-        
-        // User info (protected)
-        r.Get("/me", fido2Handler.GetUserInfo())
+        r.Post("/login/begin", h.BeginLogin())
+        r.Post("/login/finish", h.FinishLogin())
+
+        // User info (protected — wrap in r.Group with an auth middleware)
+        r.Get("/me", h.GetUserInfo())
     })
 }
 ```
 
 ### Step 5: Initialize in main.go
 
-Update `cmd/api/main.go`:
+> ⛔ **This step does not work as written** — it is the crux of the status
+> warning at the top of this guide. Both branches are dead ends:
+>
+> - With `fido2.enabled: true`, `plugin.InitializeFromConfig` on the line above
+>   already failed (no `user_store` can come from config) and `cmd/api/main.go`
+>   returns `initialize plugins: ...` — the process never reaches this code.
+> - With `fido2.enabled: false`, the plugin is never instantiated, so
+>   `Registry.Get`/`GetAuth` returns `nil` (they only return *initialized*
+>   plugins) and the whole `if` block is skipped.
+>
+> Two further mismatches with the current code: the registry stores an
+> `*plugins.authPluginAdapter`, not an `*auth.FIDO2Plugin`, so the type
+> assertion on `fido2Plugin` panics; and `routes.Setup` no longer exists (see
+> Step 4). Wiring FIDO2 up properly means giving the plugin system a way to
+> receive Go collaborators at composition time — for example by building it in
+> `BuildApp` (`cmd/api/container.go`) as a `module.Module`, the way the
+> `identity` module is built.
 
 ```go
 // After plugin initialization
@@ -937,18 +996,31 @@ config:
 
 ### Error: "user_store is required"
 
-**Problem:** FIDO2 plugin needs a UserStore implementation.
+**Problem:** the FIDO2 plugin needs a `UserStore` implementation, and the
+config-driven initialisation path cannot supply one.
 
-**Solution:** Implement the `UserStore` interface and pass it during initialization:
+**This is the blocking defect described at the top of this guide, not a
+misconfiguration you can fix in YAML.** `Initialize` requires `cfg["user_store"]`
+to be a Go value satisfying the `UserStore` interface, but plugin config
+arrives as the `map[string]interface{}` Viper decoded from YAML/env — strings,
+numbers, booleans, slices and maps only. Adding a `user_store:` key to
+`config/default.yaml` just changes the error to
+`fido2-auth: user_store must implement UserStore interface`.
+
+In principle the plugin initialises when handed a real store from Go:
 
 ```go
 userStore := store.NewFIDO2UserStore(db)
 fido2Plugin.Initialize(map[string]interface{}{
     "rp_id":       "localhost",
     "rp_origin":   "http://localhost:3000",
-    "user_store":  userStore,  // ← Add this
+    "user_store":  userStore,  // ← must be a Go value, not config data
 })
 ```
+
+…but nothing in the current codebase reaches that call: `InitializeFromConfig`
+is the only caller of `Initialize`, and it only ever passes config data. See
+Step 5 for why the documented `main.go` workaround does not work either.
 
 ### Error: "navigator.credentials is undefined"
 
@@ -1016,15 +1088,20 @@ user := &auth.WebAuthnUser{
 
 ## 📝 Summary
 
-**FIDO2 plugin provides:**
+> ⛔ Reminder: this is a design reference, not a working setup. The
+> `fido2-auth` plugin cannot be initialised from configuration today — see the
+> status note at the top of this guide.
+
+**FIDO2 plugin is intended to provide:**
 ✅ Passwordless authentication  
 ✅ Phishing-resistant security  
 ✅ Biometric support (Touch ID, Face ID, Windows Hello)  
 ✅ Hardware key support (YubiKey)  
 ✅ Industry standard implementation  
 
-**Setup checklist:**
-- [ ] Enable plugin in config
+**Setup checklist** (blocked at the first step until the plugin can receive a
+`UserStore` from the composition root):
+- [ ] Enable plugin in config — ⛔ currently aborts startup
 - [ ] Implement UserStore interface
 - [ ] Create database schema
 - [ ] Create FIDO2 handler

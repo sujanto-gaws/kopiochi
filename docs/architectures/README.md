@@ -36,21 +36,53 @@ read on its own; cross-references are relative links.
 | [001](adr/001%20-%20Adopt%20Domain%20Driven%20Design.md) | Adopt Domain-Driven Design | Accepted |
 | [002](adr/002%20-%20Apply%20CQRS%20for%20Specific%20Bounded%20Contexts.md) | Apply CQRS for Specific Bounded Contexts | Accepted |
 | [003](adr/003%20-%20Event%20Sourcing%20for%20Specific%20Bounded%20Contexts.md) | Event Sourcing for Specific Bounded Contexts | Accepted |
-| [004](adr/004%20-%20Consolidate%20on%20a%20Single%20Extension%20Framework.md) | Consolidate on a Single Extension Framework | Proposed |
+| [004](adr/004%20-%20Consolidate%20on%20a%20Single%20Extension%20Framework.md) | Consolidate on a Single Extension Framework | Accepted — partially implemented |
 | [005](adr/005%20-%20Module%20Boundaries%20and%20Dependency%20Direction.md) | Module Boundaries and Dependency Direction | Proposed |
-| [006](adr/006%20-%20Explicit%20Compile-Time%20Dependency%20Injection.md) | Explicit Compile-Time Dependency Injection | Proposed |
-| [007](adr/007%20-%20API%20Versioning%20at%20the%20Router%20Boundary.md) | API Versioning at the Router Boundary | Proposed |
+| [006](adr/006%20-%20Explicit%20Compile-Time%20Dependency%20Injection.md) | Explicit Compile-Time Dependency Injection | Accepted — implemented |
+| [007](adr/007%20-%20API%20Versioning%20at%20the%20Router%20Boundary.md) | API Versioning at the Router Boundary | Accepted — implemented |
 | [008](adr/008%20-%20Configuration%20Precedence%20and%20Secret%20Handling.md) | Configuration Precedence and Secret Handling | Proposed |
 | [009](adr/009%20-%20Token%20Classes%20and%20Asymmetric%20Signing.md) | Token Classes and Asymmetric Signing | Proposed |
 | [010](adr/010%20-%20Module-Owned%20Database%20Migrations.md) | Module-Owned Database Migrations | Proposed |
-| [011](adr/011%20-%20Build%20Artifacts%20Excluded%20from%20Version%20Control.md) | Build Artifacts Excluded from Version Control | Proposed |
+| [011](adr/011%20-%20Build%20Artifacts%20Excluded%20from%20Version%20Control.md) | Build Artifacts Excluded from Version Control | Accepted — partially implemented |
+
+**Status vocabulary.** `Proposed` — decided in principle, no code yet.
+`Accepted — partially implemented` — some implementation steps have shipped;
+the ADR lists which. `Accepted — implemented` — every implementation step in the
+ADR has shipped and is covered by a test. An ADR's status changes as its
+implementation steps land; its Context and Decision are still append-only.
 
 ## Scope note
 
-These documents were produced from a full review of the repository. The review
-found that the application currently compiles but **serves no business routes** —
-the DI container is empty, and roughly 40% of hand-written Go is unreachable. The
-topic documents below address the structural causes, not just the symptoms.
+These documents were produced from a full review of the repository, and Phases 0
+and 1 of the [remediation plan](07-roadmap/remediation-plan.md) have since landed
+against them.
+
+The review's headline finding — that the application compiled but **served no
+business routes** — has been **withdrawn as unsubstantiated**. It rested on a
+quoted `cmd/api/container/container.go` with an empty registrar list; no such
+version exists. Both `git show 794d783:cmd/api/container/container.go` (the
+earliest) and `git show 0fbab20:cmd/api/container/container.go` (the commit that
+added these documents) return
+`registrars: []handlers.RouteRegistrar{authHandler, userHandler}`. The real
+routing defect was different and worse: those two registrars were mounting onto a
+shadowed router with no `/api/v1` prefix, so their routes served at the root. That
+is fixed — `internal/httpx.Mount` (`4fdc609`) serves them under a real `/api/v1`,
+proven end to end by `cmd/api/login_e2e_test.go`.
+
+A second pass over these documents (2026-08-02) resolved every section that cited
+files or code appearing in no commit of this repository — among them
+`extensions/`, `internal/utils`, `internal/modules/`, `internal/middleware/recovery.go`,
+`docs/api/docs.go`, an `AppUser` type, and any aquaculture code. Those claims are
+marked **Withdrawn** in place, with the design guidance they carried preserved.
+Where a real equivalent existed, the citation was repointed rather than deleted —
+the genuinely dead Yii-style identity copy is `internal/extension/identity/`
+(1,076 LOC, no importers), not `extensions/identity/`.
+
+Accepted ADRs (004, 006, 007, 011) are append-only, so their Context sections are
+untouched; each carries a **Correction** section at the end instead.
+
+A large fraction of hand-written Go is still unreachable from `cmd/`. The topic
+documents below address the structural causes, not just the symptoms.
 
 Start with [`00-overview/current-state.md`](00-overview/current-state.md), then
 [`07-roadmap/remediation-plan.md`](07-roadmap/remediation-plan.md) for the

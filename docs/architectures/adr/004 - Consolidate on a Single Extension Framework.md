@@ -1,7 +1,14 @@
 # ADR-004: Consolidate on a Single Extension Framework
 
 ## Status
-**Proposed** – *Date: 2026-08-02*
+**Accepted — partially implemented** – *Decided: 2026-08-02 · Steps 1–3 implemented: 2026-08-02 (Phase 1)*
+
+The new module contract exists and identity runs on it (steps 1–3). The old
+frameworks have **not** been removed: `internal/extension/`, `internal/plugin/`,
+and `internal/plugins/` are all still present, and `internal/plugin{,s}` is still
+what `cmd/api/main.go:56-64` initialises. Steps 4–6 are Phase 3 work, so the
+consolidation this ADR is named for has not actually happened yet — for now the
+repository has *three* registration mechanisms, not one.
 
 ## Context
 
@@ -104,24 +111,31 @@ Modules are compiled in.
 
 ## Implementation Plan
 
-1. Add `internal/module` with `Deps` and `Module`.
-2. Add `modules/identity/module.go` implementing `New()` over the existing
-   identity internals (move code, do not rewrite logic).
-3. Wire it in `cmd/api/container.go`; verify routes respond.
-4. Convert CORS and rate limiting to direct construction in `internal/httpx`.
-5. Delete `internal/extension/`, `internal/plugin/`, `internal/plugins/`,
-   `examples/extension-demo/`.
-6. `go mod tidy`; drop the now-unused dependencies.
+1. ✅ Add `internal/module` with `Deps` and `Module` — `05b1051`. The shipped
+   `Deps` carries `DB` and `Logger` only.
+2. ✅ Add `modules/identity/module.go` implementing `New()` over the existing
+   identity internals (move code, do not rewrite logic) — `5f6edfe`, `6d0c1b7`.
+3. ✅ Wire it in `cmd/api/container.go`; verify routes respond — `ef76759`,
+   `4fdc609`; verified by `cmd/api/routes_test.go` and `cmd/api/login_e2e_test.go`.
+4. ⏳ Convert CORS and rate limiting to direct construction in `internal/httpx` —
+   Phase 3.5, not started.
+5. ⏳ Delete `internal/extension/`, `internal/plugin/`, `internal/plugins/`,
+   `examples/extension-demo/` — Phase 3.6, not started.
+6. ⏳ `go mod tidy`; drop the now-unused dependencies — Phase 3.7, not started.
 
-Steps 1–3 are additive and independently shippable. Step 5 is mandatory.
+Steps 1–3 are additive and independently shippable, and have shipped. Step 5 is
+mandatory: until it runs, this ADR has added a mechanism rather than
+consolidating on one.
 
 ## Compliance / Enforcement
 
 - No new package may define a `Plugin`, `Extension`, or `Registry` interface.
 - Code review rejects any `map[string]interface{}` parameter in a constructor.
 - The import linter denies imports of the deleted packages by path, so a revert
-  cannot reintroduce them silently.
+  cannot reintroduce them silently. *Not in place — there is no `.golangci.yml`
+  and no CI.*
 - A route-table test asserts every registered module actually serves routes.
+  *In place: `cmd/api/routes_test.go` (`d92480c`).*
 
 ## Related ADRs
 - [ADR-005: Module Boundaries and Dependency Direction](005%20-%20Module%20Boundaries%20and%20Dependency%20Direction.md)
@@ -130,6 +144,43 @@ Steps 1–3 are additive and independently shippable. Step 5 is mandatory.
 
 ## Related Documents
 - [Extension framework](../01-modularity/extension-framework.md)
+
+---
+
+## Correction (2026-08-02)
+
+*Appended rather than edited into the Context, per the append-only rule for
+accepted ADRs stated in [the documentation README](../README.md).*
+
+**Withdrawn**, from the Context's list of observed consequences:
+
+> The entire identity extension (~2,000 LOC of working authentication, MFA, and
+> role management) is written against Framework A and is therefore **never
+> loaded** by the server.
+
+**Why:** that is not what happened. The live auth stack was ordinary DDD code
+under `internal/{domain,application,infrastructure}/auth`, wired through the
+container and reachable the whole time; Phase 1 moved it to `modules/identity/**`
+(`5f6edfe`, `6d0c1b7`) and it now serves `/api/v1/auth/*`. No `extensions/`
+directory has ever existed in this repository —
+`git log --all --diff-filter=A -- extensions/` returns no commits — so the
+Context's citation of `extensions/identity/extension.go` as a Framework A
+importer is also withdrawn.
+
+**Corrected fact.** Framework A's only importers are
+`examples/extension-demo/main.go` and `internal/extension/identity/extension.go`.
+The latter is a **parallel** identity implementation — 1,076 LOC across four
+files, no transport layer, no importer of its own — not the live auth stack. It
+is dead code that the framework's existence justifies, which strengthens rather
+than weakens the case for deletion, but it is a quarter the size claimed and it
+was never the application's authentication.
+
+**Unaffected.** Every other item in the Context is verified and stands: the
+`internal/plugins/adapters.go` indirection, the FIDO2 `cfg["user_store"]` defect
+(`internal/plugins/auth/fido2.go:92-100`, 383 LOC that cannot initialise), the
+`Registry.Initialize` re-init leak, and the silent config-type fallbacks in
+`ratelimit.go:33`. The Decision, Consequences, Alternatives, and Implementation
+Plan are unchanged.
 
 ---
 
