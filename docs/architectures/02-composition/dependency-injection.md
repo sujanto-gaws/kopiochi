@@ -9,65 +9,36 @@ in `ef76759`. `cmd/api/container.go` now exposes `BuildApp`, which wires the
 covered by `cmd/api/container_test.go`. The routes it produces serve under
 `/api/v1` (`internal/httpx.Mount`, fixed in `4fdc609`).
 
-> **Problem section under review.** The "Problem" section below quotes a version of
-> `cmd/api/container/container.go` with an empty registrar list. That excerpt does
-> not match any commit in this repository's history — the earliest `container.go`
-> (`794d783`) already returned two registrars. The section is retained pending a
-> second documentation pass rather than silently rewritten; treat the code block as
-> unverified. What *is* verified: the composition root was a passive list whose
-> correctness rested on a comment, which is the design defect the target section
-> below addresses.
-
 ---
 
 ## Problem
 
-`cmd/api/container/container.go` in full:
+> **Withdrawn.** An earlier revision of this document presented
+> `cmd/api/container/container.go` "in full" as a verbatim excerpt whose
+> `registrars` slice was empty, and drew four consequences from it — zero
+> registrars iterated, only `/api/health` and `/swagger/*` served, nothing
+> indicating an empty application, and `cfg`/`db` unused — before calling it "the
+> single highest-impact defect in the repository". That code never existed. Both
+> the earliest version of the file (`git show 794d783:cmd/api/container/container.go`)
+> and the version current when these documents were written
+> (`git show 0fbab20:...`) return
+> `registrars: []handlers.RouteRegistrar{authHandler, userHandler}`, and both
+> parameters are used. The excerpt and the consequences drawn from it could not be
+> substantiated and have been withdrawn.
 
-```go
-// New builds the full dependency graph and returns a ready Container.
-func New(cfg *config.Config, db bun.IDB) (*Container, error) {
-	// ── Shared infrastructure ────────────────────────────────────────────────
+What survives the withdrawal is the design observation, which does not depend on
+the container ever having been empty:
 
-	// ── Auth ─────────────────────────────────────────────────────────────────
+The old container was a **passive list**. Its correctness was a property of a
+comment — "To add a new handler: wire it above and append it here" — rather than
+of the type system. `New` returned `(*Container, error)` regardless of how many
+registrars it appended, so there was no compile error, no boot failure, and no
+test that could distinguish a complete container from an unfinished one. A
+handler omitted from the slice was simply not served, silently.
 
-	// ── User ─────────────────────────────────────────────────────────────────
-
-	// ── Register all handlers ─────────────────────────────────────────────────
-	// To add a new handler: wire it above and append it here.
-	return &Container{
-		registrars: []handlers.RouteRegistrar{
-			// Auth
-		},
-	}, nil
-}
-```
-
-The function returns an empty slice and `nil` error. Consequences:
-
-- `routes.Setup` iterates zero registrars.
-- The server exposes only `/api/health` and `/swagger/*`.
-- Startup logs `"application starting"`, the health check reports healthy, and
-  **nothing indicates the application is empty**.
-- Both parameters, `cfg` and `db`, are unused — the database connects, is
-  verified with `Ping`, and is then never used by anything.
-
-This is the single highest-impact defect in the repository. It is also a
-*category* problem: the design makes "not wired" indistinguishable from "wired"
-at both compile time and runtime.
-
----
-
-## Why it happened
-
-The container is a **passive list**. Its correctness is a property of a comment
-("To add a new handler: wire it above and append it here") rather than of the
-type system. There is no signal — no compile error, no boot failure, no test —
-distinguishing an intentionally empty container from an unfinished one.
-
-Combined with the extension-framework split (identity was written against
-`internal/extension`, which `main.go` never instantiates), nothing ever connected
-the ~2,000 LOC of working auth code to the server.
+That is a *category* problem: the design made "not wired" indistinguishable from
+"wired" at both compile time and runtime. The target below closes it by making
+emptiness a boot failure rather than a valid state.
 
 ---
 
@@ -103,11 +74,11 @@ func BuildApp(cfg *config.Config, db bun.IDB, log zerolog.Logger) (*App, error) 
     }
     mods = append(mods, identityMod)
 
-    aquaMod, err := aquaculture.New(deps, cfg.Aquaculture)
+    userMod, err := newUserModule(deps, cfg)
     if err != nil {
-        return nil, fmt.Errorf("module aquaculture: %w", err)
+        return nil, fmt.Errorf("module user: %w", err)
     }
-    mods = append(mods, aquaMod)
+    mods = append(mods, userMod)
 
     if len(mods) == 0 {
         return nil, errors.New("no modules registered: refusing to start an empty application")
@@ -169,8 +140,10 @@ Revisit only if the module count grows past roughly a dozen. Recorded in
 ```go
 // modules/identity/domain/repository.go — the consumer declares what it needs
 type UserRepository interface {
-    ByEmail(ctx context.Context, email string) (*AppUser, error)
-    Create(ctx context.Context, u *AppUser) error
+    FindByEmail(ctx context.Context, email string) (*User, error)
+    FindByID(ctx context.Context, id string) (*User, error)
+    FindByUsername(ctx context.Context, username string) (*User, error)
+    Save(ctx context.Context, user *User) error
 }
 ```
 

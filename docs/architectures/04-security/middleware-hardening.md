@@ -234,17 +234,60 @@ validation, one `Validate()` for three token classes — are unchanged; see
 
 ---
 
-## Panic recovery
+## Panic recovery — a gap, not a solved problem
 
-`internal/middleware/recovery.go` is **correct** and should be kept: it recovers,
-logs with request ID and stack, and emits `application/problem+json`. Two small
-improvements:
+> **Withdrawn — and the premise inverts.** An earlier revision stated that
+> `internal/middleware/recovery.go` is "**correct** and should be kept", recovering
+> with request ID and stack and emitting `application/problem+json`, and asked
+> only for two refinements. That file appears in no commit of this repository
+> (`git log --all --diff-filter=A -- internal/middleware/recovery.go` returns
+> nothing); `internal/middleware/` contains a single file, `zerolog.go`. The claim
+> could not be substantiated and has been withdrawn. Recovery is therefore not a
+> solved problem here — it is an open one.
 
-1. Do not attempt to write a body if the handler already wrote a status —
-   wrap the `ResponseWriter` and track it, otherwise the 500 is appended to a
-   partial 200 response.
-2. Re-panic on `http.ErrAbortHandler`, which is the documented way to signal an
+Panic recovery is chi's `middleware.Recoverer`, registered first in the core
+stack (`internal/infrastructure/http/server/server.go:57`). It catches the panic
+and returns 500, which is the important part. What it does **not** do:
+
+- It does not emit `application/problem+json`. Every other error path in the
+  service does (`modules/identity/transport/helpers.go:71`,
+  `internal/infrastructure/http/handlers/helpers.go:69`), so a panic is the one
+  response shape a client cannot parse uniformly.
+- It does not log the request ID with the stack. `Recoverer` is registered
+  *before* `middleware.RequestID` (`server.go:58`), so no request ID exists in the
+  context when the panic is caught even if it were logged. A panic is
+  uncorrelatable with the access-log line for the request that caused it.
+- It writes to stderr in chi's own format, bypassing zerolog entirely — see
+  [observability](../06-quality/observability.md).
+
+### Target
+
+Replace it with `httpx.Recovery(log)`, registered **after** `RequestID`:
+
+1. Recover, log at `error` through the injected zerolog logger with
+   `request_id`, method, path, and stack.
+2. Emit RFC 7807 `application/problem+json` with a fixed, non-revealing detail
+   ("An unexpected error occurred."). Never the panic value or stack.
+3. Do not attempt to write a body if the handler already wrote a status — wrap
+   the `ResponseWriter` and track it, otherwise the 500 is appended to a partial
+   200 response.
+4. Re-panic on `http.ErrAbortHandler`, which is the documented way to signal an
    intentional abort and should not be logged as a crash.
+
+Points 3 and 4 were the only two items in the previous revision; they remain
+correct, but they are refinements on top of work that has not been done rather
+than on top of an existing implementation.
+
+## Not-found and method-not-allowed responses
+
+The same gap applies at the router level. `server.NewRouter` sets neither
+`r.NotFound` nor `r.MethodNotAllowed`, so 404 and 405 fall through to chi's
+plain-text defaults and do not match the problem+json shape used everywhere else.
+Add both handlers alongside `httpx.Recovery`, emitting the same envelope.
+
+> *An earlier revision described `handlers.NotFound()` and
+> `handlers.MethodNotAllowed()` as existing and returning "the same problem
+> shape". No such functions appear in any commit; the claim has been withdrawn.*
 
 ---
 
@@ -271,9 +314,15 @@ Ordering constraints worth stating explicitly:
 - `CORS` before `RateLimit` so preflight `OPTIONS` requests are not counted
   against a user's budget.
 
-Current code registers `NotFound`/`MethodNotAllowed` before `Use`
-(`server.go:58-66`). It works in chi today, but reversing it makes the dependency
-obvious.
+One correction to a claim made in an earlier revision: the current
+`server.NewRouter` does **not** register `NotFound`/`MethodNotAllowed` before
+`r.Use`. It registers neither, at any point — `git show 4fdc609^:internal/infrastructure/http/server/server.go`
+shows the same five `r.Use` calls and nothing else. The ordering concern
+described there was withdrawn; the real gap is the missing handlers, above.
+
+The one ordering defect that *is* present today: `middleware.Recoverer` is
+registered before `middleware.RequestID` (`server.go:57-58`), so a recovered
+panic has no request ID available to log. The stack above reverses that.
 
 ---
 
@@ -286,6 +335,8 @@ func TestCORS_WildcardWithCredentialsRejectedAtConfigLoad(t *testing.T)
 func TestRealIP_IgnoresXFFWhenNoTrustedProxies(t *testing.T)
 func TestSecurityHeadersPresent(t *testing.T)
 func TestProtectedRouteRequiresToken(t *testing.T)        // guards against fail-open
+func TestRecovery_EmitsProblemJSONWithRequestID(t *testing.T)
+func TestNotFound_EmitsProblemJSON(t *testing.T)
 ```
 
 ---

@@ -147,4 +147,41 @@ consolidating on one.
 
 ---
 
+## Correction (2026-08-02)
+
+*Appended rather than edited into the Context, per the append-only rule for
+accepted ADRs stated in [the documentation README](../README.md).*
+
+**Withdrawn**, from the Context's list of observed consequences:
+
+> The entire identity extension (~2,000 LOC of working authentication, MFA, and
+> role management) is written against Framework A and is therefore **never
+> loaded** by the server.
+
+**Why:** that is not what happened. The live auth stack was ordinary DDD code
+under `internal/{domain,application,infrastructure}/auth`, wired through the
+container and reachable the whole time; Phase 1 moved it to `modules/identity/**`
+(`5f6edfe`, `6d0c1b7`) and it now serves `/api/v1/auth/*`. No `extensions/`
+directory has ever existed in this repository —
+`git log --all --diff-filter=A -- extensions/` returns no commits — so the
+Context's citation of `extensions/identity/extension.go` as a Framework A
+importer is also withdrawn.
+
+**Corrected fact.** Framework A's only importers are
+`examples/extension-demo/main.go` and `internal/extension/identity/extension.go`.
+The latter is a **parallel** identity implementation — 1,076 LOC across four
+files, no transport layer, no importer of its own — not the live auth stack. It
+is dead code that the framework's existence justifies, which strengthens rather
+than weakens the case for deletion, but it is a quarter the size claimed and it
+was never the application's authentication.
+
+**Unaffected.** Every other item in the Context is verified and stands: the
+`internal/plugins/adapters.go` indirection, the FIDO2 `cfg["user_store"]` defect
+(`internal/plugins/auth/fido2.go:92-100`, 383 LOC that cannot initialise), the
+`Registry.Initialize` re-init leak, and the silent config-type fallbacks in
+`ratelimit.go:33`. The Decision, Consequences, Alternatives, and Implementation
+Plan are unchanged.
+
+---
+
 **This ADR serves as a binding architectural decision for the project.**

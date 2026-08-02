@@ -12,13 +12,27 @@
 - `internal/logger/logger.go` initialises zerolog with configurable level and
   format (`json` for production, console for development).
 - `internal/middleware/zerolog.go` provides structured request logging.
-- `internal/middleware/recovery.go` logs panics with request ID, method, path,
-  and stack trace, then returns RFC 7807 `application/problem+json`.
-- `handlers.NotFound()` / `MethodNotAllowed()` return the same problem shape, so
-  error responses are consistent.
+- Handler error paths emit RFC 7807 `application/problem+json`
+  (`modules/identity/transport/helpers.go:71`,
+  `internal/infrastructure/http/handlers/helpers.go:69`).
 
-The foundation is sound. The gaps below are about coverage and discipline, not
-about replacing it.
+> **Withdrawn.** This list previously also credited
+> `internal/middleware/recovery.go` with logging panics "with request ID, method,
+> path, and stack trace" before returning problem+json, and
+> `handlers.NotFound()` / `MethodNotAllowed()` with returning "the same problem
+> shape". None of those exist: `internal/middleware/` contains only `zerolog.go`,
+> `git log --all --diff-filter=A -- internal/middleware/recovery.go` returns no
+> commits, and no `NotFound`/`MethodNotAllowed` handler function appears in any
+> commit. The claims could not be substantiated and have been withdrawn. Panic
+> recovery is chi's `middleware.Recoverer`
+> (`internal/infrastructure/http/server/server.go:57`), which emits neither
+> problem+json nor a correlated structured log; 404 and 405 have no handlers at
+> all. Both are gaps — see
+> [middleware hardening](../04-security/middleware-hardening.md) and Problem 3
+> below.
+
+The logging foundation is sound. The gaps below are about coverage and
+discipline, plus the two error paths just described.
 
 ---
 
@@ -61,10 +75,14 @@ code may reintroduce the pattern.
 
 ## Problem 3: request-scoped context is not propagated
 
-`RequestID` is generated (`server.go:58`) and used by the recovery middleware,
-but it is not attached to a logger placed in the request context. Handlers and
-services therefore cannot emit correlated logs, and a downstream database error
-cannot be tied to the request that caused it.
+`RequestID` is generated (`server.go:58`) but is not attached to a logger placed
+in the request context. Handlers and services therefore cannot emit correlated
+logs, and a downstream database error cannot be tied to the request that caused
+it.
+
+It is also generated *after* `middleware.Recoverer` is registered
+(`server.go:57`), so a recovered panic could not carry the request ID even if
+chi's recoverer logged through zerolog — which it does not.
 
 ## Problem 4: no metrics at all
 
@@ -201,7 +219,8 @@ logs and traces cross-reference. Sample at ~1% in production, 100% locally.
 
 ### Error responses
 
-Keep RFC 7807 — already implemented. Standardise the `type` values:
+Keep RFC 7807 — already implemented on handler error paths, and to be extended to
+panic recovery, 404, and 405. Standardise the `type` values:
 
 ```json
 {
@@ -217,8 +236,9 @@ Keep RFC 7807 — already implemented. Standardise the `type` values:
 Adding `request_id` to the response body lets a user quote it in a support
 request and have it match a log line directly.
 
-Internal errors never leak: the recovery middleware's fixed "An unexpected error
-occurred." is correct. Do not include the panic value or stack in the response.
+Internal errors must never leak: the replacement recovery middleware returns a
+fixed "An unexpected error occurred." Do not include the panic value or stack in
+the response.
 
 ### Audit events
 
@@ -241,12 +261,15 @@ actor is available.
 ## Sequencing
 
 1. Replace global logger use with injected loggers (mechanical, low risk).
-2. Add the request-scoped logger to context; adopt `zerolog.Ctx(ctx)` in handlers.
-3. Add `secret.String` so config can never be logged in the clear.
-4. Add Prometheus metrics + `/metrics` on the admin port.
-5. Add pool metrics.
-6. Add audit events with the identity module.
-7. Add OpenTelemetry once the module structure has settled.
+2. Add the request-scoped logger to context; adopt `zerolog.Ctx(ctx)` in
+   handlers. Register `RequestID` before recovery so the panic log can carry it.
+3. Replace chi's `Recoverer` with `httpx.Recovery(log)` and add
+   `NotFound`/`MethodNotAllowed` handlers, all emitting problem+json.
+4. Add `secret.String` so config can never be logged in the clear.
+5. Add Prometheus metrics + `/metrics` on the admin port.
+6. Add pool metrics.
+7. Add audit events with the identity module.
+8. Add OpenTelemetry once the module structure has settled.
 
 ---
 

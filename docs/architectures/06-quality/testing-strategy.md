@@ -192,7 +192,7 @@ func TestUserRepository_ByEmail(t *testing.T) {
     db := testdb.New(t)          // container + migrations + truncate between tests
     repo := persistence.NewUserRepository(db)
 
-    require.NoError(t, repo.Create(ctx, &domain.AppUser{Email: "a@example.com"}))
+    require.NoError(t, repo.Save(ctx, &domain.User{Email: "a@example.com"}))
 
     got, err := repo.ByEmail(ctx, "A@EXAMPLE.COM")   // case-insensitivity
     require.NoError(t, err)

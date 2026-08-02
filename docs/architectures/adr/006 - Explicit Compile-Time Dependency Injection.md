@@ -4,10 +4,11 @@
 **Accepted — implemented** – *Decided: 2026-08-02 · Implemented: 2026-08-02 (Phase 1)*
 
 All six implementation steps have shipped; see the Implementation Plan below for
-per-step commits. The Context section is preserved as written — but note that the
-"empty container" excerpt it quotes does not match any commit in this
-repository's history, and is being re-verified. The Decision stands on its own
-merits regardless of that excerpt.
+per-step commits. The Context section is preserved as written — but the "empty
+container" excerpt it quotes does not match any commit in this repository's
+history. Because this ADR is accepted, the Context is not edited; see
+**[Correction (2026-08-02)](#correction-2026-08-02)** at the end. The Decision
+stands on its own merits regardless of that excerpt.
 
 ## Context
 
@@ -131,6 +132,43 @@ composition root.
 
 ## Related Documents
 - [Dependency injection](../02-composition/dependency-injection.md)
+
+---
+
+## Correction (2026-08-02)
+
+*Appended rather than edited into the Context, per the append-only rule for
+accepted ADRs stated in [the documentation README](../README.md).*
+
+**Withdrawn:** the Go excerpt in the Context, quoting `container.New` as
+returning `registrars: []handlers.RouteRegistrar{ /* Auth */ }` — an empty slice
+— together with the statements that "both parameters are unused" and that the
+server "serves no business routes at all".
+
+**Why:** the excerpt matches no version of the file. Both the commit that
+introduced it and the commit current when this ADR was written show the same
+two-element slice and use both parameters:
+
+```
+$ git show 794d783:cmd/api/container/container.go   # earliest version
+$ git show 0fbab20:cmd/api/container/container.go   # commit that added these docs
+        registrars: []handlers.RouteRegistrar{
+                authHandler,
+                userHandler,
+        },
+```
+
+**What survives.** The design property the Decision rests on does not depend on
+the container ever having been empty: `New` returned `(*Container, error)`
+regardless of how many registrars it appended, so its completeness was a property
+of a comment rather than of a type, and a handler omitted from the slice was
+simply not served with nothing to indicate it. Decision points 3 ("`BuildApp`
+refuses to produce an empty application") and 7 ("wiring is observable") remain
+the right response to that property, and both shipped.
+
+**Scope of the correction.** Only the Context's factual claims about the file's
+contents are withdrawn. Status, Decision, Consequences, Alternatives, and the
+Implementation Plan are unchanged.
 
 ---
 

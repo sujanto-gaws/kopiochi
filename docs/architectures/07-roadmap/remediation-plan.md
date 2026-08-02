@@ -59,7 +59,7 @@ until that was fixed.
 |---|--------|------|--------|-----|
 | 1.1 | ✅ `d92480c` | Write the five priority-1 failing tests (empty container, route table, rate-limit concurrency, env override, schema drift). Four pass; the rate-limit concurrency test is deliberately `t.Skip`ped until Phase 2.1, since the defect it asserts is still live | M | [testing](../06-quality/testing-strategy.md) |
 | 1.2 | ✅ `05b1051` | Add `internal/module` (`Deps`, `Module`). Shipped `Deps` carries `DB` and `Logger`; no `Clock` | S | [extensions](../01-modularity/extension-framework.md) |
-| 1.3 | ✅ `5f6edfe`, `6d0c1b7` | Add `modules/identity/module.go` over the existing identity internals (move, don't rewrite). The move was from `internal/{domain,application,infrastructure}/auth/**` | M | [layout](../01-modularity/module-layout.md) |
+| 1.3 | ✅ `5f6edfe`, `6d0c1b7` | Add `modules/identity/module.go` over the existing identity internals (move, don't rewrite). The move was from `internal/{domain,application,infrastructure}/auth/**` — this also completes what Phase 3.3 was written to do | M | [layout](../01-modularity/module-layout.md) |
 | 1.4 | ✅ `ef76759` | Replace the container with `BuildApp`, including the zero-module guard. The guard is present but unreachable — two modules are appended unconditionally above it | M | [DI](../02-composition/dependency-injection.md) |
 | 1.5 | ✅ `4fdc609` | Rewrite `routes.Setup` as `httpx.Mount`, passing the `/api/v1` group router into `Module.Routes`; `RouterGroup`/`RouteRegistrar` and `internal/infrastructure/http/routes/` deleted | S | [routing](../02-composition/routing-and-versioning.md) |
 | 1.6 | ✅ `fbddccb` | Write identity's real migrations matching the bun models. **Shipped as `00003_create_auth_users`, `00004_create_auth_refresh_tokens`, `00005_create_auth_mfa_backup_codes`** — not the `app_user`/`role`/`refresh_token`/`mfa_secret` set named when this plan was written. There is no `role` table (roles and permissions are `TEXT[]` columns on `auth_users`) and no `mfa_secret` table (it is a column) | M | [migrations](../05-data/migration-strategy.md) |
@@ -106,21 +106,40 @@ with a placeholder secret.
 Now that the application works and is safe, remove the duplication. Doing this
 earlier risks deleting something that turns out to be load-bearing.
 
+> **Three tasks withdrawn.** This phase previously also contained 3.1 (split
+> `internal/utils`), 3.3 (move `extensions/identity/**` → `modules/identity/**`),
+> and 3.4 (consolidate three aquaculture fragments and write the missing
+> repository, estimated L). `internal/utils`, `extensions/`, and any aquaculture
+> file appear in no commit of this repository, so 3.1 and 3.4 had no subject and
+> have been deleted. The identity move in 3.3 was in fact performed in Phase 1
+> (`5f6edfe`, `6d0c1b7`) — from `internal/{domain,application,infrastructure}/auth/**`,
+> not from `extensions/` — and is done. Numbering is preserved so existing
+> references still resolve.
+
 | # | Task | Effort | Doc |
 |---|------|--------|-----|
-| 3.1 | Split `internal/utils` into `internal/platform/{paging,crypto,id}` and `internal/httpx`; delete `utils` | M | [deps](../01-modularity/dependency-rules.md) |
+| ~~3.1~~ | ~~Split `internal/utils`~~ — **withdrawn**, no such package has ever existed | — | [deps](../01-modularity/dependency-rules.md) |
 | 3.2 | Add `depguard` rules + the module-isolation test; wire into CI | S | [deps](../01-modularity/dependency-rules.md) |
-| 3.3 | Move `extensions/identity/**` → `modules/identity/**` (transport rename included) | M | [layout](../01-modularity/module-layout.md) |
-| 3.4 | Consolidate the three aquaculture fragments into `modules/aquaculture/`; write the repository that never existed | L | [layout](../01-modularity/module-layout.md) |
+| ~~3.3~~ | ~~Move identity into `modules/`~~ — **done in Phase 1** (`5f6edfe`, `6d0c1b7`) | — | [layout](../01-modularity/module-layout.md) |
+| ~~3.4~~ | ~~Consolidate aquaculture~~ — **withdrawn**, no aquaculture code has ever existed | — | [layout](../01-modularity/module-layout.md) |
 | 3.5 | Convert CORS and rate limiting to direct construction in `internal/httpx` | S | [extensions](../01-modularity/extension-framework.md) |
-| 3.6 | **Delete** `internal/extension/`, `internal/plugin/`, `internal/plugins/`, `examples/extension-demo/`, `internal/modules/`, `internal/domain/`, `internal/application/`, `extensions/` | M | [extensions](../01-modularity/extension-framework.md) |
-| 3.7 | `go mod tidy`; drop `go-webauthn`, `go-tpm`, `cbor` (and `otp`/`barcode` if MFA is deferred) | S | [hygiene](../06-quality/repository-hygiene.md) |
+| 3.6 | **Delete the dead frameworks:** `internal/extension/` (including `internal/extension/identity/`, 1,076 LOC, no importers), `internal/plugin/`, `internal/plugins/`, `examples/extension-demo/`. Must follow 3.5, which removes the last live consumer of `internal/plugin{,s}` | M | [extensions](../01-modularity/extension-framework.md) |
+| 3.6b | **Move, do not delete:** `internal/domain/user`, `internal/application/user`, and the matching persistence/handler code become `modules/user/`. These are **live** — `cmd/api/container.go` builds the `user` module from them — so `internal/domain/` and `internal/application/` may only be removed once nothing imports them | M | [layout](../01-modularity/module-layout.md) |
+| 3.7 | `go mod tidy`; drop `go-webauthn`, `go-tpm`, `cbor`, and `boombuler/barcode`. **Keep `pquerna/otp`** — `modules/identity/infrastructure/mfa/totp.go` uses it | S | [hygiene](../06-quality/repository-hygiene.md) |
 | 3.8 | Fix `BuildDSN` with `net/url`; configure the `sql.DB` pool; add connect timeouts | S | [persistence](../05-data/persistence-and-pooling.md) |
 | 3.9 | Lifecycle stack — single ownership, LIFO teardown, `Serve` returns errors instead of `log.Fatal` | M | [lifecycle](../02-composition/lifecycle-and-shutdown.md) |
 
-**Exit criteria:** exactly one module layout exists; the import linter passes; no
-0-byte files; module count and binary size both measurably down.
+**Exit criteria:** all business code lives under `modules/`; the import linter
+passes; `go build ./...` and the full test suite still pass after every deletion;
+module count and binary size both measurably down.
 
+> ⚠️ **3.6 as previously written was dangerous.** Its delete list included
+> `internal/domain/` and `internal/application/`, which hold the live
+> profile-user stack that `cmd/api/container.go` depends on. Deleting them breaks
+> the build. The task has been split: 3.6 deletes only what has no importer, and
+> 3.6b *moves* the live code. Verify each path with
+> `grep -rn "<import path>" --include=*.go .` before removing it.
+>
 > 3.6 is the step most likely to be deferred and must not be. Leaving the old
 > frameworks in place recreates the original problem.
 
@@ -195,10 +214,9 @@ Phase 0 ──▶ Phase 1 ──▶ Phase 3 ──▶ Phase 5
 
 | Risk | Mitigation |
 |---|---|
-| Phase 3 deletions remove something needed | Phase 1 wires and Phase 4 tests **before** Phase 3 deletes |
+| Phase 3 deletions remove something needed | Phase 1 wires and Phase 4 tests **before** Phase 3 deletes. Confirm no importer with `grep -rn` per path; 3.6's original delete list contained live code |
 | History rewrite loses work | Backup mirror; announced freeze; single coordinated rewrite |
 | Rotating the JWT secret logs everyone out | Schedule during a maintenance window; communicate |
-| Aquaculture repository is larger than estimated (3.4) | It is genuinely unwritten — treat the estimate as a floor and re-scope after 3.3 |
 | Line-ending normalisation conflicts with in-flight branches | Do 0.1 during a quiet period; rebase open branches immediately |
 
 ---

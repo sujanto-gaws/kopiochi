@@ -165,4 +165,35 @@ opt-in.*
 
 ---
 
+## Correction (2026-08-02)
+
+*Appended rather than edited into the Context, per the append-only rule for
+accepted ADRs stated in [the documentation README](../README.md).*
+
+Two corrections, neither affecting the Decision.
+
+**1. `claude-agents_1.zip` — withdrawn.** The Context lists it among the root
+clutter, and Implementation Plan step 6 names it in the `git filter-repo`
+invocation. It appears in no commit:
+`git log --all --diff-filter=A -- claude-agents_1.zip` returns nothing. Passing
+`--path claude-agents_1.zip` to `filter-repo` is harmless but pointless; drop it
+from the command when step 6 is run. `*.zip` is ignored regardless
+(`.gitignore:40`). The rest of that bullet — `.qwen/` tracked and unignored — is
+verified and still open.
+
+**2. `docs/api/docs.go` (2,100 LOC) — corrected.** No `docs/api/` directory has
+ever existed. The generated swagger source is `docs/docs.go` and it is **338
+lines**, alongside `docs/swagger.json` and `docs/swagger.yaml`. Implementation
+Plan step 7 ("Untrack `docs/api/*`") should read `docs/docs.go`,
+`docs/swagger.json`, `docs/swagger.yaml`. The recommendation stands — generated
+output does not belong in the tree — but the size argument for prioritising it
+does not: 338 lines is review noise, not weight.
+
+**Unaffected.** The binary blobs, their sizes, the 58 MB `.git`, the malformed
+`.gitignore`, the missing `.githooks/`, and the tracked
+`.vscode/settings.json` are all verified. Status, Decision, Consequences,
+Alternatives, and the remaining implementation steps are unchanged.
+
+---
+
 **This ADR serves as a binding architectural decision for the project.**

@@ -58,17 +58,31 @@ and 1 of the [remediation plan](07-roadmap/remediation-plan.md) have since lande
 against them.
 
 The review's headline finding — that the application compiled but **served no
-business routes** — no longer applies: `cmd/api/container.go` (`BuildApp`) wires
-the `identity` and `user` modules and `internal/httpx.Mount` serves them under a
-real `/api/v1` (`ef76759`, `4fdc609`), proven end to end by
-`cmd/api/login_e2e_test.go`. A large fraction of hand-written Go is still
-unreachable from `cmd/`. The topic documents below address the structural causes,
-not just the symptoms.
+business routes** — has been **withdrawn as unsubstantiated**. It rested on a
+quoted `cmd/api/container/container.go` with an empty registrar list; no such
+version exists. Both `git show 794d783:cmd/api/container/container.go` (the
+earliest) and `git show 0fbab20:cmd/api/container/container.go` (the commit that
+added these documents) return
+`registrars: []handlers.RouteRegistrar{authHandler, userHandler}`. The real
+routing defect was different and worse: those two registrars were mounting onto a
+shadowed router with no `/api/v1` prefix, so their routes served at the root. That
+is fixed — `internal/httpx.Mount` (`4fdc609`) serves them under a real `/api/v1`,
+proven end to end by `cmd/api/login_e2e_test.go`.
 
-⚠️ Several of the review's claims about the *source layout* — specific directory
-names and file inventories — do not match any commit in this repository's
-history and are being re-verified. Until that pass lands, treat file paths in
-these documents as indicative and check them against the tree.
+A second pass over these documents (2026-08-02) resolved every section that cited
+files or code appearing in no commit of this repository — among them
+`extensions/`, `internal/utils`, `internal/modules/`, `internal/middleware/recovery.go`,
+`docs/api/docs.go`, an `AppUser` type, and any aquaculture code. Those claims are
+marked **Withdrawn** in place, with the design guidance they carried preserved.
+Where a real equivalent existed, the citation was repointed rather than deleted —
+the genuinely dead Yii-style identity copy is `internal/extension/identity/`
+(1,076 LOC, no importers), not `extensions/identity/`.
+
+Accepted ADRs (004, 006, 007, 011) are append-only, so their Context sections are
+untouched; each carries a **Correction** section at the end instead.
+
+A large fraction of hand-written Go is still unreachable from `cmd/`. The topic
+documents below address the structural causes, not just the symptoms.
 
 Start with [`00-overview/current-state.md`](00-overview/current-state.md), then
 [`07-roadmap/remediation-plan.md`](07-roadmap/remediation-plan.md) for the

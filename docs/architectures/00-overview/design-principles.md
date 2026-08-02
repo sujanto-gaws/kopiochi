@@ -16,9 +16,18 @@ commit; the principles themselves are unchanged.
 > A component that is not connected must break the build or the boot — never
 > return a successful empty result.
 
-**Violation found:** `container.New()` returns `&Container{registrars: []{}}, nil`.
-The application starts, logs "application starting", reports healthy, and serves
-nothing. Nothing anywhere reports a problem.
+**Violation found:** the old `container.New()` returned `(*Container, error)`
+whatever it appended to its registrar list. Its completeness was a property of a
+comment — "To add a new handler: wire it above and append it here" — so a handler
+left out of the slice was simply not served, with no compile error, no boot
+failure, and no test to notice.
+
+> *An earlier revision of this document quoted `container.New()` as returning
+> `&Container{registrars: []{}}, nil` and described an application that "serves
+> nothing". That excerpt matches no commit in this repository's history —
+> `794d783` and `0fbab20` both return two registrars — and has been withdrawn. The
+> principle is unchanged; it rests on the design property above, not on the
+> container ever having been empty.*
 
 **Applied** — all three shipped in `ef76759` / `d92480c`:
 - `BuildApp()` returns an error when zero modules are registered
@@ -37,7 +46,10 @@ nothing. Nothing anywhere reports a problem.
 
 **Violation found:** `internal/extension/` (Manager) and `internal/plugin/`
 (Registry) both provide registration, lifecycle, and service lookup. ~1,100 LOC
-total; one is unreachable. Separately, three directory layouts coexist.
+total; one is unreachable, and it has a 1,076-LOC parallel identity
+implementation (`internal/extension/identity/`) attached to it. Separately,
+business code sits in two layouts: `modules/identity/` and the layer-first
+`internal/{domain,application,infrastructure}` profile-user stack.
 
 **Applied:** one module contract ([ADR-004](../adr/004%20-%20Consolidate%20on%20a%20Single%20Extension%20Framework.md)),
 one layout ([ADR-005](../adr/005%20-%20Module%20Boundaries%20and%20Dependency%20Direction.md)).
@@ -47,15 +59,20 @@ When a replacement lands, the replaced code is deleted **in the same PR**.
 
 ## 3. Dependencies point inward and downward
 
-> `domain` depends on nothing. `extensions`/`modules` never depend on the host's
-> private helpers.
+> `domain` depends on nothing. `modules/` never depends on the host's private
+> helpers beyond a named, stable shared kernel.
 
-**Violation found:** 11 files under `extensions/identity/` import
-`internal/utils`. The tree cannot be extracted or versioned separately.
+**Violation found:** nothing enforces this. There is no `.golangci.yml`, no
+`depguard` configuration, no architecture test, and no CI — so the rule holds
+only for as long as every reviewer remembers it.
+
+> *An earlier revision cited "11 files under `extensions/identity/` import
+> `internal/utils`" as the violation. Neither path appears in any commit of this
+> repository; the claim has been withdrawn. The principle stands on its own.*
 
 **Applied:** shared code moves to an explicit `internal/platform` (shared kernel)
-with a stable, documented API, or is vendored into the module. Enforced by an
-import linter in CI, not by review discipline.
+with a stable, documented API, or stays inside the module that owns the concept.
+Enforced by an import linter in CI, not by review discipline.
 
 ---
 

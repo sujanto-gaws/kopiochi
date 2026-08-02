@@ -5,32 +5,45 @@
 
 ---
 
-## Problem: three layouts, none complete
+## Problem: two layouts for business code
 
-| Generation | Location | Files | State |
-|---|---|---|---|
-| gen-1 | `internal/domain/`, `internal/application/`, `internal/infrastructure/persistence/` | 4 aquaculture files | 2 are **0 bytes**; filenames misspelled `aqualculture` |
-| gen-2 | `internal/modules/aquaculture/` | 7 | **6 are empty**; only `persistence/models.go` (207 LOC) has content |
-| gen-3 | `extensions/identity/` | 26 | Complete (~2,000 LOC), **unreachable** |
+> **Withdrawn.** An earlier revision of this document opened with a
+> "three generations of layout" table and a file-by-file inventory naming
+> `internal/modules/aquaculture/**`, `extensions/identity/**`, and four
+> `aquaculture`/`aqualculture` files under `internal/`. None of those paths appear
+> in any commit of this repository — `git log --all --diff-filter=A` returns
+> nothing for each of them — and no aquaculture file has ever existed. Those
+> claims could not be substantiated and have been withdrawn, together with the
+> aquaculture consolidation plan and the identity move-mapping table that were
+> built on them. What the tree actually contains is described below.
 
-Concretely:
+Business code lives in two places:
+
+| Location | State |
+|---|---|
+| `modules/identity/` | Live. Wired through `cmd/api/container.go` (`BuildApp`), served under `/api/v1/auth/*`. Already matches the target shape below. |
+| `internal/domain/`, `internal/application/`, `internal/infrastructure/persistence/` | Live but layer-first. Holds the profile-user stack (`internal/domain/user`, `internal/application/user`) that `cmd/api/container.go` wires as the `user` module, plus `internal/domain/ofbizuser`. |
+
+Alongside them sits one genuinely dead copy of an identity capability:
 
 ```
-internal/domain/aquaculture_entity.go                       119 LOC   Farm, Pond entities
-internal/application/aqualculture_service.go                104 LOC   service
-internal/infrastructure/persistence/aquaculture_repository.go 0 LOC   EMPTY
-internal/infrastructure/persistence/aqualculture_models.go    0 LOC   EMPTY
-
-internal/modules/aquaculture/domain/entity.go                 0 LOC   EMPTY
-internal/modules/aquaculture/domain/repository.go             0 LOC   EMPTY
-internal/modules/aquaculture/domain/service.go                0 LOC   EMPTY
-internal/modules/aquaculture/application/service_impl.go      0 LOC   EMPTY
-internal/modules/aquaculture/infrastructure/persistence/repository_impl.go  1 LOC
-internal/modules/aquaculture/infrastructure/persistence/models.go  207 LOC
+internal/extension/identity/extension.go     109 LOC
+internal/extension/identity/models.go        135 LOC
+internal/extension/identity/repository.go    391 LOC
+internal/extension/identity/service.go       441 LOC
+                                           -------
+                                           1,076 LOC
 ```
 
-A migration was started twice and abandoned twice, each time leaving the previous
-generation in place. Nothing indicates which is authoritative.
+It is written against the Yii-style `Manager` framework in `internal/extension/`,
+has no transport layer at all, and is imported by nothing —
+`grep -rn "extension/identity" --include=*.go .` returns no hits. It is not an
+older generation of the live auth stack; it is a parallel one that was never
+reachable.
+
+The remaining work is therefore narrower than a three-way consolidation: move the
+profile-user stack into a module of its own, and delete
+`internal/extension/identity/`.
 
 ---
 
@@ -69,9 +82,9 @@ product; `internal/` is the platform they run on.
 
 ## Rules
 
-1. **One capability per module.** `identity`, `aquaculture`. Not `user` +
-   `auth` + `role` as separate modules — those are one bounded context
-   (consistent with [ADR-001](../adr/001%20-%20Adopt%20Domain%20Driven%20Design.md)).
+1. **One capability per module.** Not `user` + `auth` + `role` as separate
+   modules — those are one bounded context (consistent with
+   [ADR-001](../adr/001%20-%20Adopt%20Domain%20Driven%20Design.md)).
 
 2. **`domain/` is pure.** Standard library and `internal/platform` only. No bun,
    chi, viper, zerolog. If `domain` cannot be unit-tested without a database, the
@@ -79,7 +92,7 @@ product; `internal/` is the platform they run on.
 
 3. **Repository interfaces live in `domain/`,** implementations in
    `infrastructure/persistence/`. This is already done correctly in
-   `extensions/identity/domain/repository.go` — preserve it in the move.
+   `modules/identity/domain/repository.go` — preserve it in any further move.
 
 4. **Bun models never escape `infrastructure/persistence/`.** Map to domain types
    at the boundary. A `bun:"table:..."` tag appearing in `application` or
@@ -102,55 +115,49 @@ product; `internal/` is the platform they run on.
 | Module directory | lowercase, singular, no underscores | `modules/identity/` |
 | File | snake_case describing content | `refresh_token.go` |
 | Use case file | verb-noun | `login.go`, `verify_mfa.go` |
-| Migration | `NNNN_verb_noun.sql` | `0001_create_app_user.sql` |
+| Migration | `NNNN_verb_noun.sql` | `0001_create_refresh_token.sql` |
 | Interface | consumer-side, no `I` prefix | `UserRepository` |
 | Implementation | technology-qualified | `PostgresUserRepository` |
-
-Existing misspellings (`aqualculture_service.go`,
-`aqualculture_models.go`) are corrected during the move.
 
 ---
 
 ## Migration mapping
 
-### identity — move, do not rewrite
+### identity — done
 
-| From | To |
-|---|---|
-| `extensions/identity/domain/entity.go` | `modules/identity/domain/entity.go` |
-| `extensions/identity/domain/repository.go` | `modules/identity/domain/repository.go` |
-| `extensions/identity/application/*.go` | `modules/identity/application/` |
-| `extensions/identity/infrastructure/persistence/*.go` | `modules/identity/infrastructure/persistence/` |
-| `extensions/identity/infrastructure/token/jwt.go` | `modules/identity/infrastructure/token/jwt.go` |
-| `extensions/identity/infrastructure/hasher/bcrypt.go` | `modules/identity/infrastructure/hasher/bcrypt.go` |
-| `extensions/identity/infrastructure/http/*.go` | `modules/identity/transport/` |
-| `extensions/identity/extension.go` | `modules/identity/module.go` *(rewritten against the new contract)* |
+`modules/identity/` already has the shape above: `module.go`, `domain/`,
+`application/` (one file per use case), `infrastructure/{persistence,token,hasher,mfa}/`,
+and `transport/`. It was moved — not rewritten — out of
+`internal/{domain,application,infrastructure}/auth/**` in `5f6edfe` / `6d0c1b7`.
+The one part of the shape it does not yet have is `migrations/`: identity's
+migrations still live in the global `migrations/` directory as
+`00003`–`00005`. See [migration strategy](../05-data/migration-strategy.md).
 
-The 11 imports of `internal/utils` are re-pointed at `internal/platform` — see
-[dependency rules](dependency-rules.md).
+### profile-user — outstanding
 
-### aquaculture — consolidate three fragments into one
+The `user` module is still assembled by `cmd/api/container.go` out of
+`internal/domain/user`, `internal/application/user`,
+`internal/infrastructure/persistence/repository/user.go`, and
+`internal/infrastructure/http/handlers/user.go`. Those four layer-first
+directories are the last business code outside `modules/`. Moving them to
+`modules/user/` is a mechanical, like-for-like move of the kind identity already
+had.
 
-| From | Action |
-|---|---|
-| `internal/domain/aquaculture_entity.go` | → `modules/aquaculture/domain/entity.go` (**the only real domain code**) |
-| `internal/application/aqualculture_service.go` | → `modules/aquaculture/application/service.go` |
-| `internal/modules/aquaculture/infrastructure/persistence/models.go` | → `modules/aquaculture/infrastructure/persistence/models.go` (**the only real model code**) |
-| `internal/infrastructure/persistence/aquaculture_repository.go` (0 B) | delete |
-| `internal/infrastructure/persistence/aqualculture_models.go` (0 B) | delete |
-| `internal/modules/aquaculture/**` (6 empty files) | delete |
+### `internal/extension/identity/` — delete
 
-The surviving content is one entity file, one service file, and one model file.
-The repository implementation must be **written** — it has never existed.
+1,076 LOC, no importers, no transport layer. Nothing in it needs preserving; it
+is a parallel implementation, not an earlier revision of anything live. See
+[extension framework](extension-framework.md).
 
 ---
 
 ## Definition of done
 
-- [ ] `modules/` contains exactly two directories, each with the full shape.
-- [ ] `internal/domain/`, `internal/application/`, `internal/modules/`,
-      `extensions/` no longer exist.
-- [ ] No file in the repository is 0 bytes.
+- [ ] `modules/` contains one directory per business capability, each with the
+      full shape.
+- [ ] No business code remains under `internal/domain/`,
+      `internal/application/`, or `internal/infrastructure/persistence/`.
+- [ ] `internal/extension/` no longer exists.
 - [ ] `go build ./...` and the import linter both pass.
 - [ ] Each module's routes respond in the route-table smoke test.
 

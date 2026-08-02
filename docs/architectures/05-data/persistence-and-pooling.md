@@ -13,15 +13,21 @@ see the note at the end.
 Worth stating, because these should not be "improved" into something worse:
 
 - **No string-built SQL anywhere.** A sweep for `fmt.Sprintf` near SQL keywords
-  across `internal/` and `extensions/` returns nothing. All queries use the bun
+  across `internal/` and `modules/` returns nothing. All queries use the bun
   query builder, satisfying the `CLAUDE.md` rule on parameterised queries.
 - **Repository interfaces live in the domain layer**
-  (`extensions/identity/domain/repository.go`) with implementations in
-  `infrastructure/persistence`. The dependency inversion is right.
+  (`modules/identity/domain/repository.go`) with implementations in
+  `modules/identity/infrastructure/persistence/repository/`. The dependency
+  inversion is right.
 - **pgxpool + bun over `stdlib`** is a sound combination.
 - **Password hashing uses bcrypt** with `DefaultCost`
-  (`extensions/identity/infrastructure/hasher/bcrypt.go`), and verification uses
+  (`modules/identity/infrastructure/hasher/bcrypt.go`), and verification uses
   `bcrypt.CompareHashAndPassword` — constant-time and correct.
+
+> *An earlier revision cited these last two under `extensions/identity/...`. No
+> `extensions/` directory appears in any commit of this repository; the paths have
+> been repointed at the live equivalents rather than withdrawn, since the code
+> itself is real.*
 
 ---
 
@@ -201,8 +207,15 @@ func translate(err error) error {
 ```
 
 The transport layer maps domain errors to status codes, so the HTTP layer never
-inspects driver types. `extensions/identity/infrastructure/persistence/errors.go`
-already exists — extend it to this shape.
+inspects driver types.
+
+> *An earlier revision claimed
+> `extensions/identity/infrastructure/persistence/errors.go` "already exists" and
+> only needed extending. No file by that path — or any `persistence/errors.go` —
+> appears in any commit of this repository. The claim has been withdrawn: this
+> translation layer must be **written**. The nearest existing thing is
+> `modules/identity/application/errors.go`, which declares application-level
+> sentinels but does no driver-error translation.*
 
 ### Context propagation
 

@@ -41,8 +41,8 @@ modules/          business capabilities — ONE layout, no exceptions
     transport/        HTTP handlers + route registration
     migrations/       schema owned by this module
     module.go         Register(deps) → Module
-  aquaculture/
-    (identical structure)
+  user/
+    (identical structure — currently still layer-first under internal/)
 
 migrations/       global/shared schema only (extensions, roles, audit)
 ```
@@ -132,14 +132,14 @@ func Build(cfg *config.Config, db bun.IDB, log zerolog.Logger) (*App, error) {
     }
     mods = append(mods, identityMod)
 
-    aquaMod, err := aquaculture.New(aquaculture.Deps{DB: db, Config: cfg.Aquaculture, Logger: log})
+    userMod, err := user.New(user.Deps{DB: db, Logger: log})
     if err != nil {
-        return nil, fmt.Errorf("aquaculture module: %w", err)
+        return nil, fmt.Errorf("user module: %w", err)
     }
-    mods = append(mods, aquaMod)
+    mods = append(mods, userMod)
 
     if len(mods) == 0 {
-        return nil, errors.New("no modules registered")   // the empty-container bug, caught at boot
+        return nil, errors.New("no modules registered")   // a half-wired container, caught at boot
     }
     return &App{Modules: mods}, nil
 }

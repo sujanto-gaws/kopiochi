@@ -135,4 +135,34 @@ Versioning policy:
 
 ---
 
+## Correction (2026-08-02)
+
+*Appended rather than edited into the Context, per the append-only rule for
+accepted ADRs stated in [the documentation README](../README.md).*
+
+**Withdrawn**, from the Context:
+
+> The defect is currently invisible only because the container is empty (see
+> ADR-006) and the loop body never runs.
+
+**Why:** the container was not empty. `git show 794d783:cmd/api/container/container.go`
+and `git show 0fbab20:cmd/api/container/container.go` both return
+`registrars: []handlers.RouteRegistrar{authHandler, userHandler}`, so the loop
+body did run — see the Correction appended to
+[ADR-006](006%20-%20Explicit%20Compile-Time%20Dependency%20Injection.md).
+
+**What this means for the finding.** It makes the shadowing defect *worse*, not
+better. Two registrars were mounting their routes onto `g`, a `RouterGroup` built
+from `v := r.With()` carrying no path prefix, while the `r.Route("/api/v1", ...)`
+block mounted an empty sub-router. Every module route was therefore served at the
+root — `/login`, not `/api/v1/login` — in a running server, rather than lying
+dormant behind an empty loop. The rest of the Context, including the shadowing
+mechanism itself and the fail-open auth binding, is verified and stands.
+
+**Unaffected.** Status, Decision, Consequences, Alternatives, and the
+Implementation Plan are unchanged; `TestRouteTable` (`d92480c`) failed before
+`4fdc609` and passes after, which is the evidence that matters.
+
+---
+
 **This ADR serves as a binding architectural decision for the project.**

@@ -217,8 +217,8 @@ func TestRouteTable(t *testing.T) {
 }
 ```
 
-`chi.Walk` is the cheapest available guard against the empty container, the
-shadowed router, and accidental path changes. It requires no HTTP server and no
+`chi.Walk` is the cheapest available guard against a half-wired composition root,
+the shadowed router, and accidental path changes. It requires no HTTP server and no
 live database beyond what `BuildApp` needs.
 
 ---
@@ -229,11 +229,17 @@ Set once in `internal/httpx.NewRouter`; see
 [middleware hardening](../04-security/middleware-hardening.md) for the rationale
 and the security fixes.
 
-One ordering note about the current code: `server.NewRouter` registers
-`r.NotFound` and `r.MethodNotAllowed` (lines 58-59) *before* the `r.Use` calls
-(lines 62-66). This is legal in chi today — `NotFound` does not build the route
-tree, so `Use` does not panic — but it reads as fragile. Register middleware
-first, then handlers, so the ordering constraint is visually obvious.
+> **Withdrawn.** An earlier revision noted here that `server.NewRouter` registers
+> `r.NotFound` and `r.MethodNotAllowed` before its `r.Use` calls, and argued for
+> reversing the order. It registers neither, and never did:
+> `git show 4fdc609^:internal/infrastructure/http/server/server.go` shows five
+> `r.Use` calls and no handler registrations, as does the current file. The claim
+> could not be substantiated and has been withdrawn.
+
+The real gap is that 404 and 405 have no handlers at all, so they fall through to
+chi's plain-text defaults instead of the `application/problem+json` envelope every
+other error path uses. See
+[middleware hardening](../04-security/middleware-hardening.md).
 
 ---
 
