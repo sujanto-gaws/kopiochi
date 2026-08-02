@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"strings"
 	"time"
 
@@ -79,6 +80,17 @@ func Load(cfgPath string) (*Config, error) {
 	v.SetEnvPrefix("APP")
 	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
 	v.AutomaticEnv()
+
+	// Secret keys are intentionally absent from the YAML config files.
+	// AutomaticEnv() alone does not surface env vars to Unmarshal() unless
+	// Viper already knows the key (via config file, SetDefault, or BindEnv),
+	// so these must be bound explicitly before ReadInConfig/Unmarshal.
+	if err := v.BindEnv("db.password", "APP_DB_PASSWORD"); err != nil {
+		return nil, fmt.Errorf("bind db.password env: %w", err)
+	}
+	if err := v.BindEnv("plugins.auth.jwt.config.secret", "APP_JWT_SECRET"); err != nil {
+		return nil, fmt.Errorf("bind plugins.auth.jwt.config.secret env: %w", err)
+	}
 
 	// Defaults
 	v.SetDefault("server.host", "0.0.0.0")
