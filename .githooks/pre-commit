@@ -1,0 +1,42 @@
+#!/bin/sh
+# Pre-commit hook: block secrets and binaries from being committed.
+#
+# Rejects the commit if any STAGED file matches:
+#   - *.pem
+#   - anything under keys/
+#   - anything under bin/
+#   - .env
+#
+# Install via: make install-hooks (sets core.hooksPath to .githooks)
+
+staged_files=$(git diff --cached --name-only --diff-filter=ACMR)
+
+offenders=""
+
+for f in $staged_files; do
+    case "$f" in
+        *.pem)
+            offenders="$offenders$f\n"
+            ;;
+        keys/*)
+            offenders="$offenders$f\n"
+            ;;
+        bin/*)
+            offenders="$offenders$f\n"
+            ;;
+        .env)
+            offenders="$offenders$f\n"
+            ;;
+    esac
+done
+
+if [ -n "$offenders" ]; then
+    echo "pre-commit: refusing to commit — secret/binary path(s) staged:" >&2
+    printf "%b" "$offenders" | while IFS= read -r path; do
+        [ -n "$path" ] && echo "  - $path" >&2
+    done
+    echo "Remove these from staging (git restore --staged <path>) before committing." >&2
+    exit 1
+fi
+
+exit 0
