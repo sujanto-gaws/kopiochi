@@ -135,49 +135,6 @@ db:
 	}
 }
 
-// TestLoad_JWTSecretEnvFallback verifies the same env-binding behavior for
-// the nested plugins.auth.jwt.config.secret map key, which is also
-// intentionally absent from the YAML config. The plugin is left disabled
-// here on purpose: this test is only about the env value reaching the
-// decoded map, not about placeholder validation (that behavior — rejecting
-// an enabled jwt-auth plugin with an empty/placeholder secret — is covered
-// separately by TestLoad_RejectsPlaceholderSecrets).
-func TestLoad_JWTSecretEnvFallback(t *testing.T) {
-	cfgPath := writeConfig(t, validYAML+`
-plugins:
-  auth:
-    jwt:
-      enabled: false
-      provider: jwt-auth
-      config:
-        expiry: "24h"
-        issuer: "kopiochi"
-`)
-
-	t.Run("env set", func(t *testing.T) {
-		t.Setenv("APP_JWT_SECRET", "jwt-secret-from-env")
-		cfg, err := Load(cfgPath)
-		if err != nil {
-			t.Fatal(err)
-		}
-		secret, _ := cfg.Plugins.Auth["jwt"].Config["secret"].(string)
-		if secret != "jwt-secret-from-env" {
-			t.Errorf("jwt secret = %q, want %q", secret, "jwt-secret-from-env")
-		}
-	})
-
-	t.Run("env unset", func(t *testing.T) {
-		cfg, err := Load(cfgPath)
-		if err != nil {
-			t.Fatal(err)
-		}
-		secret, _ := cfg.Plugins.Auth["jwt"].Config["secret"].(string)
-		if secret != "" {
-			t.Errorf("jwt secret = %q, want empty (must not silently fall back to a default)", secret)
-		}
-	})
-}
-
 // TestLoad_RejectsPlaceholderSecrets is the Phase 2 exit criterion: a
 // deployment carrying a copy-pasted .env.example value (or one of the
 // historical committed placeholders) must refuse to start rather than run
@@ -227,32 +184,6 @@ db:
 				t.Errorf("error = %v, want it to mention %q", err, tc.wantErr)
 			}
 		})
-	}
-}
-
-// TestLoad_RejectsPlaceholderJWTSecret is the same exit criterion applied to
-// the legacy jwt-auth plugin secret, but only when that plugin is actually
-// enabled — an unconfigured, disabled-by-default plugin entry must not fail
-// validation (that's the shipped config/default.yaml state).
-func TestLoad_RejectsPlaceholderJWTSecret(t *testing.T) {
-	cfgPath := writeConfig(t, validYAML+`
-plugins:
-  auth:
-    jwt:
-      enabled: true
-      provider: jwt-auth
-      config:
-        expiry: "24h"
-        issuer: "kopiochi"
-`)
-	t.Setenv("APP_JWT_SECRET", "CHANGEME_GENERATE_YOUR_OWN_JWT_SECRET_DO_NOT_USE_THIS_VALUE")
-
-	_, err := Load(cfgPath)
-	if err == nil {
-		t.Fatal("Load succeeded with a placeholder plugins.auth.jwt.config.secret while the plugin is enabled; the server must refuse to start")
-	}
-	if !strings.Contains(err.Error(), "plugins.auth.jwt.config.secret") {
-		t.Errorf("error = %v, want it to mention plugins.auth.jwt.config.secret", err)
 	}
 }
 

@@ -61,14 +61,14 @@ plugins:
     - ratelimit
 
   # Authentication plugins
-  auth:
-    jwt:
-      enabled: false
-      provider: jwt-auth
-      config:
-        # secret intentionally omitted - set via APP_JWT_SECRET env var
-        expiry: "24h"
-        issuer: "kopiochi"
+  #
+  # The legacy HS256 "jwt-auth" plugin has been removed (see
+  # docs/architectures/04-security/token-architecture.md). All token
+  # issuance/verification now goes through the RS256 identity module
+  # (modules/identity/infrastructure/token), configured above under "auth".
+  # This map is left empty/generic for other auth plugins (e.g. fido2-auth)
+  # to register into in the future.
+  auth: {}
 
   # Cache plugins
   cache:

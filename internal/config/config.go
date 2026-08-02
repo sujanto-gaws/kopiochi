@@ -108,9 +108,6 @@ func Load(cfgPath string) (*Config, error) {
 	if err := v.BindEnv("db.password", "APP_DB_PASSWORD"); err != nil {
 		return nil, fmt.Errorf("bind db.password env: %w", err)
 	}
-	if err := v.BindEnv("plugins.auth.jwt.config.secret", "APP_JWT_SECRET"); err != nil {
-		return nil, fmt.Errorf("bind plugins.auth.jwt.config.secret env: %w", err)
-	}
 	// db.user and db.name have the same defect as db.password did: no
 	// registered default and no BindEnv, so APP_DB_USER/APP_DB_NAME are
 	// silently ignored unless the corresponding key also appears in the
@@ -197,9 +194,9 @@ var legacyPlaceholderSecrets = map[string]bool{
 
 // isPlaceholderSecret reports whether v is empty, a "CHANGEME*" placeholder,
 // or one of the historical committed values. It is only ever applied to
-// values that must hold a real secret (a DB password, an HMAC/JWT secret) —
-// never to non-secret fields such as db.user, where "postgres" is a
-// perfectly ordinary value.
+// values that must hold a real secret (e.g. a DB password) — never to
+// non-secret fields such as db.user, where "postgres" is a perfectly
+// ordinary value.
 func isPlaceholderSecret(v string) bool {
 	if v == "" {
 		return true
@@ -210,28 +207,12 @@ func isPlaceholderSecret(v string) bool {
 	return legacyPlaceholderSecrets[v]
 }
 
-// jwtPluginSecret extracts the legacy HS256 jwt-auth plugin's secret from
-// the generic plugins.auth config map (internal/plugins/auth/jwt.go). The
-// plugin config surface is still map[string]interface{} (see
-// docs/architectures/03-configuration/configuration-model.md, "Problem 3");
-// reworking that into a typed struct is out of scope here. The bool return
-// tells the caller whether the plugin is actually enabled, so an unused,
-// unconfigured plugin entry (the shipped default) does not fail validation.
-func jwtPluginSecret(c *Config) (string, bool) {
-	jwtCfg, ok := c.Plugins.Auth["jwt"]
-	if !ok || !jwtCfg.Enabled {
-		return "", false
-	}
-	s, _ := jwtCfg.Config["secret"].(string)
-	return s, true
-}
-
 // corsAllowedOriginsAndCredentials extracts the "cors" middleware plugin's
 // allowed_origins/allow_credentials from the generic plugins.custom map
 // (internal/plugins/middleware/cors.go's config surface is still
-// map[string]interface{}; see jwtPluginSecret above for the same pattern).
-// A missing "cors" section returns no origins and no credentials -- the
-// same safe, deny-everything state the plugin itself defaults to.
+// map[string]interface{}). A missing "cors" section returns no origins and
+// no credentials -- the same safe, deny-everything state the plugin itself
+// defaults to.
 func corsAllowedOriginsAndCredentials(c *Config) (origins []string, allowCredentials bool) {
 	cors, ok := c.Plugins.Custom["cors"]
 	if !ok {
@@ -284,9 +265,6 @@ func (c *Config) Validate() error {
 	}
 	if isPlaceholderSecret(c.DB.Password.Reveal()) {
 		errs = append(errs, errors.New("db.password is empty or a known placeholder; set APP_DB_PASSWORD to a real credential"))
-	}
-	if s, enabled := jwtPluginSecret(c); enabled && isPlaceholderSecret(s) {
-		errs = append(errs, errors.New("plugins.auth.jwt.config.secret is empty or a known placeholder; set APP_JWT_SECRET to a real secret"))
 	}
 
 	if c.Server.Port <= 0 || c.Server.Port > 65535 {
