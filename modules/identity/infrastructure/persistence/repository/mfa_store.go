@@ -4,7 +4,7 @@ import (
 	"context"
 
 	"github.com/google/uuid"
-	"github.com/sujanto-gaws/kopiochi/internal/infrastructure/persistence/auth/models"
+	"github.com/sujanto-gaws/kopiochi/modules/identity/infrastructure/persistence/models"
 	"github.com/uptrace/bun"
 )
 

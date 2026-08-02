@@ -21,12 +21,17 @@ type UserService interface {
 
 // UserHandler handles HTTP requests for user operations
 type UserHandler struct {
-	svc UserService
+	svc    UserService
+	authMW func(http.Handler) http.Handler
 }
 
-// NewUserHandler creates a new user handler
-func NewUserHandler(svc UserService) *UserHandler {
-	return &UserHandler{svc: svc}
+// NewUserHandler creates a new user handler. authMW protects every route this
+// handler exposes — all user routes require authentication — and is injected
+// by the composition root rather than resolved by the handler itself, so a
+// missing/misconfigured verifier fails at wiring time (see cmd/api/container.go)
+// instead of the handler silently serving unprotected routes.
+func NewUserHandler(svc UserService, authMW func(http.Handler) http.Handler) *UserHandler {
+	return &UserHandler{svc: svc, authMW: authMW}
 }
 
 // CreateUser handles POST /users
@@ -175,11 +180,18 @@ func (h *UserHandler) DeleteUser() http.HandlerFunc {
 	}
 }
 
-// RegisterRoutes implements RouteRegistrar.
-// All user CRUD routes require authentication and are mounted on g.Protected.
-func (h *UserHandler) RegisterRoutes(g RouterGroup) {
-	g.Protected.Post("/users", h.CreateUser())
-	g.Protected.Get("/users/{id}", h.GetUser())
-	g.Protected.Put("/users/{id}", h.UpdateUser())
-	g.Protected.Delete("/users/{id}", h.DeleteUser())
+// Routes implements the module.Module contract: it mounts this handler's
+// endpoints onto r and declares its own protection, rather than relying on
+// the caller to pre-build public/protected sub-routers. Mounting the group
+// returned here under /api/v1 yields /api/v1/users, /api/v1/users/{id}, etc.
+//
+// All user CRUD routes require authentication.
+func (h *UserHandler) Routes(r chi.Router) {
+	r.Group(func(r chi.Router) {
+		r.Use(h.authMW)
+		r.Post("/users", h.CreateUser())
+		r.Get("/users/{id}", h.GetUser())
+		r.Put("/users/{id}", h.UpdateUser())
+		r.Delete("/users/{id}", h.DeleteUser())
+	})
 }

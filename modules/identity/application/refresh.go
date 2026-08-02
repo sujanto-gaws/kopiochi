@@ -3,7 +3,7 @@ package auth
 import (
 	"context"
 	"fmt"
-	domain "github.com/sujanto-gaws/kopiochi/internal/domain/auth"
+	domain "github.com/sujanto-gaws/kopiochi/modules/identity/domain"
 	"time"
 )
 

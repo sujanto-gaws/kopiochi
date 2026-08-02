@@ -128,7 +128,7 @@ func (e *EventLoggerExtension) Bootstrap(app extension.Application) error {
 }
 
 func main() {
-	fmt.Println("=== Yii-Style Extension System Demo ===\n")
+	fmt.Print("=== Yii-Style Extension System Demo ===\n\n")
 
 	// Create extension manager
 	manager := extension.NewManager()
@@ -180,7 +180,7 @@ func main() {
 		return
 	}
 
-	fmt.Println("\n✓ All extensions bootstrapped successfully\n")
+	fmt.Print("\n✓ All extensions bootstrapped successfully\n\n")
 
 	// Use services provided by extensions
 	if svc, exists := manager.GetService("hello-service"); exists {

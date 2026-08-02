@@ -6,7 +6,7 @@ import (
 	"encoding/pem"
 	"fmt"
 	"github.com/golang-jwt/jwt/v5"
-	domain "github.com/sujanto-gaws/kopiochi/internal/domain/auth"
+	domain "github.com/sujanto-gaws/kopiochi/modules/identity/domain"
 	"os"
 	"time"
 )

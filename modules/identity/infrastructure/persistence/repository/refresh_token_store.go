@@ -6,8 +6,8 @@ import (
 	"errors"
 
 	"github.com/google/uuid"
-	domain "github.com/sujanto-gaws/kopiochi/internal/domain/auth"
-	"github.com/sujanto-gaws/kopiochi/internal/infrastructure/persistence/auth/models"
+	domain "github.com/sujanto-gaws/kopiochi/modules/identity/domain"
+	"github.com/sujanto-gaws/kopiochi/modules/identity/infrastructure/persistence/models"
 	"github.com/uptrace/bun"
 )
 

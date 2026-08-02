@@ -1,7 +1,7 @@
 package auth
 
 import (
-	domain "github.com/sujanto-gaws/kopiochi/internal/domain/auth"
+	domain "github.com/sujanto-gaws/kopiochi/modules/identity/domain"
 )
 
 // Service implements the user application service

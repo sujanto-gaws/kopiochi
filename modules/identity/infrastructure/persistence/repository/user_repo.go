@@ -6,8 +6,8 @@ import (
 	"errors"
 
 	"github.com/google/uuid"
-	domain "github.com/sujanto-gaws/kopiochi/internal/domain/auth"
-	"github.com/sujanto-gaws/kopiochi/internal/infrastructure/persistence/auth/models"
+	domain "github.com/sujanto-gaws/kopiochi/modules/identity/domain"
+	"github.com/sujanto-gaws/kopiochi/modules/identity/infrastructure/persistence/models"
 	"github.com/uptrace/bun"
 )
 
@@ -71,7 +71,7 @@ func (r *UserRepo) Save(ctx context.Context, user *domain.User) error {
 	_, err := r.db.NewInsert().
 		Model(bunUser).
 		On("CONFLICT (id) DO UPDATE").
-		Set("username = EXCLUDE.username").
+		Set("username = EXCLUDED.username").
 		Set("email = EXCLUDED.email").
 		Set("name = EXCLUDED.name").
 		Set("roles = EXCLUDED.roles").
