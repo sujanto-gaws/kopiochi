@@ -210,12 +210,52 @@ func jwtPluginSecret(c *Config) (string, bool) {
 	return s, true
 }
 
+// corsAllowedOriginsAndCredentials extracts the "cors" middleware plugin's
+// allowed_origins/allow_credentials from the generic plugins.custom map
+// (internal/plugins/middleware/cors.go's config surface is still
+// map[string]interface{}; see jwtPluginSecret above for the same pattern).
+// A missing "cors" section returns no origins and no credentials -- the
+// same safe, deny-everything state the plugin itself defaults to.
+func corsAllowedOriginsAndCredentials(c *Config) (origins []string, allowCredentials bool) {
+	cors, ok := c.Plugins.Custom["cors"]
+	if !ok {
+		return nil, false
+	}
+	if raw, ok := cors["allowed_origins"].([]interface{}); ok {
+		for _, o := range raw {
+			if s, ok := o.(string); ok {
+				origins = append(origins, s)
+			}
+		}
+	}
+	if b, ok := cors["allow_credentials"].(bool); ok {
+		allowCredentials = b
+	}
+	return origins, allowCredentials
+}
+
 // Validate rejects configuration that would otherwise fail later, at first
 // request or first DB connection, instead of at startup. Load calls this so
 // the process refuses to start rather than serve traffic against a broken
 // or insecure configuration.
 func (c *Config) Validate() error {
 	var errs []error
+
+	// The CORS spec forbids combining a wildcard allowed origin with
+	// credentialed requests, and browsers ignore Access-Control-Allow-
+	// Credentials in that combination anyway -- but failing loudly here, at
+	// startup, is much better than silently serving a CORS config that
+	// looks like it grants credentialed cross-origin access and does not
+	// (or, in a browser that gets it wrong, does). See
+	// docs/architectures/04-security/middleware-hardening.md, Problem 2.
+	if origins, allowCreds := corsAllowedOriginsAndCredentials(c); allowCreds {
+		for _, o := range origins {
+			if o == "*" {
+				errs = append(errs, errors.New(`plugins.custom.cors: allowed_origins "*" cannot be combined with allow_credentials`))
+				break
+			}
+		}
+	}
 
 	if c.DB.Name == "" {
 		errs = append(errs, errors.New("db.name is required (set APP_DB_NAME)"))

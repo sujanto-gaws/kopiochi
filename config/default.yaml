@@ -73,4 +73,18 @@ plugins:
         db: 0
   
   # Custom plugins
+  #
+  # "cors" (internal/plugins/middleware/cors.go) is allowlist-only and
+  # deny-by-default: with no "cors" section here (the shipped default), no
+  # Origin is ever granted Access-Control-Allow-Origin. To allow specific
+  # frontends, add e.g.:
+  #
+  #   cors:
+  #     allowed_origins: ["https://app.example.com"]
+  #     allow_credentials: true
+  #
+  # A literal "*" is accepted as an explicit, deliberate wildcard, but
+  # combining it with allow_credentials: true is rejected at config load
+  # (Config.Validate) -- the CORS spec forbids that combination and
+  # browsers ignore it, so failing loudly at boot is correct.
   custom: {}

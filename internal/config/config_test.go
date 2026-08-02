@@ -393,3 +393,81 @@ func TestValidate_RejectsMinConnsAboveMaxConns(t *testing.T) {
 		t.Fatal("Validate() accepted db.min_conns > db.max_conns")
 	}
 }
+
+// TestValidate_RejectsWildcardCORSOriginWithCredentials is the config-load
+// regression test for middleware-hardening.md, Problem 2: the CORS spec
+// forbids combining a wildcard allowed origin with credentialed requests,
+// and the server must refuse to start rather than let that combination
+// reach request handling (internal/plugins/middleware/cors.go).
+func TestValidate_RejectsWildcardCORSOriginWithCredentials(t *testing.T) {
+	cfg := validConfig()
+	cfg.Plugins.Custom = map[string]map[string]interface{}{
+		"cors": {
+			"allowed_origins":   []interface{}{"*"},
+			"allow_credentials": true,
+		},
+	}
+
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatal("Validate() accepted plugins.custom.cors allowed_origins \"*\" combined with allow_credentials: true")
+	}
+	if !strings.Contains(err.Error(), "cors") {
+		t.Errorf("error = %v, want it to mention cors", err)
+	}
+}
+
+// TestValidate_AllowsWildcardCORSOriginWithoutCredentials is the control for
+// the rejection test above: a wildcard origin on its own (no credentials) is
+// a legitimate, if permissive, deliberate choice and must not be rejected.
+func TestValidate_AllowsWildcardCORSOriginWithoutCredentials(t *testing.T) {
+	cfg := validConfig()
+	cfg.Plugins.Custom = map[string]map[string]interface{}{
+		"cors": {
+			"allowed_origins": []interface{}{"*"},
+		},
+	}
+
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("Validate() rejected a wildcard CORS origin without credentials: %v", err)
+	}
+}
+
+// TestValidate_AllowsSpecificCORSOriginWithCredentials is the control
+// proving the rejection above is specifically about the wildcard, not about
+// allow_credentials in general: a named origin plus credentials is exactly
+// the combination CORS supports.
+func TestValidate_AllowsSpecificCORSOriginWithCredentials(t *testing.T) {
+	cfg := validConfig()
+	cfg.Plugins.Custom = map[string]map[string]interface{}{
+		"cors": {
+			"allowed_origins":   []interface{}{"https://app.example.com"},
+			"allow_credentials": true,
+		},
+	}
+
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("Validate() rejected a specific CORS origin with credentials: %v", err)
+	}
+}
+
+// TestLoad_RejectsWildcardCORSOriginWithCredentials proves the rejection
+// happens end to end through Load (config file -> Unmarshal -> Validate),
+// not just against a hand-built Config.
+func TestLoad_RejectsWildcardCORSOriginWithCredentials(t *testing.T) {
+	cfgPath := writeConfig(t, validYAML+`
+plugins:
+  custom:
+    cors:
+      allowed_origins: ["*"]
+      allow_credentials: true
+`)
+
+	_, err := Load(cfgPath)
+	if err == nil {
+		t.Fatal("Load succeeded with plugins.custom.cors allowed_origins \"*\" and allow_credentials: true")
+	}
+	if !strings.Contains(err.Error(), "cors") {
+		t.Errorf("error = %v, want it to mention cors", err)
+	}
+}
