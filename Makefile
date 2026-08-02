@@ -1,5 +1,5 @@
 .PHONY: help build run test clean docker-build docker-run generate \
-        lint fmt tidy init-project install-hooks
+        lint fmt tidy init-project install-hooks keys
 
 # Variables
 BINARY_NAME?=kopiochi
@@ -12,6 +12,7 @@ DB_USER?=postgres
 DB_PASSWORD?=postgres
 DB_NAME?=kopiochi
 CONFIG?=config/default.yaml
+KEYS_DIR?=keys
 VERSION?=$(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 LDFLAGS=-ldflags "-X github.com/sujanto-gaws/kopiochi/internal/version.Version=$(VERSION)"
 
@@ -77,6 +78,24 @@ vet: ## Run go vet
 	$(GO) vet ./...
 
 check: fmt vet tidy ## Run all code quality checks
+
+# JWT signing keys
+keys: ## Generate a fresh RSA keypair into keys/ for JWT signing (refuses to overwrite existing keys)
+	@if [ -f "$(KEYS_DIR)/private.pem" ] || [ -f "$(KEYS_DIR)/public.pem" ]; then \
+		echo "Error: $(KEYS_DIR)/private.pem or $(KEYS_DIR)/public.pem already exists."; \
+		echo "Refusing to overwrite - this would invalidate live tokens signed with the current key."; \
+		echo "Remove the existing file(s) manually first if you really intend to rotate the keypair."; \
+		exit 1; \
+	fi
+	@mkdir -p $(KEYS_DIR)
+	@echo "Generating RSA keypair in $(KEYS_DIR)/..."
+	# -traditional forces PKCS1 ("BEGIN RSA PRIVATE KEY") output, which is
+	# what internal/infrastructure/token/jwt.go parses via
+	# x509.ParsePKCS1PrivateKey. Modern OpenSSL (3.x) defaults to PKCS8
+	# ("BEGIN PRIVATE KEY") instead, which that loader cannot read.
+	openssl genrsa -traditional -out $(KEYS_DIR)/private.pem 2048
+	openssl rsa -in $(KEYS_DIR)/private.pem -pubout -out $(KEYS_DIR)/public.pem
+	@echo "Keypair generated: $(KEYS_DIR)/private.pem, $(KEYS_DIR)/public.pem"
 
 # Code generation
 generate: ## Generate new CRUD domain (usage: make generate DOMAIN=Product FIELDS="name:string,price:float64")

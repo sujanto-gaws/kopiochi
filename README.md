@@ -93,6 +93,31 @@ cp .env.example .env
 # Edit .env or config/default.yaml
 ```
 
+### First-Time Setup
+
+Two things must be done before the server will start correctly:
+
+1. **Generate a JWT signing keypair.** `config/default.yaml` points to
+   `keys/private.pem` / `keys/public.pem`, which are gitignored and not
+   included in the repo:
+
+   ```bash
+   make keys
+   ```
+
+   This refuses to run if `keys/private.pem` or `keys/public.pem` already
+   exist, so it won't silently invalidate live tokens.
+
+   > ⚠️ **Security note:** this repository previously had a keypair committed
+   > to git history at the repo root (`private.pem`, `public.pem`). That
+   > keypair is compromised (public in version control history) and must
+   > never be used — always generate your own with `make keys`.
+
+2. **Set `APP_DB_PASSWORD`.** The database password is no longer stored in
+   `config/default.yaml`; it must be supplied via the environment (e.g. in
+   your `.env` file or shell), otherwise the app will try to connect with an
+   empty password.
+
 ### Running Locally
 
 ```bash
@@ -212,7 +237,7 @@ curl http://localhost:8080/api/v1/users/1
 | `APP_DB_HOST` | `localhost` | PostgreSQL host |
 | `APP_DB_PORT` | `5432` | PostgreSQL port |
 | `APP_DB_USER` | `postgres` | Database user |
-| `APP_DB_PASSWORD` | `postgres` | Database password |
+| `APP_DB_PASSWORD` | *(none — required)* | Database password. Not read from `config/default.yaml`; must be set via env. |
 | `APP_DB_NAME` | `kopiochi` | Database name |
 | `APP_DB_SSLMODE` | `disable` | SSL mode for database |
 | `APP_DB_MAX_CONNS` | `10` | Maximum database connections |
@@ -326,7 +351,7 @@ plugins:
       enabled: false
       provider: jwt-auth
       config:
-        secret: "your-secret-key"
+        # secret intentionally omitted - set via APP_JWT_SECRET env var
         expiry: "24h"
         issuer: "kopiochi"
     
