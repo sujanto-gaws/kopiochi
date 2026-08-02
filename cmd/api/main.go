@@ -5,14 +5,12 @@ import (
 	"net/http"
 	"os"
 
-	"github.com/go-chi/chi/v5"
 	"github.com/rs/zerolog/log"
 	"github.com/spf13/cobra"
 
 	"github.com/sujanto-gaws/kopiochi/internal/config"
 	"github.com/sujanto-gaws/kopiochi/internal/db"
-	"github.com/sujanto-gaws/kopiochi/internal/infrastructure/http/handlers"
-	"github.com/sujanto-gaws/kopiochi/internal/infrastructure/http/routes"
+	"github.com/sujanto-gaws/kopiochi/internal/httpx"
 	"github.com/sujanto-gaws/kopiochi/internal/infrastructure/http/server"
 	"github.com/sujanto-gaws/kopiochi/internal/logger"
 	"github.com/sujanto-gaws/kopiochi/internal/plugin"
@@ -95,33 +93,13 @@ func main() {
 				})
 			}
 
-			// Resolve auth middleware from the jwt-auth plugin if initialized.
-			var authMiddleware func(http.Handler) http.Handler
-			if authPlugin := pluginRegistry.GetAuth("jwt-auth"); authPlugin != nil {
-				authMiddleware = authPlugin.AuthMiddleware()
-			}
-
-			// Build the router group: Protected applies auth middleware when available.
-			v1 := r.With() // scoped sub-router for /api/v1 context
-			var protected chi.Router
-			if authMiddleware != nil {
-				protected = v1.With(authMiddleware)
-			} else {
-				protected = v1
-			}
-			g := handlers.RouterGroup{Public: v1, Protected: protected}
-
-			// app.Modules is bridged onto the legacy RouteRegistrar mechanism
-			// here so this commit can focus solely on BuildApp and the
-			// zero-module guard. The bridge (and the /api/v1 shadowing bug it
-			// preserves) is removed in the very next commit, which replaces
-			// routes.Setup with internal/httpx.Mount.
-			registrars := make([]handlers.RouteRegistrar, len(app.Modules))
-			for i, m := range app.Modules {
-				registrars[i] = moduleRegistrar{m}
-			}
-
-			routes.Setup(r, g, registrars...)
+			// Mount operational endpoints (/healthz, /readyz, /swagger) and every
+			// module's routes under /api/v1. The identity module owns its own
+			// fail-closed auth middleware (see modules/identity/module.go) — main
+			// no longer derives protected-route middleware from the jwt-auth
+			// plugin, and there is no second router in scope for a module to
+			// mount onto by mistake.
+			httpx.Mount(r, app.Modules, httpx.Deps{})
 
 			// Start server with graceful shutdown
 			server.Run(

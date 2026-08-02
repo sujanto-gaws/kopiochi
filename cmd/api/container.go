@@ -10,7 +10,6 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/go-chi/chi/v5"
 	"github.com/rs/zerolog"
 	"github.com/uptrace/bun"
 
@@ -88,13 +87,6 @@ func BuildApp(cfg *config.Config, db bun.IDB, log zerolog.Logger) (*App, error) 
 // back-channel into another module's private dependency graph. The small
 // cost is that the RSA keys are parsed twice at startup; that trade-off is
 // preferable to coupling two otherwise-independent modules.
-//
-// UserHandler still exposes the legacy RegisterRoutes(RouterGroup) shape at
-// this point in the migration (see internal/infrastructure/http/handlers/
-// registrar.go) — Routes below builds a throwaway RouterGroup, applying
-// authMW to the "protected" side, purely to bridge onto it. The next commit
-// updates UserHandler to the module.Module Routes(chi.Router) shape directly
-// and deletes RouterGroup/RouteRegistrar once this is their last caller.
 func newUserModule(cfg *config.Config, db bun.IDB) (*module.Module, error) {
 	jwtSvc, err := token.NewJWTService(cfg.Auth.PrivateKeyPath, cfg.Auth.PublicKeyPath, cfg.Auth.Issuer)
 	if err != nil {
@@ -107,29 +99,10 @@ func newUserModule(cfg *config.Config, db bun.IDB) (*module.Module, error) {
 
 	userRepo := repository.NewUserRepository(db)
 	userSvc := appUser.NewService(userRepo)
-	userHandler := handlers.NewUserHandler(userSvc)
+	userHandler := handlers.NewUserHandler(userSvc, authMW)
 
 	return &module.Module{
-		Name: "user",
-		Routes: func(r chi.Router) {
-			r.Group(func(r chi.Router) {
-				r.Use(authMW)
-				userHandler.RegisterRoutes(handlers.RouterGroup{Public: r, Protected: r})
-			})
-		},
+		Name:   "user",
+		Routes: userHandler.Routes,
 	}, nil
-}
-
-// moduleRegistrar is a temporary bridge from the new module.Module contract
-// onto the legacy handlers.RouteRegistrar interface that main.go's routing
-// still expects. It exists only so this commit can introduce BuildApp and
-// the zero-module guard without also rewriting the routing layer — that is
-// the very next commit (replacing routes.Setup with internal/httpx.Mount),
-// which deletes this shim along with RouteRegistrar/RouterGroup.
-type moduleRegistrar struct {
-	m *module.Module
-}
-
-func (mr moduleRegistrar) RegisterRoutes(g handlers.RouterGroup) {
-	mr.m.Routes(g.Public)
 }
