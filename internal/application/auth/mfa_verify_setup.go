@@ -22,7 +22,7 @@ func (s *Service) VerifyMFASetup(ctx context.Context, userID string, code string
 	for i := 0; i < 8; i++ {
 		b := make([]byte, 4)
 		rand.Read(b)
-		code := hex.EncodeToString(b)[:8]  // 8-digit hex code
+		code := hex.EncodeToString(b)[:8] // 8-digit hex code
 		backupCodes[i] = code
 		hash, err := bcrypt.GenerateFromPassword([]byte(code), bcrypt.DefaultCost)
 		if err != nil {

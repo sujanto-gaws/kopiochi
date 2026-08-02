@@ -3,8 +3,8 @@ package auth
 import (
 	"context"
 	"fmt"
-	"time"
 	domain "github.com/sujanto-gaws/kopiochi/internal/domain/auth"
+	"time"
 )
 
 func (s *Service) Refresh(ctx context.Context, refreshToken string) (*TokenResponse, error) {
