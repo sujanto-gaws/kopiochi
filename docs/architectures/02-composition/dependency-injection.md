@@ -1,8 +1,22 @@
 # Dependency Injection & the Composition Root
 
-**Status:** Proposed — see [ADR-006](../adr/006%20-%20Explicit%20Compile-Time%20Dependency%20Injection.md)
+**Status:** Implemented — see [ADR-006](../adr/006%20-%20Explicit%20Compile-Time%20Dependency%20Injection.md)
 **Date:** 2026-08-02
-**Severity of current defect:** Critical — the application serves no business routes.
+**Last verified:** 2026-08-02, after Phase 1
+**Severity of current defect:** None outstanding — the target design below shipped
+in `ef76759`. `cmd/api/container.go` now exposes `BuildApp`, which wires the
+`identity` and `user` modules, refuses to return a zero-module application, and is
+covered by `cmd/api/container_test.go`. The routes it produces serve under
+`/api/v1` (`internal/httpx.Mount`, fixed in `4fdc609`).
+
+> **Problem section under review.** The "Problem" section below quotes a version of
+> `cmd/api/container/container.go` with an empty registrar list. That excerpt does
+> not match any commit in this repository's history — the earliest `container.go`
+> (`794d783`) already returned two registrars. The section is retained pending a
+> second documentation pass rather than silently rewritten; treat the code block as
+> unverified. What *is* verified: the composition root was a passive list whose
+> correctness rested on a comment, which is the design defect the target section
+> below addresses.
 
 ---
 
@@ -57,7 +71,12 @@ the ~2,000 LOC of working auth code to the server.
 
 ---
 
-## Target design
+## Target design — shipped
+
+Landed in `ef76759` as `cmd/api/container.go`. The sketch below is what was
+designed; the shipped code differs in three details: `module.Deps` carries only
+`DB` and `Logger` (no `Clock`), the identity module reads `cfg.Auth` rather than a
+`cfg.Identity` block, and the registered modules are `identity` and `user`.
 
 ### 1. The container returns an application, and refuses to be empty
 
@@ -99,13 +118,19 @@ func BuildApp(cfg *config.Config, db bun.IDB, log zerolog.Logger) (*App, error) 
 }
 ```
 
-Three properties the current code lacks:
+Three properties the previous container lacked, all now in place
+(`cmd/api/container.go`):
 
-| Property | Mechanism |
-|---|---|
-| Empty application cannot start | Explicit `len(mods) == 0` guard |
-| Misconfiguration fails at boot | Module constructors return `error`, wrapped with `%w` |
-| Wiring is observable | Registered module names logged at startup |
+| Property | Mechanism | Where |
+|---|---|---|
+| Empty application cannot start | Explicit `len(mods) == 0` guard | `container.go:66-68` |
+| Misconfiguration fails at boot | Module constructors return `error`, wrapped with `%w` | `container.go:56`, `:62`, `:93` |
+| Wiring is observable | Registered module names logged at startup | `container.go:74` |
+
+> The `len(mods) == 0` guard is currently unreachable, because two modules are
+> appended unconditionally above it. It is retained deliberately as a guard for
+> future edits — but it is not, today, an executable check. See
+> [testing strategy](../06-quality/testing-strategy.md).
 
 ### 2. Constructor injection, no service locator
 
@@ -156,8 +181,7 @@ the implementation; the composition root is the only place both are visible.
 
 ## Testability
 
-The current container cannot be tested — there is nothing to assert. The target
-supports:
+Both tests below shipped in `d92480c` as `cmd/api/container_test.go`:
 
 ```go
 func TestBuildApp_RegistersModules(t *testing.T) {
@@ -176,21 +200,19 @@ func TestBuildApp_FailsOnInvalidConfig(t *testing.T) {
 
 Plus the route-table test in
 [routing and versioning](routing-and-versioning.md), which is the check that
-would have caught the empty container immediately.
+catches a mis-wired composition root immediately.
 
 ---
 
-## Migration path
+## Migration path — complete
 
-1. Add `internal/module` (`Deps`, `Module`) — additive, breaks nothing.
-2. Write `modules/identity/module.go` over the existing identity internals.
-3. Replace `cmd/api/container/container.go` with `cmd/api/container.go` as above.
-4. Update `main.go` to call `BuildApp` and pass `app.Modules` to route setup.
-5. Add the two container tests and the route-table test.
-6. Delete `handlers.RouteRegistrar` and the `RouterGroup` indirection once no
-   caller remains.
-
-Steps 1–4 restore a functioning application; step 5 prevents the regression.
+1. ✅ Add `internal/module` (`Deps`, `Module`) — `05b1051`, additive, broke nothing.
+2. ✅ Write `modules/identity/module.go` over the existing identity internals — `5f6edfe`, `6d0c1b7`.
+3. ✅ Replace `cmd/api/container/container.go` with `cmd/api/container.go` — `ef76759`.
+4. ✅ Update `main.go` to call `BuildApp` and pass `app.Modules` to route setup — `ef76759`, `4fdc609`.
+5. ✅ Add the two container tests and the route-table test — `d92480c`.
+6. ✅ Delete `handlers.RouteRegistrar` and the `RouterGroup` indirection — `4fdc609`;
+   `grep -rn "RouteRegistrar\|RouterGroup" --include=*.go .` now returns nothing.
 
 ---
 

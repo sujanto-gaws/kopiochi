@@ -1,7 +1,10 @@
 # HTTP Middleware Hardening
 
-**Status:** Proposed
+**Status:** Partially implemented
 **Date:** 2026-08-02
+**Last verified:** 2026-08-02, after Phase 1 — the auth-binding section is
+resolved; CORS, proxy headers, and security response headers are all still open
+(Phase 2).
 
 Covers CORS, proxy header handling, security headers, auth binding, and the
 middleware stack order. Rate limiting has its own document:
@@ -144,7 +147,7 @@ Defaults become: `enabled: false`, empty allowlist, credentials off.
 
 Two independent consumers disagree, and both are unsafe behind an untrusted edge:
 
-1. `server.go:64` uses chi's `middleware.RealIP`, which trusts `X-Forwarded-For`
+1. `server.go:59` uses chi's `middleware.RealIP`, which trusts `X-Forwarded-For`
    and `X-Real-IP` from **any** peer.
 2. `ratelimit.go:76-78` separately reads `X-Forwarded-For` and uses the **entire
    header value** as the rate-limit key — so an attacker sends a different value
@@ -195,9 +198,11 @@ in the browser.
 
 ---
 
-## Auth middleware binding
+## Auth middleware binding — fixed
 
-`main.go:99-112` resolves auth once and **fails open**:
+*Resolved in `6d0c1b7` / `ef76759`.*
+
+Historically `main.go:99-112` resolved auth once and **failed open**:
 
 ```go
 if authMiddleware != nil {
@@ -207,16 +212,25 @@ if authMiddleware != nil {
 }
 ```
 
-With `plugins.auth.jwt.enabled: false` — the shipped default — every protected
-route is served unauthenticated. No warning is logged.
+With `plugins.auth.jwt.enabled: false` — still the shipped default
+(`config/default.yaml:47`) — every protected route was served unauthenticated,
+with no warning logged.
 
-Target, per [routing and versioning](../02-composition/routing-and-versioning.md):
+Target, per [routing and versioning](../02-composition/routing-and-versioning.md)
+— **all three now implemented**:
 
-- Modules declare their own protected groups.
-- The auth middleware is a constructor dependency, never nil: if a module needs
+- ✅ Modules declare their own protected groups.
+- ✅ The auth middleware is a constructor dependency, never nil: if a module needs
   authentication and the verifier cannot be built, `New()` returns an error and
-  the process does not start.
-- Fail closed, always.
+  the process does not start. `modules/identity/module.go` derives its
+  `AuthRequired` from the token service it just built; `cmd/api/container.go:90-98`
+  does the same for the user module.
+- ✅ Fail closed, always. `main.go` no longer derives auth middleware from the
+  jwt-auth plugin at all (see the comment at `main.go:96-103`).
+
+The defects in what the middleware then *does* with a token — no `iss`/`aud`
+validation, one `Validate()` for three token classes — are unchanged; see
+[token architecture](token-architecture.md).
 
 ---
 

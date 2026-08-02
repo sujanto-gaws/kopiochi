@@ -1,7 +1,13 @@
 # ADR-006: Explicit Compile-Time Dependency Injection
 
 ## Status
-**Proposed** – *Date: 2026-08-02*
+**Accepted — implemented** – *Decided: 2026-08-02 · Implemented: 2026-08-02 (Phase 1)*
+
+All six implementation steps have shipped; see the Implementation Plan below for
+per-step commits. The Context section is preserved as written — but note that the
+"empty container" excerpt it quotes does not match any commit in this
+repository's history, and is being re-verified. The Decision stands on its own
+merits regardless of that excerpt.
 
 ## Context
 
@@ -90,23 +96,30 @@ composition root.
 | **Keep the current registrar list, add a lint rule** | Does not address the root problem: "wired" is not expressible in the type system, and a lint rule cannot tell intentional emptiness from an unfinished one. |
 | **Package-level globals + `init()`** | Untestable, unordered initialisation, hidden coupling. |
 
-## Implementation Plan
+## Implementation Plan — complete
 
-1. Define `module.Deps` and `module.Module` (per ADR-004).
-2. Replace `cmd/api/container/container.go` with `cmd/api/container.go`
+1. ✅ Define `module.Deps` and `module.Module` (per ADR-004) — `05b1051`. The
+   shipped `Deps` carries `DB` and `Logger`; no `Clock`.
+2. ✅ Replace `cmd/api/container/container.go` with `cmd/api/container.go`
    exposing `BuildApp(cfg, db, log) (*App, error)`, including the zero-module
-   guard.
-3. Construct each module explicitly, wrapping errors with the module name.
-4. Update `main.go` to call `BuildApp` and pass `app.Modules` to route mounting.
-5. Add tests: `TestBuildApp_RegistersModules` and
-   `TestBuildApp_FailsOnInvalidConfig`.
-6. Delete `handlers.RouteRegistrar` and `handlers.RouterGroup` once unused.
+   guard — `ef76759`.
+3. ✅ Construct each module explicitly, wrapping errors with the module name —
+   `ef76759` (`"build identity module: %w"`, `"build user module: %w"`).
+4. ✅ Update `main.go` to call `BuildApp` and pass `app.Modules` to route mounting
+   — `ef76759`, `4fdc609`.
+5. ✅ Add tests: `TestBuildApp_RegistersModules` and
+   `TestBuildApp_FailsOnInvalidConfig` — `d92480c`, in `cmd/api/container_test.go`.
+6. ✅ Delete `handlers.RouteRegistrar` and `handlers.RouterGroup` once unused —
+   `4fdc609`; neither identifier remains anywhere in the tree.
 
 ## Compliance / Enforcement
 
 - `BuildApp` must return an error when no module is registered; a test asserts it.
+  *Caveat: the guard is currently unreachable, because two modules are appended
+  unconditionally before it. It encodes the rule for future edits; it does not
+  today execute.*
 - A route-table test asserts expected routes exist — the practical guard against
-  silent emptiness.
+  silent emptiness. *Shipped as `TestRouteTable` in `cmd/api/routes_test.go`.*
 - Review rejects new service-locator lookups and `map[string]interface{}`
   constructor parameters.
 - Only `cmd/**` may import more than one module.

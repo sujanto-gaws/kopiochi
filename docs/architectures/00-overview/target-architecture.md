@@ -1,11 +1,18 @@
 # Target Architecture
 
-**Status:** Proposed
+**Status:** Partially implemented
 **Date:** 2026-08-02
+**Last verified:** 2026-08-02, after Phase 1
 
 This document describes the architecture Kopiochi should converge on. It is the
 destination; [`../07-roadmap/remediation-plan.md`](../07-roadmap/remediation-plan.md)
 is the route.
+
+Parts of it are no longer aspirational. The composition root (`cmd/api/`
+`container.go`), the module contract (`internal/module`), the `modules/identity`
+tree, and the HTTP composition below all exist as described. The middleware
+stack, the configuration section's fail-closed behaviour, and the data-access
+targets do not yet. Sections are annotated where they have shipped.
 
 ---
 
@@ -144,7 +151,12 @@ compile errors. Detail:
 
 ---
 
-## HTTP composition
+## HTTP composition — shipped
+
+*Live as `internal/httpx.Mount` (`4fdc609`, `40887de`). Two differences from the
+sketch: `Mount` takes `[]*module.Module` rather than reaching into `app`, because
+`App` is in `package main` and would create an import cycle; and `/health`
+survives as a deprecated alias for `/healthz`.*
 
 ```go
 r := httpx.NewRouter(cfg.Server, log)      // core middleware stack
@@ -160,9 +172,10 @@ r.Route("/api/v1", func(v1 chi.Router) {    // the version group is REAL
 })
 ```
 
-The current bug — a `/api/v1` block whose inner router is shadowed and discarded
-— is structurally impossible here, because `Routes` takes the group router as a
-parameter instead of closing over a router built elsewhere. See
+The original bug — a `/api/v1` block whose inner router was shadowed and
+discarded — is structurally impossible here, because `Routes` takes the group
+router as a parameter instead of closing over a router built elsewhere. Fixed in
+`4fdc609`; guarded by `TestRouteTable`. See
 [`../02-composition/routing-and-versioning.md`](../02-composition/routing-and-versioning.md)
 and [ADR-007](../adr/007%20-%20API%20Versioning%20at%20the%20Router%20Boundary.md).
 
@@ -191,11 +204,16 @@ Rationale for the ordering and each hardening change:
 - One typed struct per concern, assembled into `config.Config`.
 - Precedence: **defaults → file → environment → flags** (later wins).
 - Every key has an explicit default registration so environment binding actually
-  works — the current silent failure for `db.password` is a direct consequence of
-  omitting this.
-- Secrets never appear in `config/*.yaml`. They arrive via environment or a
-  secret store, and the config loader **fails closed** if a required secret is
-  missing or is a known placeholder.
+  works — the silent failure of `APP_DB_PASSWORD` was a direct consequence of
+  omitting this. *Partly done: `b74b358` added explicit `BindEnv` calls for
+  `db.password` and the JWT secret (`internal/config/config.go:88-93`). `db.user`
+  and `db.name` still have neither a default nor a binding, so `APP_DB_USER` and
+  `APP_DB_NAME` remain inert.*
+- Secrets never appear in `config/*.yaml`. *Done for the working tree
+  (`b74b358`).* They arrive via environment or a secret store, and the config
+  loader **fails closed** if a required secret is missing or is a known
+  placeholder. *Not done — nothing rejects a placeholder, and `.env.example`
+  ships `CHANGEME_*` values that would load happily. Phase 2.9.*
 
 Detail: [`../03-configuration/configuration-model.md`](../03-configuration/configuration-model.md)
 and [`../03-configuration/secret-management.md`](../03-configuration/secret-management.md).

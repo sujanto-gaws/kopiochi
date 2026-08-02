@@ -2,6 +2,18 @@
 
 **Status:** Proposed — see [ADR-009](../adr/009%20-%20Token%20Classes%20and%20Asymmetric%20Signing.md)
 **Date:** 2026-08-02
+**Last verified:** 2026-08-02, after Phase 1 — **every defect listed below is
+still live.** Phase 1 changed only *which* system runs, not how either behaves.
+
+> **What Phase 1 changed.** The RS256 identity token service moved to
+> `modules/identity/infrastructure/token/jwt.go` (`5f6edfe`) and is now the
+> **live** verifier: `modules/identity/transport/middleware.go` calls its
+> `Validate`, and `cmd/api/container.go:91` builds a second instance for the user
+> module. The HS256 jwt-auth plugin is `enabled: false` by default and `main.go`
+> no longer derives any auth middleware from it. So the "live"/"dead" labels
+> below are now the wrong way round — system B is the one on the request path,
+> which makes its defects (B1, B2 especially) the urgent ones. Line references in
+> the system B section have been updated to the new file.
 
 ---
 
@@ -113,7 +125,7 @@ Only the auth middleware can then set a principal.
 ## Defects in system B (the dead one)
 
 System B is closer to correct — it **does** pin the algorithm
-(`jwt.go:75-77`):
+(`modules/identity/infrastructure/token/jwt.go:77-79`):
 
 ```go
 if _, ok := token.Method.(*jwt.SigningMethodRSA); !ok {
@@ -125,8 +137,8 @@ Remaining gaps:
 
 ### B1 — No issuer or audience validation
 
-`Validate` (line 73) checks the signature and expiry but never `iss` or `aud`.
-`IssueIDToken` sets `aud` to the client ID (line 51) yet nothing verifies it.
+`Validate` (line 75) checks the signature and expiry but never `iss` or `aud`.
+`IssueIDToken` sets `aud` to the client ID (line 53) yet nothing verifies it.
 
 ### B2 — Token classes are indistinguishable at the validation boundary
 
@@ -146,7 +158,7 @@ check.
 
 ### B3 — `IssueIDToken` ignores configured TTL
 
-Line 54 hardcodes `15 * time.Minute` while `IssueAccessToken` takes a `ttl`
+Line 56 hardcodes `15 * time.Minute` while `IssueAccessToken` takes a `ttl`
 parameter. `auth.access_token_ttl` in config is not honoured for ID tokens.
 
 ### B4 — Refresh tokens hashed with unsalted SHA-256

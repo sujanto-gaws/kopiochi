@@ -1,13 +1,19 @@
 # ADR-007: API Versioning at the Router Boundary
 
 ## Status
-**Proposed** – *Date: 2026-08-02*
+**Accepted — implemented** – *Decided: 2026-08-02 · Implemented: 2026-08-02 (Phase 1)*
+
+All seven implementation steps have shipped; see the Implementation Plan below
+for per-step commits. The Context below describes the code as it stood before
+`4fdc609` and is retained unchanged as the record of why this decision was made.
 
 ## Context
 
-The intended API surface is `/api/v1/...`. The implementation does not produce it.
+*(Historical — fixed in `4fdc609`.)*
 
-`internal/infrastructure/http/routes/routes.go:25-29`:
+The intended API surface is `/api/v1/...`. The implementation did not produce it.
+
+`internal/infrastructure/http/routes/routes.go:25-29` (file since deleted):
 
 ```go
 r.Route("/api/v1", func(r chi.Router) {   // inner r shadows the outer *chi.Mux
@@ -93,19 +99,25 @@ Versioning policy:
 | **Fix the shadowing, keep `RouterGroup`** | Removes the immediate bug but keeps routing split across three files and keeps the fail-open auth fallback. |
 | **Version per module** (`/identity/v1`, `/aquaculture/v2`) | Clients must track several version axes; whole-API versioning is simpler at this scale. |
 
-## Implementation Plan
+## Implementation Plan — complete
 
-1. Add `Routes func(chi.Router)` to the module contract.
-2. Replace `routes.Setup` with `httpx.Mount`, passing `v1` into `m.Routes`.
-3. Move each module's public/protected split into its own `Routes`.
-4. Make the auth middleware a constructor dependency of the modules that need it.
-5. Split `/api/health` into `/healthz` and `/readyz` (the latter pinging the DB).
-6. Delete `handlers.RouterGroup` and `handlers.RouteRegistrar`.
-7. Add `TestRouteTable` — it must fail before step 2 and pass after.
+1. ✅ Add `Routes func(chi.Router)` to the module contract — `05b1051`.
+2. ✅ Replace `routes.Setup` with `httpx.Mount`, passing `v1` into `m.Routes` —
+   `4fdc609`. `Mount` takes `[]*module.Module` rather than `*App`, which lives in
+   `package main` and would create an import cycle.
+3. ✅ Move each module's public/protected split into its own `Routes` — `6d0c1b7`.
+4. ✅ Make the auth middleware a constructor dependency of the modules that need
+   it — `6d0c1b7`, `ef76759`; both `modules/identity` and the user module now fail
+   to construct rather than serving unprotected routes.
+5. ✅ Split `/api/health` into `/healthz` and `/readyz` (the latter pinging the DB)
+   — `40887de`; `/health` kept as a deprecated alias for existing probes.
+6. ✅ Delete `handlers.RouterGroup` and `handlers.RouteRegistrar` — `4fdc609`.
+7. ✅ Add `TestRouteTable` — `d92480c`; it failed before step 2 and passes after.
 
 ## Compliance / Enforcement
 
 - `TestRouteTable` asserts every expected path, including the `/api/v1` prefix.
+  *Shipped: `cmd/api/routes_test.go`.*
 - A test asserts that a protected route without a token returns 401 — the guard
   against fail-open regressions.
 - Review rejects any route registered outside a module's `Routes` function.

@@ -1,7 +1,14 @@
 # ADR-004: Consolidate on a Single Extension Framework
 
 ## Status
-**Proposed** – *Date: 2026-08-02*
+**Accepted — partially implemented** – *Decided: 2026-08-02 · Steps 1–3 implemented: 2026-08-02 (Phase 1)*
+
+The new module contract exists and identity runs on it (steps 1–3). The old
+frameworks have **not** been removed: `internal/extension/`, `internal/plugin/`,
+and `internal/plugins/` are all still present, and `internal/plugin{,s}` is still
+what `cmd/api/main.go:56-64` initialises. Steps 4–6 are Phase 3 work, so the
+consolidation this ADR is named for has not actually happened yet — for now the
+repository has *three* registration mechanisms, not one.
 
 ## Context
 
@@ -104,24 +111,31 @@ Modules are compiled in.
 
 ## Implementation Plan
 
-1. Add `internal/module` with `Deps` and `Module`.
-2. Add `modules/identity/module.go` implementing `New()` over the existing
-   identity internals (move code, do not rewrite logic).
-3. Wire it in `cmd/api/container.go`; verify routes respond.
-4. Convert CORS and rate limiting to direct construction in `internal/httpx`.
-5. Delete `internal/extension/`, `internal/plugin/`, `internal/plugins/`,
-   `examples/extension-demo/`.
-6. `go mod tidy`; drop the now-unused dependencies.
+1. ✅ Add `internal/module` with `Deps` and `Module` — `05b1051`. The shipped
+   `Deps` carries `DB` and `Logger` only.
+2. ✅ Add `modules/identity/module.go` implementing `New()` over the existing
+   identity internals (move code, do not rewrite logic) — `5f6edfe`, `6d0c1b7`.
+3. ✅ Wire it in `cmd/api/container.go`; verify routes respond — `ef76759`,
+   `4fdc609`; verified by `cmd/api/routes_test.go` and `cmd/api/login_e2e_test.go`.
+4. ⏳ Convert CORS and rate limiting to direct construction in `internal/httpx` —
+   Phase 3.5, not started.
+5. ⏳ Delete `internal/extension/`, `internal/plugin/`, `internal/plugins/`,
+   `examples/extension-demo/` — Phase 3.6, not started.
+6. ⏳ `go mod tidy`; drop the now-unused dependencies — Phase 3.7, not started.
 
-Steps 1–3 are additive and independently shippable. Step 5 is mandatory.
+Steps 1–3 are additive and independently shippable, and have shipped. Step 5 is
+mandatory: until it runs, this ADR has added a mechanism rather than
+consolidating on one.
 
 ## Compliance / Enforcement
 
 - No new package may define a `Plugin`, `Extension`, or `Registry` interface.
 - Code review rejects any `map[string]interface{}` parameter in a constructor.
 - The import linter denies imports of the deleted packages by path, so a revert
-  cannot reintroduce them silently.
+  cannot reintroduce them silently. *Not in place — there is no `.golangci.yml`
+  and no CI.*
 - A route-table test asserts every registered module actually serves routes.
+  *In place: `cmd/api/routes_test.go` (`d92480c`).*
 
 ## Related ADRs
 - [ADR-005: Module Boundaries and Dependency Direction](005%20-%20Module%20Boundaries%20and%20Dependency%20Direction.md)

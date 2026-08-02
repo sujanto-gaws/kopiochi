@@ -1,13 +1,22 @@
 # Configuration Model
 
-**Status:** Proposed — see [ADR-008](../adr/008%20-%20Configuration%20Precedence%20and%20Secret%20Handling.md)
+**Status:** Partially implemented — see [ADR-008](../adr/008%20-%20Configuration%20Precedence%20and%20Secret%20Handling.md)
 **Date:** 2026-08-02
+**Last verified:** 2026-08-02, after Phase 0
 
 ---
 
-## Problem 1: environment variables silently do not work
+## Problem 1 (partially fixed): environment variables silently do not work
 
-`internal/config/config.go:76-123` sets up Viper:
+*Fixed for the two secrets in `b74b358`: `internal/config/config.go:88-93` now
+calls `BindEnv` explicitly for `db.password` and
+`plugins.auth.jwt.config.secret`, so `APP_DB_PASSWORD` and `APP_JWT_SECRET`
+reach `Unmarshal`. Regression-tested in `internal/config/config_test.go`.*
+**`db.user` and `db.name` still have neither a default nor a `BindEnv`, so
+`APP_DB_USER` and `APP_DB_NAME` remain silently inert** — the analysis below
+still applies to them.
+
+`internal/config/config.go:77-123` sets up Viper:
 
 ```go
 v.SetEnvPrefix("APP")
@@ -43,13 +52,17 @@ v.SetDefault("db.min_conns", 2)          // ✓
 //           db.name      — NO DEFAULT
 ```
 
-`APP_DB_PASSWORD` is therefore **silently ignored** unless `db.password` also
-appears in the YAML file. This is very likely *why* the password was hardcoded in
-`config/default.yaml:14` — the environment path appeared not to work, because it
-does not.
+`APP_DB_PASSWORD` was therefore **silently ignored** unless `db.password` also
+appeared in the YAML file. This is very likely *why* the password was hardcoded
+in `config/default.yaml:14` — the environment path appeared not to work, because
+it did not.
 
-The same applies to every plugin secret: `plugins.auth.jwt.config.secret` has no
-default, so it can only come from the file.
+The same applied to every plugin secret: `plugins.auth.jwt.config.secret` has no
+default, so it could only come from the file.
+
+*Both secrets are now bound explicitly (`config.go:88-93`), which is what allowed
+`b74b358` to strip them from `config/default.yaml`. `db.user` and `db.name` were
+not, and are still unreachable from the environment.*
 
 ## Problem 2: no validation
 
@@ -114,12 +127,22 @@ func setDefaults(v *viper.Viper) {
 ```
 
 For belt-and-braces on secrets, bind them explicitly as well — `BindEnv` works
-with `Unmarshal` regardless of defaults:
+with `Unmarshal` regardless of defaults. *Implemented in `b74b358`; the live keys
+are the ones the config struct actually uses, and the errors are checked rather
+than discarded:*
 
 ```go
-_ = v.BindEnv("db.password", "APP_DB_PASSWORD")
-_ = v.BindEnv("identity.jwt_secret", "APP_IDENTITY_JWT_SECRET")
+// internal/config/config.go:88-93
+if err := v.BindEnv("db.password", "APP_DB_PASSWORD"); err != nil {
+    return nil, fmt.Errorf("bind db.password env: %w", err)
+}
+if err := v.BindEnv("plugins.auth.jwt.config.secret", "APP_JWT_SECRET"); err != nil {
+    return nil, fmt.Errorf("bind plugins.auth.jwt.config.secret env: %w", err)
+}
 ```
+
+The per-key `SetDefault` sweep above is still outstanding, so `db.user` and
+`db.name` remain unreachable from the environment.
 
 ### Precedence
 
@@ -235,7 +258,7 @@ func TestEnvOverridesFile(t *testing.T) {
     t.Setenv("APP_DB_PASSWORD", "from-env")
     cfg, err := Load("testdata/full.yaml")
     require.NoError(t, err)
-    require.Equal(t, "from-env", cfg.DB.Password)   // fails against today's code
+    require.Equal(t, "from-env", cfg.DB.Password)   // failed before b74b358
 }
 
 func TestValidateRejectsTimeoutInversion(t *testing.T) {
@@ -252,7 +275,11 @@ func TestUnknownKeyIsRejected(t *testing.T) {
 ```
 
 `TestEnvOverridesFile` is the regression test for the defect that made secrets
-end up in the repository.
+end up in the repository. It shipped in `b74b358` as
+`internal/config/config_test.go`, split into `TestLoad_DBPasswordEnvFallback`,
+`TestLoad_EnvOverridesFileValue`, and `TestLoad_JWTSecretEnvFallback`, and it
+passes. The other two tests are not written — neither `Validate()` nor
+strict/unknown-key decoding exists yet (Phase 2.9).
 
 ---
 

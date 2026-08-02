@@ -1,14 +1,22 @@
 # Routing & API Versioning
 
-**Status:** Proposed — see [ADR-007](../adr/007%20-%20API%20Versioning%20at%20the%20Router%20Boundary.md)
+**Status:** Implemented — see [ADR-007](../adr/007%20-%20API%20Versioning%20at%20the%20Router%20Boundary.md)
 **Date:** 2026-08-02
-**Severity of current defect:** Critical — the `/api/v1` prefix does not exist at runtime.
+**Last verified:** 2026-08-02, after Phase 1
+**Severity of current defect:** None outstanding — all three problems below were
+fixed in `4fdc609` (routing) and `40887de` (health split). `/api/v1` is a real
+prefix at runtime, `TestRouteTable` (`cmd/api/routes_test.go`) asserts it, and
+`internal/infrastructure/http/routes/` no longer exists.
 
 ---
 
-## Problem 1: the version prefix is a no-op
+## Problem 1 (fixed): the version prefix was a no-op
 
-`internal/infrastructure/http/routes/routes.go:25-29`:
+*Fixed in `4fdc609`. The file quoted below was deleted in the same commit; the
+excerpt is preserved because the shape of the bug is the reason `httpx.Mount` is
+written the way it is.*
+
+Historical `internal/infrastructure/http/routes/routes.go:25-29`:
 
 ```go
 // API v1 routes
@@ -41,17 +49,24 @@ mount at `/` — `/login`, not `/api/v1/login`.
 The `r.Route("/api/v1", ...)` block mounts an empty sub-router and contributes
 nothing.
 
-This is currently invisible because
-[the container is empty](dependency-injection.md) and the loop body never
-executes. Fixing the container without fixing this would silently publish the
-entire API at the wrong paths.
+At review time this was invisible, because the review believed
+[the container was empty](dependency-injection.md) and the loop body never ran.
+Fixing the container without fixing this would have silently published the entire
+API at the wrong paths — so both landed together, the router fix (`4fdc609`)
+immediately after the container rewrite (`ef76759`).
 
-The comment on line 106 — `// scoped sub-router for /api/v1 context` — states an
-intent the code does not implement.
+The comment on line 106 — `// scoped sub-router for /api/v1 context` — stated an
+intent the code did not implement.
 
-## Problem 2: auth binding is decided too early and too globally
+## Problem 2 (fixed): auth binding was decided too early and too globally
 
-`main.go:99-112` resolves the auth middleware once, then builds a single
+*Fixed in `ef76759` / `6d0c1b7`. Auth middleware is now owned by the module that
+needs it: `modules/identity/module.go` builds its own `AuthRequired` from its
+token service, and `cmd/api/container.go:90-98` does the same for the user
+module. Both return an error rather than a module with unprotected routes, so
+the fail-open path below cannot recur.*
+
+Historical `main.go:99-112` resolved the auth middleware once, then built a single
 `Protected` router for **all** modules:
 
 ```go
@@ -69,41 +84,50 @@ if authMiddleware != nil {
 
 Two problems:
 
-1. **Fail-open.** With `plugins.auth.jwt.enabled: false` (the default in
-   `config/default.yaml`), `authMiddleware` is nil and `Protected` becomes an
-   alias for `Public`. Every route a module considers protected is served with no
-   authentication and no warning logged.
-2. **One policy for everything.** A module cannot express "these three routes need
-   an admin scope, these two are public" — the split is fixed by the host.
+1. **Fail-open.** With `plugins.auth.jwt.enabled: false` (still the default in
+   `config/default.yaml:47`), `authMiddleware` was nil and `Protected` became an
+   alias for `Public`. Every route a module considered protected was served with
+   no authentication and no warning logged.
+2. **One policy for everything.** A module could not express "these three routes
+   need an admin scope, these two are public" — the split was fixed by the host.
 
-## Problem 3: `RouterGroup` splits routing across two files
+## Problem 3 (fixed): `RouterGroup` split routing across two files
 
-Modules cannot see their own path structure. The prefix lives in `routes.go`, the
-public/protected split in `main.go`, and the paths in the handler — which is how
-the shadowing bug survived review.
+*Fixed in `4fdc609`: `handlers.RouterGroup` and `handlers.RouteRegistrar` were
+deleted along with `internal/infrastructure/http/routes/`. Each module now owns
+its own path structure via `Module.Routes(chi.Router)`.*
+
+Modules could not see their own path structure. The prefix lived in `routes.go`,
+the public/protected split in `main.go`, and the paths in the handler — which is
+how the shadowing bug survived review.
 
 ---
 
-## Target design
+## Target design — shipped
 
 ### Modules receive the group router directly
 
 ```go
 // internal/httpx/routes.go
-func Mount(r *chi.Mux, app *App, deps Deps) {
+func Mount(r *chi.Mux, modules []*module.Module, deps Deps) {
     // Operational endpoints: unversioned, unauthenticated
-    r.Get("/healthz", handlers.Live())
-    r.Get("/readyz", handlers.Ready(deps.DB))
-    r.Mount("/swagger", swaggerHandler())
+    r.Get("/healthz", healthzHandler())
+    r.Get("/readyz", readyzHandler(deps.Pinger))
+    r.Get("/health", healthzHandler())   // deprecated alias; drop once clients migrate
+    r.Get("/swagger/*", swaggerHandler())
 
     // Versioned API
     r.Route("/api/v1", func(v1 chi.Router) {
-        for _, m := range app.Modules {
+        for _, m := range modules {
             m.Routes(v1)          // ← the group router is PASSED IN, never shadowed
         }
     })
 }
 ```
+
+`Mount` takes `[]*module.Module` rather than the `*App` this document originally
+sketched: `App` lives in `package main`, which `internal/httpx` cannot import
+without an import cycle. `cmd/api/main.go:104` passes `app.Modules`.
 
 `Module.Routes` has signature `func(chi.Router)`. There is no second router in
 scope to accidentally register against — the bug becomes unrepresentable.
@@ -148,21 +172,28 @@ when the token verifier cannot be built. Fail-closed replaces fail-open.
 | Operational endpoints are unversioned | `/healthz`, `/readyz`, `/metrics` |
 | Deprecation is announced | `Deprecation` and `Sunset` headers on the old version. |
 
-### Health endpoint split
+### Health endpoint split — shipped
 
-`/api/health` (`routes.go:17`) is currently versioned-adjacent and does not check
-the database. Replace with:
+The old `/health` (`routes.go:17`) checked nothing. It was split in `40887de`
+into `internal/httpx/health.go`:
 
 - `/healthz` — liveness. Process is up. No dependency checks.
-- `/readyz` — readiness. Pings the pool; returns 503 when the database is
-  unreachable so orchestrators stop routing traffic.
+- `/readyz` — readiness. Pings the pool with a 2s timeout; returns 503 when the
+  database is unreachable, and fails closed on a nil pinger, so orchestrators stop
+  routing traffic.
+- `/health` — retained as a deprecated alias for `/healthz` (`routes.go:48`) so
+  existing probes keep working; drop it once clients migrate.
 
-The current single endpoint reports healthy even when the application serves
-nothing, which is exactly how the empty container went unnoticed.
+A single endpoint that reports healthy without checking anything is how a broken
+composition root goes unnoticed. Covered by `internal/httpx/health_test.go`.
 
 ---
 
 ## The test that catches all of this
+
+Implemented as `TestRouteTable` in `cmd/api/routes_test.go` (`d92480c`) — it lives
+in `cmd/api` rather than `internal/httpx` because it needs `BuildApp`, which is in
+`package main`.
 
 ```go
 func TestRouteTable(t *testing.T) {
@@ -179,7 +210,8 @@ func TestRouteTable(t *testing.T) {
     })
     require.NoError(t, err)
 
-    // Fails today on BOTH counts: no routes at all, and no /api/v1 prefix.
+    // Failed on BOTH counts before 4fdc609: no /api/v1 prefix, and modules
+    // mounted onto a discarded router. Passes now.
     require.Contains(t, got, "POST /api/v1/auth/login")
     require.Contains(t, got, "GET /healthz")
 }
@@ -205,14 +237,14 @@ first, then handlers, so the ordering constraint is visually obvious.
 
 ---
 
-## Migration path
+## Migration path — complete
 
-1. Add `Module.Routes func(chi.Router)` to the module contract.
-2. Rewrite `routes.Setup` as `httpx.Mount`, passing `v1` into `m.Routes`.
-3. Move the public/protected split into each module's `Routes`.
-4. Delete `handlers.RouterGroup` and `handlers.RouteRegistrar`.
-5. Split `/api/health` into `/healthz` + `/readyz`.
-6. Add `TestRouteTable` — it must fail before step 2 and pass after.
+1. ✅ Add `Module.Routes func(chi.Router)` to the module contract — `05b1051`.
+2. ✅ Rewrite `routes.Setup` as `httpx.Mount`, passing `v1` into `m.Routes` — `4fdc609`.
+3. ✅ Move the public/protected split into each module's `Routes` — `6d0c1b7`, `ef76759`.
+4. ✅ Delete `handlers.RouterGroup` and `handlers.RouteRegistrar` — `4fdc609`.
+5. ✅ Split `/api/health` into `/healthz` + `/readyz` — `40887de`.
+6. ✅ Add `TestRouteTable` — `d92480c`; it failed before step 2 and passes after.
 
 ---
 

@@ -2,6 +2,8 @@
 
 **Status:** Proposed
 **Date:** 2026-08-02
+**Last verified:** 2026-08-02 — nothing in this document has been implemented
+(Phases 4.7/4.8 and 5.7 have not run). Only line references were refreshed.
 
 ---
 
@@ -22,7 +24,7 @@ about replacing it.
 
 ## Problem 1: the global logger is used directly
 
-`main.go:54` assigns `log.Logger = logger.Init(...)`, and packages then call
+`main.go:51` assigns `log.Logger = logger.Init(...)`, and packages then call
 `log.Info()` on zerolog's package-level global:
 
 ```go
@@ -59,7 +61,7 @@ code may reintroduce the pattern.
 
 ## Problem 3: request-scoped context is not propagated
 
-`RequestID` is generated (`server.go:63`) and used by the recovery middleware,
+`RequestID` is generated (`server.go:58`) and used by the recovery middleware,
 but it is not attached to a logger placed in the request context. Handlers and
 services therefore cannot emit correlated logs, and a downstream database error
 cannot be tied to the request that caused it.

@@ -1,14 +1,35 @@
 # Secret Management
 
-**Status:** Proposed — see [ADR-008](../adr/008%20-%20Configuration%20Precedence%20and%20Secret%20Handling.md)
+**Status:** Partially implemented — see [ADR-008](../adr/008%20-%20Configuration%20Precedence%20and%20Secret%20Handling.md)
 **Date:** 2026-08-02
-**Severity:** High — live credentials and a private key are in the working tree.
+**Last verified:** 2026-08-02, after Phase 0
+**Severity:** Medium — the working tree is clean (Phase 0), but every value below
+remains in git history, nothing rejects a placeholder secret, and rotation of the
+exposed credentials is an out-of-repo action that cannot be verified from here.
+
+Phase 0 status at a glance:
+
+| Problem | State |
+|---|---|
+| 1. Credentials in `config/default.yaml` | **Fixed** in `b74b358` — still in history |
+| 2. RSA private key present and not ignored | **Fixed** in `8652534` — still in history |
+| 3. `.gitignore` malformed | **Fixed** in `4c72a83` |
+| 4. Nothing detects a placeholder | **Open** — Phase 2.9 |
+| 5. Secrets can reach the logs | **Open** — Phase 2.9 |
+| Rotation of the exposed credentials | **Unverifiable from the repo** — see below |
 
 ---
 
 ## Problem
 
-### 1. Credentials committed in `config/default.yaml`
+### 1 (fixed). Credentials committed in `config/default.yaml`
+
+*Removed in `b74b358`. `config/default.yaml:15` and `:50` are now comments
+pointing at `APP_DB_PASSWORD` and `APP_JWT_SECRET`, bound explicitly by
+`internal/config/config.go:88-93`. The values remain in git history until the
+Phase 5.1 rewrite, so they are still to be treated as compromised.*
+
+Historically:
 
 ```yaml
 db:
@@ -22,30 +43,38 @@ plugins:
         secret: "your-secret-key-change-in-production"  # line 51
 ```
 
-`config/default.yaml` is tracked. Both values are in git history. This directly
-violates the project's own rule in `CLAUDE.md`:
+`config/default.yaml` is tracked, so both values are in git history. This
+directly violated the project's own rule in `CLAUDE.md`:
 
 > No secrets in code or images — load through Viper (env/secret store).
 
-The root cause is mechanical, not careless: as documented in
-[configuration model](configuration-model.md), `APP_DB_PASSWORD` **does not
-work**, because `db.password` has no registered default and `AutomaticEnv` does
-not feed `Unmarshal`. The file was the only path that functioned.
+The root cause was mechanical, not careless: as documented in
+[configuration model](configuration-model.md), `APP_DB_PASSWORD` **did not
+work**, because `db.password` had no registered default and `AutomaticEnv` does
+not feed `Unmarshal`. The file was the only path that functioned. `b74b358` fixed
+the loader and the file together — the explicit `BindEnv` calls had to land first
+for the removal to be safe.
 
-### 2. RSA private key present and not ignored
+### 2 (fixed). RSA private key present and not ignored
 
 ```
-keys/private.pem   1732 bytes   PKCS#8 RSA private key
+keys/private.pem   1732 bytes   RSA private key
 keys/public.pem     460 bytes
 ```
 
-`keys/` appears nowhere in `.gitignore`. The key is currently untracked, so it is
-**one `git add .` away from entering history permanently**. `config/default.yaml`
-points `auth.private_key_path` at it, so it is a real signing key, not a sample.
+`keys/` appeared nowhere in `.gitignore`, so the key was **one `git add .` away
+from entering history permanently**. `config/default.yaml` points
+`auth.private_key_path` at it, so it is a real signing key, not a sample.
 
-### 3. `.gitignore` is malformed
+*Fixed in `8652534` (untracked, plus a reproducible `make keys` target) and
+`4c72a83` (`.gitignore:36-37` now carries `keys/` and `*.pem`). Note the key is
+**PKCS#1**, not PKCS#8 as originally recorded here — `modules/identity/`
+`infrastructure/token/jwt.go` parses it with `x509.ParsePKCS1PrivateKey`, which is
+why `make keys` uses `openssl genrsa -traditional`.*
 
-The file's first and last lines are literal markdown code fences:
+### 3 (fixed). `.gitignore` was malformed
+
+The file's first and last lines were literal markdown code fences:
 
 ```
 ```
@@ -55,9 +84,10 @@ The file's first and last lines are literal markdown code fences:
 ```
 ```
 
-A stray ` ``` ` is treated as a filename pattern, so those two lines protect
-nothing. The file also lacks `bin/`, `keys/`, and `*.pem` — see
-[repository hygiene](../06-quality/repository-hygiene.md).
+A stray ` ``` ` is treated as a filename pattern, so those two lines protected
+nothing. The file also lacked `bin/`, `keys/`, and `*.pem`.
+
+*Fixed in `4c72a83`; see [repository hygiene](../06-quality/repository-hygiene.md).*
 
 ### 4. Nothing detects a placeholder
 
@@ -165,16 +195,22 @@ type DB struct {
 
 - Keys are **not** stored in the repository, in any branch, ever.
 - Local development: generate per-developer keys into `keys/`, which is
-  git-ignored. Provide `make keys-dev`:
+  git-ignored. Shipped in `8652534` as `make keys` (`Makefile:83-98`), which also
+  refuses to overwrite an existing keypair rather than silently invalidating live
+  tokens:
 
 ```make
-keys-dev: ## Generate a local-only RSA keypair for development
-	@mkdir -p keys
-	@openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out keys/private.pem
-	@openssl rsa -pubout -in keys/private.pem -out keys/public.pem
-	@chmod 600 keys/private.pem
-	@echo "Development keys written to keys/ (git-ignored, DO NOT COMMIT)"
+keys: ## Generate a fresh RSA keypair into keys/ for JWT signing
+	@mkdir -p $(KEYS_DIR)
+	# -traditional forces PKCS#1 ("BEGIN RSA PRIVATE KEY"), which is what
+	# x509.ParsePKCS1PrivateKey reads. OpenSSL 3.x defaults to PKCS#8.
+	openssl genrsa -traditional -out $(KEYS_DIR)/private.pem 2048
+	openssl rsa -in $(KEYS_DIR)/private.pem -pubout -out $(KEYS_DIR)/public.pem
 ```
+
+  > This document originally proposed `make keys-dev` using `openssl genpkey`,
+  > which emits PKCS#8. That recipe produces a key the application cannot parse.
+  > Use `make keys`.
 
 - Deployed environments: keys are mounted from the platform secret store at a
   path given by `APP_IDENTITY_PRIVATE_KEY_PATH`, or supplied PEM-inline via
@@ -186,9 +222,9 @@ keys-dev: ## Generate a local-only RSA keypair for development
 
 1. **Secret scanning** — `gitleaks detect --no-git` on the working tree and
    `gitleaks detect` over history, as a required check.
-2. **Pre-commit hook** — the `Makefile` already has an `install-hooks` target
-   that points `core.hooksPath` at `.githooks/`, but **`.githooks/` does not
-   exist**. Create it:
+2. **Pre-commit hook** — done. The `Makefile`'s `install-hooks` target points
+   `core.hooksPath` at `.githooks/`, and `.githooks/pre-commit` was added in
+   `9c302ad` (marked executable in the index by `1d3379e`):
 
 ```sh
 # .githooks/pre-commit
@@ -199,7 +235,8 @@ if git diff --cached --name-only | grep -Eq '\.pem$|^keys/|^bin/|\.env$'; then
 fi
 ```
 
-3. **`.gitignore` repaired** — remove the markdown fences and add:
+3. **`.gitignore` repaired** — done in `4c72a83`. The fences were removed and the
+   file now carries:
 
 ```gitignore
 # Secrets and keys
@@ -222,21 +259,27 @@ bin/
 The committed values must be treated as compromised — rotation, not deletion, is
 the fix. Deleting them from the file leaves them in history.
 
-1. **Rotate the database password** on every environment where `"gaws"` was ever
-   used.
-2. **Rotate the JWT secret.** Any token signed with the placeholder is forgeable;
-   rotating invalidates outstanding tokens, so schedule it with a forced
-   re-authentication.
-3. **Treat `keys/private.pem` as burned** if it has ever been shared or copied
-   outside the developer machine; generate a fresh keypair.
-4. **Purge history** in the same pass as the binary purge described in
+1. ⚠️ **Rotate the database password** on every environment where `"gaws"` was
+   ever used. **Outstanding.** This happens outside the repository, so no commit
+   can demonstrate it; it must be confirmed by whoever owns the environments.
+2. ⚠️ **Rotate the JWT secret.** Any token signed with the placeholder is
+   forgeable; rotating invalidates outstanding tokens, so schedule it with a
+   forced re-authentication. **Outstanding**, and unverifiable from the repo for
+   the same reason.
+3. ⚠️ **Treat `keys/private.pem` as burned** if it has ever been shared or copied
+   outside the developer machine; generate a fresh keypair with `make keys`.
+   **Outstanding.**
+4. ⏳ **Purge history** in the same pass as the binary purge described in
    [repository hygiene](../06-quality/repository-hygiene.md) — one coordinated
-   force-push rather than two.
-5. **Then** land the code changes: `BindEnv`, placeholder validation,
-   `secret.String`, repaired `.gitignore`, `.githooks/`.
+   force-push rather than two. Scheduled as Phase 5.1; not started.
+5. **Then** land the code changes. Partially done: `BindEnv` (`b74b358`),
+   repaired `.gitignore` (`4c72a83`), and `.githooks/` (`9c302ad`) have shipped.
+   Placeholder validation and `secret.String` remain — Phase 2.9.
 
 Order matters: rotate first, so the window where a leaked-but-live credential
-sits in history is as short as possible.
+sits in history is as short as possible. Steps 1–3 are the ones still open, and
+they are the ones that actually close the exposure — removing the values from the
+working tree (done) does not.
 
 ---
 

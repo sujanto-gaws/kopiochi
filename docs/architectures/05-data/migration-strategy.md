@@ -1,13 +1,32 @@
 # Migration Strategy
 
-**Status:** Proposed — see [ADR-010](../adr/010%20-%20Module-Owned%20Database%20Migrations.md)
+**Status:** Partially implemented — see [ADR-010](../adr/010%20-%20Module-Owned%20Database%20Migrations.md)
 **Date:** 2026-08-02
+**Last verified:** 2026-08-02, after Phase 1
 
 ---
 
-## Problem 1: the migrations describe a different application
+## Problem 1 (partially fixed): the migrations describe a different application
 
-`migrations/` contains exactly two files:
+*`fbddccb` added three migrations that match the live bun models exactly:*
+
+```
+migrations/00003_create_auth_users.sql
+migrations/00004_create_auth_refresh_tokens.sql
+migrations/00005_create_auth_mfa_backup_codes.sql
+```
+
+*`cmd/api/login_e2e_test.go` proves the identity repositories now execute
+against a migrated database, and `internal/db/schema_test.go` guards the model /
+schema correspondence. `00001_create_users.sql` and `00002_create_products.sql`
+remain orphans — nothing in the codebase maps to `products`.*
+
+*Two notes on the shipped migrations, both of which contradict rules stated later
+in this document and in ADR-010: the tables are plural and `auth_`-prefixed
+(`auth_users`, not `app_user`), and all three still use `IF NOT EXISTS`. Either
+the convention or the migrations need a follow-up.*
+
+At review time, `migrations/` contained exactly two files:
 
 ```sql
 -- 00001_create_users.sql
@@ -39,15 +58,19 @@ Running every migration produces a database in which **not one repository can
 execute a query**. The `products` table is a leftover from the boilerplate this
 project started from.
 
-## Problem 2: the Makefile targets are broken
+## Problem 2 (fixed): the Makefile targets were broken
+
+*Both halves fixed in `657b2dc`: `Makefile:14` now declares
+`CONFIG?=config/default.yaml`, so `make migrate-up` works standalone, and the
+`db-migrate`/`db-seed` placeholder targets were deleted.*
 
 ```make
 migrate-up: ## Run all pending migrations
 	$(GO) run ./cmd/migrate up --config $(CONFIG)
 ```
 
-`CONFIG` has no default anywhere in the Makefile. `make migrate-up` expands to
-`--config ` with an empty value. Compare `run-config`, which documents
+`CONFIG` had no default anywhere in the Makefile, so `make migrate-up` expanded
+to `--config ` with an empty value. Compare `run-config`, which documents
 `CONFIG=config/production.yaml` as a caller-supplied variable — but `migrate-*`
 never got a default the way `run` did (`run` hardcodes no config flag at all and
 relies on the cobra default).
@@ -59,8 +82,8 @@ db-migrate: ## Run database migrations (placeholder)
 	@echo "TODO: Implement migration runner"
 ```
 
-A TODO placeholder sits 60 lines above four working `migrate-*` targets. Anyone
-reading top-to-bottom finds the broken one first.
+A TODO placeholder sat 60 lines above four working `migrate-*` targets, so anyone
+reading top-to-bottom found the broken one first.
 
 ## Problem 3: no ownership model
 
@@ -226,7 +249,10 @@ Confirm which applies before writing any new migration.
 
 ---
 
-## Makefile repair
+## Makefile repair — mostly shipped
+
+*`657b2dc` added the `CONFIG ?=` default and deleted the placeholders.
+`migrate-verify` does not exist yet.*
 
 ```make
 CONFIG ?= config/default.yaml      # default so `make migrate-up` works standalone
@@ -242,7 +268,7 @@ migrate-verify:  ## Apply, roll back, and re-apply against a scratch database (C
 ```
 
 Delete the `db-migrate` and `db-seed` TODO placeholders — they duplicate working
-targets and mislead.
+targets and mislead. *Done in `657b2dc`.*
 
 ---
 

@@ -1,11 +1,26 @@
 # Repository Hygiene & Build Weight
 
-**Status:** Proposed — see [ADR-011](../adr/011%20-%20Build%20Artifacts%20Excluded%20from%20Version%20Control.md)
+**Status:** Partially implemented — see [ADR-011](../adr/011%20-%20Build%20Artifacts%20Excluded%20from%20Version%20Control.md)
 **Date:** 2026-08-02
+**Last verified:** 2026-08-02, after Phase 0
+
+Phase 0 stopped new artifacts entering the repository. It did **not** remove the
+existing ones from history — that is Phase 5.1, and until it runs every clone
+still carries ~120 MB of binaries.
+
+| Problem | State |
+|---|---|
+| 1. Compiled binaries committed | **Working tree fixed** in `1c5ac2c` / `4c72a83`; history untouched |
+| 2. `.gitignore` wrapped in markdown fences | **Fixed** in `4c72a83` |
+| 3. CRLF everywhere, no `.gitattributes` | **Fixed** in `b294de2` + `3dbd1b4` |
+| 4. Stray files in the working tree | **Mostly fixed** — `.qwen/` is still tracked and still unignored |
+| 5. Server binary links code it never serves | **Open** — Phase 3.7 |
 
 ---
 
-## Problem 1: compiled binaries are committed
+## Problem 1 (working tree fixed): compiled binaries were committed
+
+At review time:
 
 ```
 $ git ls-files bin/
@@ -14,7 +29,10 @@ bin/kopiochi-migrate
 bin/kopiochi-migrate.exe
 ```
 
-Largest blobs in history:
+`git ls-files bin/ keys/ '*.pem' '*.exe' '*.zip'` now returns nothing — untracked
+in `1c5ac2c`.
+
+Largest blobs in history — **still there**:
 
 | Blob | Size |
 |---|---|
@@ -28,12 +46,14 @@ project with ~8,000 lines of Go. Every clone downloads all of it, forever.
 Git cannot delta-compress stripped Go binaries meaningfully, so each rebuild that
 was committed added a full copy.
 
-`.gitignore` has no `bin/` entry, so `make build` followed by `git add .`
-re-commits a fresh 38 MB blob.
+`.gitignore` had no `bin/` entry, so `make build` followed by `git add .`
+re-committed a fresh 38 MB blob. `.gitignore:5` is now `bin/`.
 
-## Problem 2: `.gitignore` is wrapped in markdown fences
+## Problem 2 (fixed): `.gitignore` was wrapped in markdown fences
 
-The file begins and ends with a literal ` ``` ` line:
+*Fixed in `4c72a83`.*
+
+The file began and ended with a literal ` ``` ` line:
 
 ```
 ```                      ← line 1: a pattern matching a file named ```
@@ -45,7 +65,7 @@ The file begins and ends with a literal ` ``` ` line:
 ```
 
 It was pasted from a chat or document without stripping the fences. Those two
-lines are meaningless patterns. The file is also missing:
+lines were meaningless patterns. The file was also missing:
 
 - `bin/` — the 120 MB problem
 - `keys/`, `*.pem` — the private key described in
@@ -53,27 +73,38 @@ lines are meaningless patterns. The file is also missing:
 - `coverage.out`, `coverage.html` — produced by `make test-coverage`
 - `*.exe` — the root `kopiochi.exe` precedent
 
-Note it *does* ignore `.vscode/`, yet `.vscode/settings.json` is tracked and
-shows as modified — it was committed before the rule existed, and `.gitignore`
-does not apply to already-tracked files.
+All four are now present (`.gitignore:5`, `:6`, `:29`, `:36-37`, `:40`), with
+`coverage.*` standing in for the two explicit coverage files.
 
-## Problem 3: CRLF everywhere, no `.gitattributes`
+It *did* already ignore `.vscode/`, yet `.vscode/settings.json` was tracked and
+showed as modified — it had been committed before the rule existed, and
+`.gitignore` does not apply to already-tracked files. *Untracked in `1c5ac2c`.*
 
-Every `.go` file uses CRLF line terminators. There is no `.gitattributes`.
-Consequences:
+## Problem 3 (fixed): CRLF everywhere, no `.gitattributes`
 
-- `gofmt -l .` lists 100% of files — the formatting signal is destroyed
+Every `.go` file used CRLF line terminators, with no `.gitattributes`.
+Consequences at the time:
+
+- `gofmt -l .` listed 100% of files — the formatting signal was destroyed
   (see [testing strategy](testing-strategy.md)).
 - `make fmt` would rewrite every file, producing an unreviewable diff.
-- Any teammate on macOS or Linux generates whole-file diffs on save.
+- Any teammate on macOS or Linux generated whole-file diffs on save.
 
-## Problem 4: stray files in the working tree
+*Fixed in `b294de2` (`.gitattributes`, `git add --renormalize`) and `3dbd1b4`
+(`gofmt -s`). `gofmt -l .` now returns nothing. The shipped `.gitattributes` is
+the single line `* text=auto eol=lf` — the per-extension block proposed below was
+not adopted, so `*.ps1 text eol=crlf` and `*.pem binary` are still missing and
+`scripts/init.ps1` (referenced from the Makefile) is normalised to LF.*
 
-| File | Issue |
-|---|---|
-| `claude-agents_1.zip` (17 KB) | Untracked archive in the repository root |
-| `.qwen/` | Tool directory, not ignored |
-| `bin/kopiochi-migrate.exe` | Windows binary alongside its Linux twin |
+## Problem 4 (mostly fixed): stray files in the working tree
+
+| File | Issue | State |
+|---|---|---|
+| `.qwen/` | Tool directory, not ignored | **Open** — `.qwen/settings.json` and `.qwen/settings.json.orig` are *tracked*, and `.qwen/` is still absent from `.gitignore` |
+| `bin/kopiochi-migrate.exe` | Windows binary alongside its Linux twin | Untracked in `1c5ac2c`; `*.exe` and `bin/` now ignored |
+
+*The originally-listed `claude-agents_1.zip` does not appear in any commit and
+could not be reproduced; `*.zip` is ignored regardless (`.gitignore:40`).*
 
 ## Problem 5: the server binary links code it never serves
 
@@ -96,7 +127,11 @@ because different dependencies chose different forks.
 
 ## Target
 
-### Repaired `.gitignore`
+### Repaired `.gitignore` — shipped
+
+*Landed in `4c72a83`. The live file differs cosmetically from the proposal below:
+it uses `coverage.*` instead of listing `coverage.out`/`coverage.html`, and it
+omits `dist/`, `*.key`, and — still outstanding — `.qwen/`.*
 
 ```gitignore
 # Build artifacts
@@ -143,7 +178,11 @@ vendor/
 
 No fences. Verify with `git check-ignore -v bin/kopiochi` after editing.
 
-### `.gitattributes`
+### `.gitattributes` — partially shipped
+
+*`b294de2` added `* text=auto eol=lf` and renormalised the tree as a standalone
+commit. The per-extension block below was **not** adopted; adopting the `*.ps1`
+and `*.pem` lines is still worth doing.*
 
 ```gitattributes
 * text=auto eol=lf
@@ -171,9 +210,9 @@ git commit -m "chore: normalise line endings to LF"
 ```
 
 Do this as a **standalone commit** — it touches every file and must not be mixed
-with logic changes.
+with logic changes. (Done: `b294de2`.)
 
-### Purge binaries from history
+### Purge binaries from history — not started
 
 ```bash
 git clone --mirror <url> kopiochi-mirror.git
@@ -201,8 +240,8 @@ git push --force --tags
 
 Expected result: `.git` drops from 58 MB to roughly 5 MB.
 
-Also run `git rm --cached .vscode/settings.json` so the existing ignore rule
-finally applies.
+`git rm --cached .vscode/settings.json` was run in `1c5ac2c`, so the existing
+ignore rule now applies. The same treatment is still owed to `.qwen/`.
 
 ### Untrack and regenerate swagger output
 
@@ -253,9 +292,11 @@ final stage, must not copy `keys/`, and must run as a non-root user.
 
 ### Prevention
 
-- `.githooks/pre-commit` rejecting `*.pem`, `keys/`, `bin/`, `.env` — the
-  `install-hooks` Makefile target already exists but `.githooks/` does not.
-- CI job failing on any added file over 1 MB:
+- ✅ `.githooks/pre-commit` rejecting `*.pem`, `keys/`, `bin/`, `.env` — added in
+  `9c302ad`, marked executable in `1d3379e`. The `install-hooks` Makefile target
+  points `core.hooksPath` at it. Note the hook is opt-in per clone: it only takes
+  effect once a developer runs `make install-hooks`.
+- ⏳ CI job failing on any added file over 1 MB — not started (no CI exists):
 
 ```bash
 git diff --name-only origin/main...HEAD | while read -r f; do
@@ -269,11 +310,11 @@ done
 
 ## Sequencing
 
-1. `.gitattributes` + renormalise (standalone commit) — unblocks `gofmt`.
-2. Repaired `.gitignore`; `git rm --cached` the tracked artifacts.
-3. `.githooks/` + CI size check — stop the bleeding before the rewrite.
-4. **One coordinated history rewrite** removing binaries *and* secrets.
-5. Dependency and binary-size reduction, after the dead code is deleted.
+1. ✅ `.gitattributes` + renormalise (standalone commit) — `b294de2`; unblocks `gofmt`.
+2. ✅ Repaired `.gitignore` (`4c72a83`); `git rm --cached` the tracked artifacts (`1c5ac2c`). **Except `.qwen/`, still tracked and still unignored.**
+3. ◐ `.githooks/` done (`9c302ad`); the CI size check is not — no CI exists yet.
+4. ⏳ **One coordinated history rewrite** removing binaries *and* secrets — Phase 5.1, not started.
+5. ⏳ Dependency and binary-size reduction, after the dead code is deleted — Phase 3.7.
 
 ---
 

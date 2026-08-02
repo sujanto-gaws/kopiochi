@@ -1,10 +1,13 @@
 # Design Principles
 
-**Status:** Proposed
+**Status:** Partially implemented
 **Date:** 2026-08-02
+**Last verified:** 2026-08-02, after Phases 0 and 1
 
-Nine principles, each derived from a concrete failure found in the current
-codebase. They are ordered by how much damage their violation caused.
+Nine principles, each derived from a concrete failure found in the codebase at
+review time. They are ordered by how much damage their violation caused. Where a
+violation has since been fixed, the **Applied** block says so and names the
+commit; the principles themselves are unchanged.
 
 ---
 
@@ -17,10 +20,13 @@ codebase. They are ordered by how much damage their violation caused.
 The application starts, logs "application starting", reports healthy, and serves
 nothing. Nothing anywhere reports a problem.
 
-**Applied:**
-- `Build()` returns an error when zero modules are registered.
+**Applied** — all three shipped in `ef76759` / `d92480c`:
+- `BuildApp()` returns an error when zero modules are registered
+  (`cmd/api/container.go:66-68`). The guard is currently unreachable, since two
+  modules are appended unconditionally; it encodes the rule for future edits.
 - Module constructors return `(*Module, error)`, not `*Module`.
-- A smoke test asserts the expected route table is non-empty.
+- A smoke test asserts the expected route table is non-empty
+  (`cmd/api/routes_test.go`), alongside `cmd/api/container_test.go`.
 
 ---
 
@@ -104,11 +110,15 @@ validates issuer, audience, and expected scope.
 
 **Violations found:** DB password `"gaws"` and a JWT secret in
 `config/default.yaml`; `keys/private.pem` present and **not** git-ignored;
-`.gitignore` itself malformed by stray markdown fences.
+`.gitignore` itself malformed by stray markdown fences. *All three fixed in
+Phase 0 — `b74b358`, `8652534`, `4c72a83` — but only in the working tree: the
+values are still in git history until the Phase 5.1 rewrite, and rotating them is
+an out-of-repo action that has not been confirmed.*
 
-**Applied:** placeholder detection that fails startup, secrets from environment
-or secret store only, and a repaired ignore file covering `keys/`, `*.pem`,
-`.env*`, `bin/`.
+**Applied:** secrets from environment or secret store only, and a repaired ignore
+file covering `keys/`, `*.pem`, `.env*`, `bin/` — both done. Placeholder
+detection that fails startup is **not** done (Phase 2.9); `.env.example` ships
+`CHANGEME_*` values that the loader accepts without complaint.
 
 ---
 
@@ -118,9 +128,11 @@ or secret store only, and a repaired ignore file covering `keys/`, `*.pem`,
 
 **Violation found:** ~120 MB of compiled binaries in git history (`bin/kopiochi`
 twice, `bin/kopiochi-migrate`, a root `kopiochi.exe`), leaving `.git` at 58 MB
-for an 8k-LOC project.
+for an 8k-LOC project. *Still true of history.* The working tree stopped adding
+to it in `1c5ac2c` / `4c72a83`.
 
-**Applied:** artifacts ignored and purged from history
+**Applied:** artifacts ignored (done) and purged from history (**not** done —
+Phase 5.1)
 ([ADR-011](../adr/011%20-%20Build%20Artifacts%20Excluded%20from%20Version%20Control.md));
 generated swagger output regenerated in CI rather than hand-committed.
 
@@ -132,11 +144,15 @@ generated swagger output regenerated in CI rather than hand-committed.
 
 **Violation found:** zero test files; `make test`, `make test-coverage`, and
 `make ci` all pass vacuously. `gofmt -l` flags 100% of files because of CRLF with
-no `.gitattributes`, so formatting signal is pure noise.
+no `.gitattributes`, so formatting signal is pure noise. *Both fixed: seven test
+files (`d92480c`, `720e580`), and `gofmt -l .` is clean (`b294de2`, `3dbd1b4`).*
 
-**Applied:** `.gitattributes` normalises line endings so `gofmt` means something;
-CI runs build, vet, import-linter, tests with a coverage floor, `govulncheck`,
-and a secret scan. Each principle above maps to at least one CI check.
+**Applied:** `.gitattributes` normalises line endings so `gofmt` means something
+— done. CI runs build, vet, import-linter, tests with a coverage floor,
+`govulncheck`, and a secret scan — **not done; the repository has no CI
+configuration at all.** Each principle above maps to at least one CI check, and
+none of those checks is currently automated, which makes this the least-applied
+principle in the list.
 
 ---
 

@@ -2,6 +2,9 @@
 
 **Status:** Proposed
 **Date:** 2026-08-02
+**Last verified:** 2026-08-02 — Problems 1–6 are all still live (Phase 3.8 has
+not run). The one item resolved since this was written is the health endpoint;
+see the note at the end.
 
 ---
 
@@ -244,8 +247,13 @@ func Ready(pool *pgxpool.Pool) http.HandlerFunc {
 }
 ```
 
-The current `/api/health` (`routes.go:17`) checks nothing, which is why an
-application with zero routes and an unused database still reports healthy.
+The old `/api/health` (`routes.go:17`) checked nothing, which is why an
+application with no reachable routes and an unused database still reported
+healthy. *Split in `40887de`: `internal/httpx/health.go` now serves `/healthz`
+(liveness only) and `/readyz`, which does a real `Ping` with a 2s timeout and
+fails closed when the pinger is nil. The shipped `/readyz` returns only
+`{"status","version"}` — the pool statistics proposed above are not reported
+yet, and remain worth adding.*
 
 ---
 
