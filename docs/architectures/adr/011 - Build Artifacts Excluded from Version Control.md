@@ -1,11 +1,19 @@
 # ADR-011: Build Artifacts Excluded from Version Control
 
 ## Status
-**Proposed** – *Date: 2026-08-02*
+**Accepted — partially implemented** – *Decided: 2026-08-02 · Steps 1–4 implemented: 2026-08-02 (Phase 0)*
+
+Steps 1–4 of the Implementation Plan have shipped: nothing is tracked that
+shouldn't be, `.gitignore` and `.gitattributes` are repaired, and the pre-commit
+hook exists. **Step 6 — the history rewrite — has not run**, so the ~120 MB of
+binaries described below is still in every clone. Steps 5, 7, and 8 are also
+outstanding.
 
 ## Context
 
-Compiled binaries are tracked in this repository:
+*(Working-tree problems below were fixed in Phase 0; the history problem was not.)*
+
+Compiled binaries were tracked in this repository:
 
 ```
 $ git ls-files bin/
@@ -14,7 +22,11 @@ bin/kopiochi-migrate
 bin/kopiochi-migrate.exe
 ```
 
-The largest blobs in history are all binaries:
+*Untracked in `1c5ac2c`. `git ls-files bin/ keys/ '*.pem' '*.exe' '*.zip'` now
+returns nothing.*
+
+The largest blobs in history are all binaries — **and still are**, until step 6
+runs:
 
 | Blob | Size |
 |---|---|
@@ -28,22 +40,28 @@ That is roughly **120 MB of binaries** permanently in history, leaving `.git` at
 do not delta-compress meaningfully, so every committed rebuild added a full copy.
 Every clone, CI checkout, and fork pays that cost forever.
 
-The controls that should have prevented this are broken or missing:
+The controls that should have prevented this were broken or missing:
 
-- **`.gitignore` has no `bin/` entry.** `make build` writes to `bin/`, so
-  `git add .` re-commits a fresh 38 MB blob.
-- **`.gitignore` is wrapped in literal markdown ` ``` ` fences** — its first and
-  last lines are meaningless patterns, evidence it was pasted from a document
-  without cleanup.
-- It also omits `keys/`, `*.pem` (see
+- ✅ **`.gitignore` had no `bin/` entry.** `make build` writes to `bin/`, so
+  `git add .` re-committed a fresh 38 MB blob. *Fixed `4c72a83` (`.gitignore:5`).*
+- ✅ **`.gitignore` was wrapped in literal markdown ` ``` ` fences** — its first
+  and last lines were meaningless patterns, evidence it was pasted from a
+  document without cleanup. *Fixed `4c72a83`.*
+- ✅ It also omitted `keys/`, `*.pem` (see
   [ADR-008](008%20-%20Configuration%20Precedence%20and%20Secret%20Handling.md)),
   `coverage.out`/`coverage.html` (produced by `make test-coverage`), and `*.exe`.
-- **`make install-hooks` points `core.hooksPath` at `.githooks/`, but
-  `.githooks/` does not exist**, so the hook mechanism is inert.
-- Other untracked clutter sits in the root: `claude-agents_1.zip`, `.qwen/`.
-- `.vscode/settings.json` is tracked and shows as modified even though
+  *All added in `4c72a83`, with `coverage.*` covering the two coverage files.*
+- ✅ **`make install-hooks` pointed `core.hooksPath` at `.githooks/`, but
+  `.githooks/` did not exist**, so the hook mechanism was inert. *Created in
+  `9c302ad`, marked executable in `1d3379e`. Still opt-in per clone.*
+- ⚠️ Other clutter sits in the root, including `.qwen/` — **which is not only
+  unignored but actually tracked** (`.qwen/settings.json`,
+  `.qwen/settings.json.orig`). This is the one item in this list still open.
+  (The originally-listed `claude-agents_1.zip` appears in no commit and could not
+  be reproduced.)
+- ✅ `.vscode/settings.json` was tracked and showed as modified even though
   `.gitignore` lists `.vscode/` — ignore rules do not apply to already-tracked
-  files.
+  files. *Untracked in `1c5ac2c`.*
 
 Generated documentation is also committed: `docs/api/docs.go` (2,100 LOC),
 `swagger.json`, and `swagger.yaml` are all products of `make swagger-docs`.
@@ -60,8 +78,8 @@ Generated documentation is also committed: `docs/api/docs.go` (2,100 LOC),
    blobs, coordinated with the secret purge from ADR-008 so the team re-clones a
    single time.
 5. **`.gitattributes` normalises line endings** (`* text=auto eol=lf`), because
-   the repository is currently entirely CRLF with no `.gitattributes`, which
-   makes `gofmt -l` report 100% of files and destroys the formatting signal.
+   the repository was entirely CRLF with no `.gitattributes`, which made
+   `gofmt -l` report 100% of files and destroyed the formatting signal.
 6. **`.githooks/pre-commit` is created** to reject `*.pem`, `keys/`, `bin/`, and
    `.env`, making the existing `install-hooks` target functional.
 7. **CI rejects any added file over 1 MB.**
@@ -106,27 +124,36 @@ Generated documentation is also committed: `docs/api/docs.go` (2,100 LOC),
 
 ## Implementation Plan
 
-1. Add `.gitattributes`; run `git add --renormalize .` as a **standalone commit**.
-2. Repair `.gitignore`.
-3. `git rm --cached -r bin/ .vscode/settings.json`; delete
-   `claude-agents_1.zip`; commit.
-4. Create `.githooks/pre-commit`; document `make install-hooks` in the README.
-5. Add the CI file-size check.
-6. **Coordinated rewrite** (with ADR-008's secret purge): announce a freeze, take
+1. ✅ Add `.gitattributes`; run `git add --renormalize .` as a **standalone
+   commit** — `b294de2` (followed by `gofmt -s` in `3dbd1b4`). Only the
+   `* text=auto eol=lf` line was adopted, not the per-extension rules.
+2. ✅ Repair `.gitignore` — `4c72a83`. `.qwen/` was **not** added; still open.
+3. ✅ `git rm --cached -r bin/ .vscode/settings.json` — `1c5ac2c`.
+   (`claude-agents_1.zip` exists in no commit.) `.qwen/` still needs the same.
+4. ✅ Create `.githooks/pre-commit` — `9c302ad`, `1d3379e`; document
+   `make install-hooks` in the README.
+5. ⏳ Add the CI file-size check — not started; no CI exists in the repository.
+6. ⏳ **Coordinated rewrite** (with ADR-008's secret purge): announce a freeze, take
    a backup mirror, run `git filter-repo --path bin/ --path kopiochi.exe --path
    claude-agents_1.zip --invert-paths`, force-push, have everyone re-clone.
-7. Untrack `docs/api/*`; add a CI step to regenerate and verify.
-8. Add `-s -w` to release `LDFLAGS`; add a `make size` target to track binary size.
+7. ⏳ Untrack `docs/api/*`; add a CI step to regenerate and verify.
+8. ⏳ Add `-s -w` to release `LDFLAGS`; add a `make size` target to track binary size.
 
-Steps 1–5 are safe and immediate. Step 6 requires scheduling.
+Steps 1–5 are safe and immediate; 1–4 have landed. Step 6 requires scheduling.
 
 ## Compliance / Enforcement
 
-- CI fails on any added file larger than 1 MB.
-- CI fails if `git ls-files` matches `bin/`, `*.exe`, `*.pem`, or `keys/`.
-- `.githooks/pre-commit` blocks the same patterns locally.
-- `gofmt -l .` must return empty in CI (meaningful after step 1).
-- `gitleaks` runs over the working tree and history.
+*None of the CI-based controls are active: the repository has no CI
+configuration. The pre-commit hook is the only automated check, and it is
+opt-in.*
+
+- ⏳ CI fails on any added file larger than 1 MB.
+- ⏳ CI fails if `git ls-files` matches `bin/`, `*.exe`, `*.pem`, or `keys/`.
+  (True today when run by hand.)
+- ✅ `.githooks/pre-commit` blocks the same patterns locally — `9c302ad`.
+- ⏳ `gofmt -l .` must return empty in CI. It does return empty (`b294de2`,
+  `3dbd1b4`); nothing enforces it.
+- ⏳ `gitleaks` runs over the working tree and history.
 
 ## Related ADRs
 - [ADR-008: Configuration Precedence and Secret Handling](008%20-%20Configuration%20Precedence%20and%20Secret%20Handling.md) — shares the history rewrite
@@ -135,6 +162,37 @@ Steps 1–5 are safe and immediate. Step 6 requires scheduling.
 ## Related Documents
 - [Repository hygiene](../06-quality/repository-hygiene.md)
 - [Testing strategy](../06-quality/testing-strategy.md)
+
+---
+
+## Correction (2026-08-02)
+
+*Appended rather than edited into the Context, per the append-only rule for
+accepted ADRs stated in [the documentation README](../README.md).*
+
+Two corrections, neither affecting the Decision.
+
+**1. `claude-agents_1.zip` — withdrawn.** The Context lists it among the root
+clutter, and Implementation Plan step 6 names it in the `git filter-repo`
+invocation. It appears in no commit:
+`git log --all --diff-filter=A -- claude-agents_1.zip` returns nothing. Passing
+`--path claude-agents_1.zip` to `filter-repo` is harmless but pointless; drop it
+from the command when step 6 is run. `*.zip` is ignored regardless
+(`.gitignore:40`). The rest of that bullet — `.qwen/` tracked and unignored — is
+verified and still open.
+
+**2. `docs/api/docs.go` (2,100 LOC) — corrected.** No `docs/api/` directory has
+ever existed. The generated swagger source is `docs/docs.go` and it is **338
+lines**, alongside `docs/swagger.json` and `docs/swagger.yaml`. Implementation
+Plan step 7 ("Untrack `docs/api/*`") should read `docs/docs.go`,
+`docs/swagger.json`, `docs/swagger.yaml`. The recommendation stands — generated
+output does not belong in the tree — but the size argument for prioritising it
+does not: 338 lines is review noise, not weight.
+
+**Unaffected.** The binary blobs, their sizes, the 58 MB `.git`, the malformed
+`.gitignore`, the missing `.githooks/`, and the tracked
+`.vscode/settings.json` are all verified. Status, Decision, Consequences,
+Alternatives, and the remaining implementation steps are unchanged.
 
 ---
 

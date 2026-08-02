@@ -10,38 +10,24 @@ the check that fails the build when they are broken.
 
 ## Problem
 
-### Inverted dependency: `extensions/` → `internal/`
-
-Eleven files under `extensions/identity/` import `internal/utils`:
-
-```
-extensions/identity/application/admin.go
-extensions/identity/application/auth.go
-extensions/identity/application/helpers.go
-extensions/identity/domain/repository.go          ← domain layer!
-extensions/identity/domain/service.go             ← domain layer!
-extensions/identity/infrastructure/http/helpers.go
-extensions/identity/infrastructure/http/user_handler.go
-extensions/identity/infrastructure/persistence/helpers.go
-extensions/identity/infrastructure/persistence/mfa_repository.go
-extensions/identity/infrastructure/persistence/user_repository.go
-extensions/identity/infrastructure/persistence/user_token_repository.go
-```
-
-Two consequences:
-
-1. An `extensions/` tree that imports the host's private helpers can never be
-   extracted into its own repository or module — the `internal/` visibility rule
-   guarantees it.
-2. `domain/repository.go` and `domain/service.go` — the layer that is supposed to
-   be pure — depend on a utility package containing HTTP helpers, pagination, and
-   hashing.
+> **Withdrawn.** An earlier revision of this document opened with an "inverted
+> dependency" finding: eleven named files under `extensions/identity/` importing
+> `internal/utils`, including two in the domain layer. Neither `extensions/` nor
+> `internal/utils` appears in any commit of this repository
+> (`git log --all --diff-filter=A` returns nothing for either), and four of the
+> eleven filenames — `mfa_repository.go`, `user_token_repository.go`,
+> `role_repository.go`, `refresh_repository.go` — have never existed under any
+> path. The finding could not be substantiated and has been withdrawn, along with
+> the `internal/utils` split table that followed from it. The rules below are
+> unaffected: they were written as the target, not as a description of the
+> violation.
 
 ### No mechanical enforcement anywhere
 
-Nothing in the repository checks layering. There is no linter config, no
-`depguard`, no architecture test. The three-layout drift documented in
-[module layout](module-layout.md) happened precisely because nothing objected.
+Nothing in the repository checks layering. There is no `.golangci.yml`, no
+`depguard` configuration, no architecture test, and no CI to run one. Every rule
+below is currently upheld — or not — by review discipline alone, which is the
+one control this document exists to replace.
 
 ---
 
@@ -73,30 +59,32 @@ transport ──▶ application ──▶ domain ◀── infrastructure
 - `internal/httpx`, `internal/db`, `internal/config` must not import `modules/**`.
 - Only `cmd/**` imports both.
 
-### R4 — No `internal/utils`
+`internal/httpx` already exists (`routes.go`, `health.go`, added in `4fdc609` and
+`40887de`) and holds no module imports. `internal/platform` does not exist yet; it
+is created when the first genuinely shared value type needs a home.
 
-`utils` is not a boundary; it is a bucket. It currently mixes HTTP response
-helpers, pagination, string manipulation, hashing, and ID generation — which is
-how `domain` ended up importing HTTP helpers.
+### R4 — No `utils` package, ever
 
-Split it:
+`utils` is not a boundary; it is a bucket. A package named for its lack of a
+concept accumulates HTTP helpers, pagination, string manipulation, hashing, and ID
+generation side by side, and then the domain layer imports it for one of them and
+inherits all the rest.
 
-| Current | Destination | Rationale |
-|---|---|---|
-| `utils/http.go` | `internal/httpx` | HTTP concern — `domain` must never reach it |
-| `utils/pagination.go` | `internal/platform/paging` | Genuinely shared value type |
-| `utils/hasher.go` | `internal/platform/crypto` | Shared primitive (see caveat below) |
-| `utils/generator.go` | `internal/platform/id` | ID generation |
-| `utils/string_utils.go` | inline at call sites, or `internal/platform/strings` | Mostly one-caller helpers |
+This is a forward-looking rule, not a description of an existing package. Shared
+code goes into a package named for what it *is*:
 
-**Caveat on `utils/hasher.go`:** `StringHashHex` is plain SHA-256 and is used to
-hash refresh tokens (`identity/application/auth.go:67`,
-`identity/application/helpers.go:14`) and a user-agent string
-(`identity/infrastructure/http/helpers.go:75`). Unsalted SHA-256 is acceptable
-for a high-entropy random refresh token, and is *not* acceptable for anything
-low-entropy. Document that constraint at the function, and keep it well away from
-password handling — passwords correctly use bcrypt in
-`identity/infrastructure/hasher/bcrypt.go`. See
+| Kind of helper | Destination |
+|---|---|
+| HTTP request/response helpers | `internal/httpx` |
+| Pagination value types | `internal/platform/paging` |
+| Hashing and other crypto primitives | `internal/platform/crypto` |
+| ID generation | `internal/platform/id` |
+
+`common`, `shared`, `helpers`, `misc`, and `util(s)` are rejected package names.
+Note that `modules/identity/domain/refresh_token.go` already keeps its
+`HashToken` (plain SHA-256, used only on high-entropy refresh tokens) inside the
+domain package that owns the concept, rather than in a shared bucket — that is the
+pattern to follow. See
 [token architecture](../04-security/token-architecture.md).
 
 ---
@@ -142,13 +130,6 @@ linters-settings:
         deny:
           - pkg: "github.com/sujanto-gaws/kopiochi/modules"
             desc: "platform must not depend on business modules"
-
-      no-utils:
-        files:
-          - "$all"
-        deny:
-          - pkg: "github.com/sujanto-gaws/kopiochi/internal/utils"
-            desc: "internal/utils is removed; use internal/platform/* or internal/httpx"
 ```
 
 ### 2. Module-isolation test
@@ -195,18 +176,17 @@ For anything the linters cannot see:
 
 ## Migration path
 
-1. Create `internal/platform/{paging,crypto,id}` and `internal/httpx`; move the
-   contents of `internal/utils` into them.
-2. Re-point the 11 identity imports; `domain/repository.go` and
-   `domain/service.go` should end up importing only `platform/paging`.
-3. Delete `internal/utils`.
-4. Add the `depguard` rules and the module-isolation test.
-5. Run CI — it must pass before the layout migration in
-   [module layout](module-layout.md) proceeds, so the new structure is protected
-   from day one.
+1. Add the `.golangci.yml` `depguard` rules and the module-isolation test against
+   the tree as it stands. `modules/identity/**` is the only module today, so the
+   rules should pass immediately — if they do not, that is a real finding.
+2. Add a CI job that runs them. Until one exists (Phase 4.4) the rules are
+   documentation, not enforcement.
+3. Only then perform the remaining move in
+   [module layout](module-layout.md) — the profile-user stack out of
+   `internal/{domain,application,infrastructure}` into `modules/user/`.
 
-Order matters: adding enforcement **before** the bulk move means the move cannot
-reintroduce the inversion.
+Order matters: adding enforcement **before** the move means the move cannot
+introduce an inversion that nothing objects to.
 
 ---
 

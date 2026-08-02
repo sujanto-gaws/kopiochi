@@ -1,7 +1,10 @@
 # HTTP Middleware Hardening
 
-**Status:** Proposed
+**Status:** Partially implemented
 **Date:** 2026-08-02
+**Last verified:** 2026-08-02, after Phase 1 — the auth-binding section is
+resolved; CORS, proxy headers, and security response headers are all still open
+(Phase 2).
 
 Covers CORS, proxy header handling, security headers, auth binding, and the
 middleware stack order. Rate limiting has its own document:
@@ -144,7 +147,7 @@ Defaults become: `enabled: false`, empty allowlist, credentials off.
 
 Two independent consumers disagree, and both are unsafe behind an untrusted edge:
 
-1. `server.go:64` uses chi's `middleware.RealIP`, which trusts `X-Forwarded-For`
+1. `server.go:59` uses chi's `middleware.RealIP`, which trusts `X-Forwarded-For`
    and `X-Real-IP` from **any** peer.
 2. `ratelimit.go:76-78` separately reads `X-Forwarded-For` and uses the **entire
    header value** as the rate-limit key — so an attacker sends a different value
@@ -195,9 +198,11 @@ in the browser.
 
 ---
 
-## Auth middleware binding
+## Auth middleware binding — fixed
 
-`main.go:99-112` resolves auth once and **fails open**:
+*Resolved in `6d0c1b7` / `ef76759`.*
+
+Historically `main.go:99-112` resolved auth once and **failed open**:
 
 ```go
 if authMiddleware != nil {
@@ -207,30 +212,82 @@ if authMiddleware != nil {
 }
 ```
 
-With `plugins.auth.jwt.enabled: false` — the shipped default — every protected
-route is served unauthenticated. No warning is logged.
+With `plugins.auth.jwt.enabled: false` — still the shipped default
+(`config/default.yaml:47`) — every protected route was served unauthenticated,
+with no warning logged.
 
-Target, per [routing and versioning](../02-composition/routing-and-versioning.md):
+Target, per [routing and versioning](../02-composition/routing-and-versioning.md)
+— **all three now implemented**:
 
-- Modules declare their own protected groups.
-- The auth middleware is a constructor dependency, never nil: if a module needs
+- ✅ Modules declare their own protected groups.
+- ✅ The auth middleware is a constructor dependency, never nil: if a module needs
   authentication and the verifier cannot be built, `New()` returns an error and
-  the process does not start.
-- Fail closed, always.
+  the process does not start. `modules/identity/module.go` derives its
+  `AuthRequired` from the token service it just built; `cmd/api/container.go:90-98`
+  does the same for the user module.
+- ✅ Fail closed, always. `main.go` no longer derives auth middleware from the
+  jwt-auth plugin at all (see the comment at `main.go:96-103`).
+
+The defects in what the middleware then *does* with a token — no `iss`/`aud`
+validation, one `Validate()` for three token classes — are unchanged; see
+[token architecture](token-architecture.md).
 
 ---
 
-## Panic recovery
+## Panic recovery — a gap, not a solved problem
 
-`internal/middleware/recovery.go` is **correct** and should be kept: it recovers,
-logs with request ID and stack, and emits `application/problem+json`. Two small
-improvements:
+> **Withdrawn — and the premise inverts.** An earlier revision stated that
+> `internal/middleware/recovery.go` is "**correct** and should be kept", recovering
+> with request ID and stack and emitting `application/problem+json`, and asked
+> only for two refinements. That file appears in no commit of this repository
+> (`git log --all --diff-filter=A -- internal/middleware/recovery.go` returns
+> nothing); `internal/middleware/` contains a single file, `zerolog.go`. The claim
+> could not be substantiated and has been withdrawn. Recovery is therefore not a
+> solved problem here — it is an open one.
 
-1. Do not attempt to write a body if the handler already wrote a status —
-   wrap the `ResponseWriter` and track it, otherwise the 500 is appended to a
-   partial 200 response.
-2. Re-panic on `http.ErrAbortHandler`, which is the documented way to signal an
+Panic recovery is chi's `middleware.Recoverer`, registered first in the core
+stack (`internal/infrastructure/http/server/server.go:57`). It catches the panic
+and returns 500, which is the important part. What it does **not** do:
+
+- It does not emit `application/problem+json`. Every other error path in the
+  service does (`modules/identity/transport/helpers.go:71`,
+  `internal/infrastructure/http/handlers/helpers.go:69`), so a panic is the one
+  response shape a client cannot parse uniformly.
+- It does not log the request ID with the stack. `Recoverer` is registered
+  *before* `middleware.RequestID` (`server.go:58`), so no request ID exists in the
+  context when the panic is caught even if it were logged. A panic is
+  uncorrelatable with the access-log line for the request that caused it.
+- It writes to stderr in chi's own format, bypassing zerolog entirely — see
+  [observability](../06-quality/observability.md).
+
+### Target
+
+Replace it with `httpx.Recovery(log)`, registered **after** `RequestID`:
+
+1. Recover, log at `error` through the injected zerolog logger with
+   `request_id`, method, path, and stack.
+2. Emit RFC 7807 `application/problem+json` with a fixed, non-revealing detail
+   ("An unexpected error occurred."). Never the panic value or stack.
+3. Do not attempt to write a body if the handler already wrote a status — wrap
+   the `ResponseWriter` and track it, otherwise the 500 is appended to a partial
+   200 response.
+4. Re-panic on `http.ErrAbortHandler`, which is the documented way to signal an
    intentional abort and should not be logged as a crash.
+
+Points 3 and 4 were the only two items in the previous revision; they remain
+correct, but they are refinements on top of work that has not been done rather
+than on top of an existing implementation.
+
+## Not-found and method-not-allowed responses
+
+The same gap applies at the router level. `server.NewRouter` sets neither
+`r.NotFound` nor `r.MethodNotAllowed`, so 404 and 405 fall through to chi's
+plain-text defaults and do not match the problem+json shape used everywhere else.
+Add both handlers alongside `httpx.Recovery`, emitting the same envelope.
+
+> *An earlier revision described `handlers.NotFound()` and
+> `handlers.MethodNotAllowed()` as existing and returning "the same problem
+> shape". No such functions appear in any commit; the claim has been withdrawn.*
 
 ---
 
@@ -257,9 +314,15 @@ Ordering constraints worth stating explicitly:
 - `CORS` before `RateLimit` so preflight `OPTIONS` requests are not counted
   against a user's budget.
 
-Current code registers `NotFound`/`MethodNotAllowed` before `Use`
-(`server.go:58-66`). It works in chi today, but reversing it makes the dependency
-obvious.
+One correction to a claim made in an earlier revision: the current
+`server.NewRouter` does **not** register `NotFound`/`MethodNotAllowed` before
+`r.Use`. It registers neither, at any point — `git show 4fdc609^:internal/infrastructure/http/server/server.go`
+shows the same five `r.Use` calls and nothing else. The ordering concern
+described there was withdrawn; the real gap is the missing handlers, above.
+
+The one ordering defect that *is* present today: `middleware.Recoverer` is
+registered before `middleware.RequestID` (`server.go:57-58`), so a recovered
+panic has no request ID available to log. The stack above reverses that.
 
 ---
 
@@ -272,6 +335,8 @@ func TestCORS_WildcardWithCredentialsRejectedAtConfigLoad(t *testing.T)
 func TestRealIP_IgnoresXFFWhenNoTrustedProxies(t *testing.T)
 func TestSecurityHeadersPresent(t *testing.T)
 func TestProtectedRouteRequiresToken(t *testing.T)        // guards against fail-open
+func TestRecovery_EmitsProblemJSONWithRequestID(t *testing.T)
+func TestNotFound_EmitsProblemJSON(t *testing.T)
 ```
 
 ---

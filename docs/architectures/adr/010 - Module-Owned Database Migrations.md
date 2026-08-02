@@ -9,22 +9,35 @@
 command rather than by hand. The mechanism exists — goose, driven by
 `cmd/migrate` — but its content has drifted completely away from the code.
 
-`migrations/` contains two files, `00001_create_users.sql` and
-`00002_create_products.sql`. Neither matches anything in the codebase:
+> **Context revised, 2026-08-02.** The drift table below originally listed
+> identity's `AppUser` entity, four repository files
+> (`role_repository.go`, `refresh_repository.go`, `user_token_repository.go`,
+> `mfa_repository.go`), and a set of aquaculture bun models as the schema the code
+> required. None of them exists: `git grep AppUser` across `git rev-list --all`
+> returns nothing, none of the four filenames appears in any commit under any
+> path, and no aquaculture file has ever existed. Those rows could not be
+> substantiated and have been withdrawn; the table is re-derived from the bun
+> models actually present. This ADR is still `Proposed`, so the Context is revised
+> in place. The Decision is unchanged — it addresses ownership, reversibility, and
+> enforcement, none of which depended on the withdrawn rows.
+
+At the time of the review `migrations/` contained two files,
+`00001_create_users.sql` and `00002_create_products.sql`, and the identity stack
+had no schema at all:
 
 | Migrations define | Code actually requires |
 |---|---|
-| `users` (BIGSERIAL id, `name`) | identity's `AppUser` — string/UUID id, `first_name`, `last_name`, password hash, MFA fields |
+| `users` (BIGSERIAL id, `name`) | `UserDBModel` — matches; this one was never adrift |
 | `products` | *nothing* — no product model exists anywhere |
-| — | roles and user-role assignment (`role_repository.go`) |
-| — | refresh tokens (`refresh_repository.go`) |
-| — | user tokens (`user_token_repository.go`) |
-| — | MFA secrets (`mfa_repository.go`) |
-| — | aquaculture: farms, ponds, pond groups, pond types (207 LOC of bun models) |
+| — | `auth_users` — string id, password hash, MFA and role columns |
+| — | `auth_refresh_tokens` — user id, token hash, expiry |
+| — | `auth_mfa_backup_codes` |
 
-Applying every migration produces a database against which **not one repository
-can execute a query**. `products` is a leftover from the boilerplate this project
-was derived from.
+Applying every migration produced a database against which **no identity
+repository could execute a query**. `products` is a leftover from the boilerplate
+this project was derived from. *`fbddccb` has since added `00003`–`00005` for the
+three identity tables; the ownership, `IF NOT EXISTS`, and CI problems below are
+untouched by it.*
 
 Contributing factors:
 
@@ -70,7 +83,7 @@ Contributing factors:
 - **No cross-module sequence collisions,** so parallel work does not conflict in
   the migration directory.
 - **Drift is caught by CI** rather than discovered at runtime — the check that
-  would have flagged `users` vs `AppUser` on day one.
+  would have flagged the missing `auth_users` table on day one.
 - **Reversibility is proven,** not assumed.
 - **Serving replicas hold no DDL privileges,** since migration is a separate
   step with its own credentials.
@@ -104,14 +117,18 @@ Contributing factors:
      `products` and reshaping `users`, then start module chains fresh.
 2. Add `migrations/` packages with `//go:embed` to each module; expose via
    `Module.Migrations`.
-3. Write identity's real migrations: `app_user`, `role`, `user_role`,
-   `refresh_token`, `user_token`, `mfa_secret` — matching the bun models exactly.
-4. Write aquaculture's migrations: `farm`, `pond`, `pond_group`, `pond_type`.
-5. Add the global chain: `0001_enable_extensions.sql` (pgcrypto).
-6. Update `cmd/migrate` to iterate modules with per-module version tables.
-7. Fix the Makefile: `CONFIG ?= config/default.yaml`; delete the `db-migrate` and
-   `db-seed` placeholders; add `migrate-verify`.
-8. Add the CI job: up → down → up, plus the model/schema drift test.
+3. ✅ Write identity's real migrations matching the bun models exactly —
+   `fbddccb`, shipped as `00003_create_auth_users`,
+   `00004_create_auth_refresh_tokens`, `00005_create_auth_mfa_backup_codes`. They
+   still live in the global `migrations/` directory and still use
+   `IF NOT EXISTS`; relocating them under `modules/identity/migrations/` and
+   reconciling the naming convention is step 2's work.
+4. Add the global chain: `0001_enable_extensions.sql` (pgcrypto).
+5. Update `cmd/migrate` to iterate modules with per-module version tables.
+6. ✅ Fix the Makefile: `CONFIG ?= config/default.yaml`; delete the `db-migrate`
+   and `db-seed` placeholders — `657b2dc`. `migrate-verify` is still to add.
+7. Add the CI job: up → down → up, plus the model/schema drift test.
+   *`internal/db/schema_test.go` (`d92480c`) covers the drift half already.*
 
 ## Compliance / Enforcement
 

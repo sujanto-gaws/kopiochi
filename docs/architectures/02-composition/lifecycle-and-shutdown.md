@@ -2,6 +2,8 @@
 
 **Status:** Proposed
 **Date:** 2026-08-02
+**Last verified:** 2026-08-02, after Phase 1 — every problem below is still live
+(Phase 3.9 has not run). Line references updated for the current tree.
 
 ---
 
@@ -12,8 +14,8 @@
 `cmd/api/main.go`:
 
 ```go
-defer pluginRegistry.Close()                      // line 66
-defer pool.Close()                                // line 79
+defer pluginRegistry.Close()                      // line 63
+defer pool.Close()                                // line 76
 ...
 server.Run(cfg.Server, r,
     server.WithShutdownFunc(server.NewPoolShutdownFunc(pool)),   // closes pool again
@@ -21,7 +23,7 @@ server.Run(cfg.Server, r,
 )
 ```
 
-`server.Shutdown` (`server.go:141-157`) invokes the shutdown funcs and
+`server.Shutdown` (`server.go:133-153`) invokes the shutdown funcs and
 `pluginRegistry.Close()`, then `main`'s deferred calls fire on return.
 
 `pgxpool.Close` and the registry's `Close` are effectively idempotent today, so
@@ -29,12 +31,12 @@ nothing breaks — but ownership is genuinely ambiguous, and the next resource
 added (a Kafka producer, a cache client, a file handle) will not be so forgiving.
 
 Note that `Registry.Close` deletes entries as it goes
-(`registry.go:141-147`), so the second call is a no-op — the safety is
+(`registry.go:135-150`), so the second call is a no-op — the safety is
 accidental, not designed.
 
 ### 2. `log.Fatal` inside the serving goroutine bypasses shutdown
 
-`server.go:115-119`:
+`server.go:110-114`:
 
 ```go
 go func() {
@@ -50,19 +52,19 @@ exits without cleanup — and the parent `main` never learns why.
 
 ### 3. `Run` swallows the error
 
-`Run` returns nothing (`server.go:100-103`), so `main`'s `RunE` returns `nil`
+`Run` returns nothing (`server.go:95`), so `main`'s `RunE` returns `nil`
 even when the server failed. The process exit code does not reflect the failure —
 which matters for supervisors, CI, and container restart policies.
 
 ### 4. Startup order does not match teardown order
 
-Plugins initialise (line 59) *before* the database connects (line 71). Teardown
+Plugins initialise (`main.go:56`) *before* the database connects (`main.go:68`). Teardown
 runs in an order determined by a mix of `defer` and the shutdown-func slice.
 There is no single place expressing "started A then B, so stop B then A".
 
 ### 5. Signal handling is incomplete
 
-`signal.Notify` covers SIGINT and SIGTERM (`server.go:112`), which is correct.
+`signal.Notify` covers SIGINT and SIGTERM (`server.go:107`), which is correct.
 But the shutdown context is created *after* the signal arrives and is not tied to
 a base context — so nothing else in the process can observe "we are shutting
 down". A second signal during a slow drain is ignored rather than forcing exit.
@@ -144,7 +146,7 @@ func run(cmd *cobra.Command) error {
     }
 
     r := httpx.NewRouter(cfg.Server, cfg.Security, log)
-    httpx.Mount(r, app, deps)
+    httpx.Mount(r, app.Modules, deps)
 
     srv := server.New(cfg.Server, r, log)
     stack.Push("http server", srv.Shutdown)

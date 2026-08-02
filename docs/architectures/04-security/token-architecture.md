@@ -2,6 +2,18 @@
 
 **Status:** Proposed — see [ADR-009](../adr/009%20-%20Token%20Classes%20and%20Asymmetric%20Signing.md)
 **Date:** 2026-08-02
+**Last verified:** 2026-08-02, after Phase 1 — **every defect listed below is
+still live.** Phase 1 changed only *which* system runs, not how either behaves.
+
+> **What Phase 1 changed.** The RS256 identity token service moved to
+> `modules/identity/infrastructure/token/jwt.go` (`5f6edfe`) and is now the
+> **live** verifier: `modules/identity/transport/middleware.go` calls its
+> `Validate`, and `cmd/api/container.go:91` builds a second instance for the user
+> module. The HS256 jwt-auth plugin is `enabled: false` by default and `main.go`
+> no longer derives any auth middleware from it. So the "live"/"dead" labels
+> below are now the wrong way round — system B is the one on the request path,
+> which makes its defects (B1, B2 especially) the urgent ones. Line references in
+> the system B section have been updated to the new file.
 
 ---
 
@@ -10,7 +22,7 @@
 | System | Location | Algorithm | Used by |
 |---|---|---|---|
 | A — plugin | `internal/plugins/auth/jwt.go` | HS256 (shared secret) | Live path (`main.go:101`) |
-| B — identity | `extensions/identity/infrastructure/token/jwt.go` | RS256 (RSA keypair) | Dead code |
+| B — identity | `modules/identity/infrastructure/token/jwt.go` | RS256 (RSA keypair) | Live path (see the note above) |
 
 They issue different claim sets, validate differently, and disagree about what a
 token means. Neither is complete.
@@ -113,7 +125,7 @@ Only the auth middleware can then set a principal.
 ## Defects in system B (the dead one)
 
 System B is closer to correct — it **does** pin the algorithm
-(`jwt.go:75-77`):
+(`modules/identity/infrastructure/token/jwt.go:77-79`):
 
 ```go
 if _, ok := token.Method.(*jwt.SigningMethodRSA); !ok {
@@ -125,8 +137,8 @@ Remaining gaps:
 
 ### B1 — No issuer or audience validation
 
-`Validate` (line 73) checks the signature and expiry but never `iss` or `aud`.
-`IssueIDToken` sets `aud` to the client ID (line 51) yet nothing verifies it.
+`Validate` (line 75) checks the signature and expiry but never `iss` or `aud`.
+`IssueIDToken` sets `aud` to the client ID (line 53) yet nothing verifies it.
 
 ### B2 — Token classes are indistinguishable at the validation boundary
 
@@ -146,23 +158,36 @@ check.
 
 ### B3 — `IssueIDToken` ignores configured TTL
 
-Line 54 hardcodes `15 * time.Minute` while `IssueAccessToken` takes a `ttl`
+Line 56 hardcodes `15 * time.Minute` while `IssueAccessToken` takes a `ttl`
 parameter. `auth.access_token_ttl` in config is not honoured for ID tokens.
 
 ### B4 — Refresh tokens hashed with unsalted SHA-256
 
-`application/auth.go:67` and `application/helpers.go:14`:
+> **Withdrawn and re-pointed.** An earlier revision cited
+> `utils.StringHashHex(refreshToken)` at `application/auth.go:67` and
+> `application/helpers.go:14`, and asked for `internal/utils/generator.go` to be
+> checked for `crypto/rand`. No `internal/utils` package appears in any commit of
+> this repository and no symbol `StringHashHex` has ever existed in Go source. The
+> citations could not be substantiated and have been withdrawn. The finding itself
+> is real; the actual code is below.
+
+`modules/identity/domain/refresh_token.go`:
 
 ```go
-hash := utils.StringHashHex(refreshToken)   // plain SHA-256, no salt
+func HashToken(plain string) string {
+	h := sha256.Sum256([]byte(plain))
+	return hex.EncodeToString(h[:])
+}
 ```
 
 This is **acceptable** — provided the refresh token is high-entropy random
 (≥128 bits from `crypto/rand`), unsalted SHA-256 resists brute force because
-there is nothing to guess. It must be verified that
-`internal/utils/generator.go` uses `crypto/rand` and not `math/rand`, and the
-constraint must be documented at the call site, because the same helper is one
-copy-paste away from being applied to something low-entropy.
+there is nothing to guess. Two follow-ups stand: verify that whatever generates
+the plaintext refresh token uses `crypto/rand` and not `math/rand`, and document
+the high-entropy precondition on `HashToken` itself, because a function with that
+name invites reuse on something low-entropy. It sits in the domain package that
+owns the concept rather than in a shared helpers package, which limits the blast
+radius — keep it there.
 
 ### B5 — No key rotation support
 
@@ -269,8 +294,11 @@ Rotation becomes: add new key → start signing with it → wait one access-toke
 - Every refresh **rotates**: the old token is invalidated as the new one is issued.
 - Presenting an already-used refresh token indicates theft → revoke the entire
   token family for that user and log a security event.
-- The existing `refresh_token` store and `user_token_repository` already have the
-  shape for this; they need the reuse check.
+- The existing `RefreshTokenStore`
+  (`modules/identity/domain/repository.go`, implemented by
+  `infrastructure/persistence/repository/refresh_token_store.go`) already has the
+  shape for this — `Store`, `FindValid`, `RevokeAllForUser`. It needs the reuse
+  check and a per-family identifier.
 
 ### TTLs
 

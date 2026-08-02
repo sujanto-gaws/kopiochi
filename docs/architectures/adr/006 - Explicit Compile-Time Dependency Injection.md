@@ -1,7 +1,14 @@
 # ADR-006: Explicit Compile-Time Dependency Injection
 
 ## Status
-**Proposed** – *Date: 2026-08-02*
+**Accepted — implemented** – *Decided: 2026-08-02 · Implemented: 2026-08-02 (Phase 1)*
+
+All six implementation steps have shipped; see the Implementation Plan below for
+per-step commits. The Context section is preserved as written — but the "empty
+container" excerpt it quotes does not match any commit in this repository's
+history. Because this ADR is accepted, the Context is not edited; see
+**[Correction (2026-08-02)](#correction-2026-08-02)** at the end. The Decision
+stands on its own merits regardless of that excerpt.
 
 ## Context
 
@@ -90,23 +97,30 @@ composition root.
 | **Keep the current registrar list, add a lint rule** | Does not address the root problem: "wired" is not expressible in the type system, and a lint rule cannot tell intentional emptiness from an unfinished one. |
 | **Package-level globals + `init()`** | Untestable, unordered initialisation, hidden coupling. |
 
-## Implementation Plan
+## Implementation Plan — complete
 
-1. Define `module.Deps` and `module.Module` (per ADR-004).
-2. Replace `cmd/api/container/container.go` with `cmd/api/container.go`
+1. ✅ Define `module.Deps` and `module.Module` (per ADR-004) — `05b1051`. The
+   shipped `Deps` carries `DB` and `Logger`; no `Clock`.
+2. ✅ Replace `cmd/api/container/container.go` with `cmd/api/container.go`
    exposing `BuildApp(cfg, db, log) (*App, error)`, including the zero-module
-   guard.
-3. Construct each module explicitly, wrapping errors with the module name.
-4. Update `main.go` to call `BuildApp` and pass `app.Modules` to route mounting.
-5. Add tests: `TestBuildApp_RegistersModules` and
-   `TestBuildApp_FailsOnInvalidConfig`.
-6. Delete `handlers.RouteRegistrar` and `handlers.RouterGroup` once unused.
+   guard — `ef76759`.
+3. ✅ Construct each module explicitly, wrapping errors with the module name —
+   `ef76759` (`"build identity module: %w"`, `"build user module: %w"`).
+4. ✅ Update `main.go` to call `BuildApp` and pass `app.Modules` to route mounting
+   — `ef76759`, `4fdc609`.
+5. ✅ Add tests: `TestBuildApp_RegistersModules` and
+   `TestBuildApp_FailsOnInvalidConfig` — `d92480c`, in `cmd/api/container_test.go`.
+6. ✅ Delete `handlers.RouteRegistrar` and `handlers.RouterGroup` once unused —
+   `4fdc609`; neither identifier remains anywhere in the tree.
 
 ## Compliance / Enforcement
 
 - `BuildApp` must return an error when no module is registered; a test asserts it.
+  *Caveat: the guard is currently unreachable, because two modules are appended
+  unconditionally before it. It encodes the rule for future edits; it does not
+  today execute.*
 - A route-table test asserts expected routes exist — the practical guard against
-  silent emptiness.
+  silent emptiness. *Shipped as `TestRouteTable` in `cmd/api/routes_test.go`.*
 - Review rejects new service-locator lookups and `map[string]interface{}`
   constructor parameters.
 - Only `cmd/**` may import more than one module.
@@ -118,6 +132,43 @@ composition root.
 
 ## Related Documents
 - [Dependency injection](../02-composition/dependency-injection.md)
+
+---
+
+## Correction (2026-08-02)
+
+*Appended rather than edited into the Context, per the append-only rule for
+accepted ADRs stated in [the documentation README](../README.md).*
+
+**Withdrawn:** the Go excerpt in the Context, quoting `container.New` as
+returning `registrars: []handlers.RouteRegistrar{ /* Auth */ }` — an empty slice
+— together with the statements that "both parameters are unused" and that the
+server "serves no business routes at all".
+
+**Why:** the excerpt matches no version of the file. Both the commit that
+introduced it and the commit current when this ADR was written show the same
+two-element slice and use both parameters:
+
+```
+$ git show 794d783:cmd/api/container/container.go   # earliest version
+$ git show 0fbab20:cmd/api/container/container.go   # commit that added these docs
+        registrars: []handlers.RouteRegistrar{
+                authHandler,
+                userHandler,
+        },
+```
+
+**What survives.** The design property the Decision rests on does not depend on
+the container ever having been empty: `New` returned `(*Container, error)`
+regardless of how many registrars it appended, so its completeness was a property
+of a comment rather than of a type, and a handler omitted from the slice was
+simply not served with nothing to indicate it. Decision points 3 ("`BuildApp`
+refuses to produce an empty application") and 7 ("wiring is observable") remain
+the right response to that property, and both shipped.
+
+**Scope of the correction.** Only the Context's factual claims about the file's
+contents are withdrawn. Status, Decision, Consequences, Alternatives, and the
+Implementation Plan are unchanged.
 
 ---
 

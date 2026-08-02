@@ -50,14 +50,34 @@ make migrate-reset
 
 ## 📁 Migration Structure
 
-All migrations are stored in the `migrations/` directory:
+All migrations are stored in the `migrations/` directory. The files currently
+checked in are:
 
 ```
 migrations/
-├── 00001_create_users.sql
-├── 00002_create_products.sql
-└── 20260412123456_create_orders.sql
+├── 00001_create_users.sql                  # users
+├── 00002_create_products.sql               # products
+├── 00003_create_auth_users.sql             # auth_users (identity module)
+├── 00004_create_auth_refresh_tokens.sql    # auth_refresh_tokens (identity module)
+└── 00005_create_auth_mfa_backup_codes.sql  # auth_mfa_backup_codes (identity module)
 ```
+
+A migration created with `make migrate-create` is timestamp-named instead, e.g.
+`20260412123456_create_orders.sql`.
+
+### Identity / auth schema
+
+Migrations `00003`–`00005` back the `modules/identity` Bun models and must be
+applied before the auth endpoints (`/api/v1/auth/...`) will work:
+
+| Migration | Table | Notes |
+|-----------|-------|-------|
+| `00003_create_auth_users.sql` | `auth_users` | UUID primary key (`gen_random_uuid()`, `pgcrypto` enabled defensively), credentials, `roles`/`permissions` text arrays, MFA secret, failed-attempt counter and `locked_until` for lockout; case-sensitive `UNIQUE` index on `email` |
+| `00004_create_auth_refresh_tokens.sql` | `auth_refresh_tokens` | Hashed refresh tokens, `revoked` flag and expiry; FK to `auth_users` with `ON DELETE CASCADE`; indexed on `token_hash` and `user_id` |
+| `00005_create_auth_mfa_backup_codes.sql` | `auth_mfa_backup_codes` | Hashed one-time backup codes with a `used` flag; FK to `auth_users` with `ON DELETE CASCADE`; indexed on `user_id` |
+
+All three are reversible — each drops its indexes and table in the `Down`
+section.
 
 ### Migration File Naming
 

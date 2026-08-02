@@ -1,6 +1,10 @@
 # HTTP Server Package
 
-Package `server` provides a production-ready HTTP server built on [chi](https://github.com/go-chi/chi) with graceful shutdown, structured logging, and a plugin lifecycle.
+Package `server` (`internal/infrastructure/http/server`) provides a production-ready HTTP server built on [chi](https://github.com/go-chi/chi) with graceful shutdown, structured logging, and a plugin lifecycle.
+
+It owns the server and the router's *core middleware stack* only. The route
+tree itself is assembled by `internal/httpx` — see
+[`httpx.Mount`](#route-mounting).
 
 ---
 
@@ -191,17 +195,49 @@ APP_SERVER_SHUTDOWN_TIMEOUT=60s
 
 ---
 
-## Usage Example
+## Route Mounting
+
+`server` deliberately knows nothing about application routes. After
+`NewRouter` returns, the caller hands the `*chi.Mux` to
+`httpx.Mount` (`internal/httpx/routes.go`):
 
 ```go
-// Build router — plugin middleware injected after core stack
-r := server.NewRouter(cfg.Server,
-    func(next http.Handler) http.Handler {
-        return middlewareChain.Build(next)
-    },
-)
+func Mount(r *chi.Mux, modules []*module.Module, deps Deps)
+```
 
-routes.Setup(r, authMiddleware, userHandler)
+`Mount` registers the unversioned operational endpoints — `GET /healthz`
+(liveness), `GET /readyz` (pings `deps.Pinger`, `503` when the database is
+unreachable), `GET /health` (deprecated alias for `/healthz`) and
+`GET /swagger/*` — then opens a single `/api/v1` group and calls every
+module's `Routes(chi.Router)` against it. Only one router is ever in scope for
+that group, so routes cannot silently register on the wrong one.
+
+> The former `routes.Setup` and the `internal/infrastructure/http/routes`
+> package no longer exist; `handlers.RouterGroup` and `handlers.RouteRegistrar`
+> were removed with them. Each handler now declares its own routes and its own
+> auth middleware.
+
+---
+
+## Usage Example
+
+Taken from `cmd/api/main.go`:
+
+```go
+// Build router with the core middleware stack
+r := server.NewRouter(cfg.Server)
+
+// Apply the plugin middleware chain on top
+middlewareChain := plugin.NewMiddlewareChainFromRegistry(pluginRegistry, plugin.GetMiddlewareNames(&cfg.Plugins))
+if middlewareChain.Len() > 0 {
+    r.Use(func(next http.Handler) http.Handler {
+        return middlewareChain.Build(next)
+    })
+}
+
+// Mount operational endpoints and every module's routes under /api/v1.
+// app comes from BuildApp (cmd/api/container.go); pool satisfies httpx.Pinger.
+httpx.Mount(r, app.Modules, httpx.Deps{Pinger: pool})
 
 // Start — blocks until SIGINT/SIGTERM
 server.Run(
@@ -211,6 +247,9 @@ server.Run(
     server.WithPluginRegistry(pluginRegistry),
 )
 ```
+
+`NewRouter` also accepts variadic middleware appended after the core stack, if
+you prefer to pass the chain in rather than calling `r.Use` afterwards.
 
 ---
 

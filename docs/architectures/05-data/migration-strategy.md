@@ -1,13 +1,34 @@
 # Migration Strategy
 
-**Status:** Proposed — see [ADR-010](../adr/010%20-%20Module-Owned%20Database%20Migrations.md)
+**Status:** Partially implemented — see [ADR-010](../adr/010%20-%20Module-Owned%20Database%20Migrations.md)
 **Date:** 2026-08-02
+**Last verified:** 2026-08-02, after Phase 1
 
 ---
 
-## Problem 1: the migrations describe a different application
+## Problem 1 (partially fixed): the migrations describe a different application
 
-`migrations/` contains exactly two files:
+*`fbddccb` added three migrations that match the live bun models exactly:*
+
+```
+migrations/00003_create_auth_users.sql
+migrations/00004_create_auth_refresh_tokens.sql
+migrations/00005_create_auth_mfa_backup_codes.sql
+```
+
+*`cmd/api/login_e2e_test.go` proves the identity repositories now execute
+against a migrated database, and `internal/db/schema_test.go` guards the model /
+schema correspondence. `00002_create_products.sql` remains an orphan — nothing in
+the codebase maps to `products`. `00001_create_users.sql` is **not** an orphan:
+its columns match `internal/infrastructure/persistence/models/user.go`
+(`UserDBModel`) exactly, and that model backs the live `user` module.*
+
+*Two notes on the shipped migrations, both of which contradict rules stated later
+in this document and in ADR-010: the tables are plural
+(`auth_users`, not `auth_user`), and all three still use `IF NOT EXISTS`. Either
+the convention or the migrations need a follow-up.*
+
+At review time, `migrations/` contained exactly two files:
 
 ```sql
 -- 00001_create_users.sql
@@ -23,31 +44,43 @@ CREATE TABLE IF NOT EXISTS users (
 CREATE TABLE IF NOT EXISTS products (...);
 ```
 
-Neither table corresponds to anything in the current codebase:
+Neither table corresponded to the identity stack:
+
+> **Withdrawn.** The drift table here previously listed identity's `AppUser`
+> entity and four repositories — `role_repository.go`, `refresh_repository.go`,
+> `user_token_repository.go`, `mfa_repository.go` — plus a set of aquaculture
+> models. No type named `AppUser` appears in any commit of this repository
+> (`git grep AppUser` across `git rev-list --all` returns nothing), none of the
+> four filenames has ever existed under any path, and there has never been an
+> aquaculture model. Those rows could not be substantiated and have been
+> withdrawn. The table below is re-derived from the bun models actually present.
 
 | Migrations define | Code actually needs |
 |---|---|
-| `users` (BIGSERIAL id, `name`) | identity's `AppUser` (string/UUID id, `first_name`, `last_name`, `email`, password hash, MFA fields) |
+| `users` (BIGSERIAL id, `name`) | `internal/infrastructure/persistence/models/user.go` — also `users`, so this one does correspond |
 | `products` | *nothing* — no product model exists anywhere |
-| — | roles / user-role assignment (`role_repository.go`) |
-| — | refresh tokens (`refresh_repository.go`) |
-| — | user tokens (`user_token_repository.go`) |
-| — | MFA secrets (`mfa_repository.go`) |
-| — | aquaculture: farms, ponds, pond groups, pond types (`models.go`, 207 LOC) |
+| — | `auth_users` (`modules/identity/.../models/auth_models.go`) — string id, password hash, MFA and role columns |
+| — | `auth_refresh_tokens` — user id, token hash, expiry |
+| — | `auth_mfa_backup_codes` |
 
-Running every migration produces a database in which **not one repository can
-execute a query**. The `products` table is a leftover from the boilerplate this
-project started from.
+Running every migration as it stood produced a database in which **no identity
+repository could execute a query**. The `products` table is a leftover from the
+boilerplate this project started from. `fbddccb` closed the identity half by
+adding `00003`–`00005`.
 
-## Problem 2: the Makefile targets are broken
+## Problem 2 (fixed): the Makefile targets were broken
+
+*Both halves fixed in `657b2dc`: `Makefile:14` now declares
+`CONFIG?=config/default.yaml`, so `make migrate-up` works standalone, and the
+`db-migrate`/`db-seed` placeholder targets were deleted.*
 
 ```make
 migrate-up: ## Run all pending migrations
 	$(GO) run ./cmd/migrate up --config $(CONFIG)
 ```
 
-`CONFIG` has no default anywhere in the Makefile. `make migrate-up` expands to
-`--config ` with an empty value. Compare `run-config`, which documents
+`CONFIG` had no default anywhere in the Makefile, so `make migrate-up` expanded
+to `--config ` with an empty value. Compare `run-config`, which documents
 `CONFIG=config/production.yaml` as a caller-supplied variable — but `migrate-*`
 never got a default the way `run` did (`run` hardcodes no config flag at all and
 relies on the cobra default).
@@ -59,8 +92,8 @@ db-migrate: ## Run database migrations (placeholder)
 	@echo "TODO: Implement migration runner"
 ```
 
-A TODO placeholder sits 60 lines above four working `migrate-*` targets. Anyone
-reading top-to-bottom finds the broken one first.
+A TODO placeholder sat 60 lines above four working `migrate-*` targets, so anyone
+reading top-to-bottom found the broken one first.
 
 ## Problem 3: no ownership model
 
@@ -87,17 +120,11 @@ a single CI job.
 ### Module-owned migrations, embedded
 
 ```
-modules/identity/migrations/
+modules/identity/migrations/     ← the shipped 00003–00005, relocated
 ├── embed.go
-├── 0001_create_app_user.sql
-├── 0002_create_role.sql
-├── 0003_create_refresh_token.sql
-└── 0004_create_mfa_secret.sql
-
-modules/aquaculture/migrations/
-├── embed.go
-├── 0001_create_farm.sql
-└── 0002_create_pond.sql
+├── 0001_create_auth_users.sql
+├── 0002_create_auth_refresh_tokens.sql
+└── 0003_create_auth_mfa_backup_codes.sql
 
 migrations/                      ← global only
 ├── 0001_enable_extensions.sql   (pgcrypto, citext)
@@ -182,7 +209,7 @@ chain claims.
 
 | Convention | Rule |
 |---|---|
-| Table names | singular, snake_case: `app_user`, `refresh_token` |
+| Table names | singular, snake_case: `refresh_token`, not `auth_refresh_tokens` |
 | Primary keys | `uuid` with `gen_random_uuid()` (pgcrypto), matching the string IDs in the domain |
 | Timestamps | `timestamptz` always, never `timestamp` |
 | Audit columns | `created_at`, `created_by`, `updated_at`, `updated_by` — the domain entities already carry these |
@@ -190,24 +217,23 @@ chain claims.
 | Foreign keys | always declared, with an explicit `ON DELETE` action |
 | Indexes | every FK gets one; add composites for real query patterns |
 
-Note the current `users` migration uses `BIGSERIAL` while the domain entities use
-string IDs — the new `app_user` table must use `uuid` to match.
+Note the `00001_create_users` migration uses `BIGSERIAL` while the identity
+domain entities use string IDs — any table backing them must use `uuid` to match.
 
 ### Indexes the code needs
 
-Derived from the repository queries that exist today:
+Derived from the repository queries that exist today
+(`modules/identity/infrastructure/persistence/repository/`):
 
 ```sql
-CREATE UNIQUE INDEX idx_app_user_email_lower ON app_user (lower(email)) WHERE deleted_at IS NULL;
-CREATE INDEX idx_refresh_token_user_id      ON refresh_token (user_id);
-CREATE UNIQUE INDEX idx_refresh_token_hash  ON refresh_token (token_hash);
-CREATE INDEX idx_refresh_token_expires_at   ON refresh_token (expires_at);   -- cleanup sweeps
-CREATE INDEX idx_user_role_user_id          ON user_role (user_id);
-CREATE INDEX idx_pond_farm_id               ON pond (farm_id);
+CREATE UNIQUE INDEX idx_auth_users_email_lower  ON auth_users (lower(email)) WHERE deleted_at IS NULL;
+CREATE INDEX idx_refresh_token_user_id          ON auth_refresh_tokens (user_id);
+CREATE UNIQUE INDEX idx_refresh_token_hash      ON auth_refresh_tokens (token_hash);
+CREATE INDEX idx_refresh_token_expires_at       ON auth_refresh_tokens (expires_at);   -- cleanup sweeps
 ```
 
-The `lower(email)` unique index matters: the existing lookup is by email, and
-without it, `User@example.com` and `user@example.com` become two accounts.
+The `lower(email)` unique index matters: `FindByEmail` is on the login path, and
+without it `User@example.com` and `user@example.com` become two accounts.
 
 ### Recovering from the current state
 
@@ -219,14 +245,19 @@ start the module chains at `0001`. Simplest; verify with
 `make migrate-status` against every environment first.
 
 **Path B — some environment has applied them.** Keep them as the global chain's
-history, add `0003_drop_products.sql` and a migration that reshapes `users` into
-`app_user`, then start module chains fresh.
+history and add a migration dropping `products`, then start module chains fresh.
+`users` itself is still backed by a live bun model
+(`internal/infrastructure/persistence/models/user.go`) and moves with the
+profile-user module rather than being reshaped.
 
 Confirm which applies before writing any new migration.
 
 ---
 
-## Makefile repair
+## Makefile repair — mostly shipped
+
+*`657b2dc` added the `CONFIG ?=` default and deleted the placeholders.
+`migrate-verify` does not exist yet.*
 
 ```make
 CONFIG ?= config/default.yaml      # default so `make migrate-up` works standalone
@@ -242,7 +273,7 @@ migrate-verify:  ## Apply, roll back, and re-apply against a scratch database (C
 ```
 
 Delete the `db-migrate` and `db-seed` TODO placeholders — they duplicate working
-targets and mislead.
+targets and mislead. *Done in `657b2dc`.*
 
 ---
 
@@ -255,8 +286,9 @@ A job that runs against a disposable Postgres service:
 3. `migrate up` again → must succeed (proves idempotent chains).
 4. **Schema/model drift check** — a test that creates every bun model's table via
    `db.NewCreateTable().Model(...)` into a scratch schema and diffs it against
-   the migrated schema. This is the check that would have caught `users` vs
-   `AppUser` immediately.
+   the migrated schema. This is the check that would have caught the missing
+   `auth_users` table immediately. *Shipped in part as
+   `internal/db/schema_test.go` (`d92480c`).*
 5. Reject any new migration file that lacks a `-- +goose Down` section.
 
 ---
