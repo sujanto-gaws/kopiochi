@@ -1,11 +1,11 @@
-package middleware
+package transport
 
 import (
 	"context"
 	"net/http"
 	"strings"
 
-	domain "github.com/sujanto-gaws/kopiochi/internal/domain/auth"
+	domain "github.com/sujanto-gaws/kopiochi/modules/identity/domain"
 )
 
 func AuthRequired(tokenIssuer domain.TokenIssuer) func(http.Handler) http.Handler {

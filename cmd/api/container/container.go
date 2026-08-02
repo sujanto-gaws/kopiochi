@@ -9,15 +9,16 @@ import (
 
 	"github.com/uptrace/bun"
 
-	appAuth "github.com/sujanto-gaws/kopiochi/internal/application/auth"
 	appUser "github.com/sujanto-gaws/kopiochi/internal/application/user"
 	"github.com/sujanto-gaws/kopiochi/internal/config"
-	"github.com/sujanto-gaws/kopiochi/internal/infrastructure/hasher"
 	"github.com/sujanto-gaws/kopiochi/internal/infrastructure/http/handlers"
-	infraMFA "github.com/sujanto-gaws/kopiochi/internal/infrastructure/mfa"
-	authRepo "github.com/sujanto-gaws/kopiochi/internal/infrastructure/persistence/auth/repository"
 	"github.com/sujanto-gaws/kopiochi/internal/infrastructure/persistence/repository"
-	"github.com/sujanto-gaws/kopiochi/internal/infrastructure/token"
+	appAuth "github.com/sujanto-gaws/kopiochi/modules/identity/application"
+	"github.com/sujanto-gaws/kopiochi/modules/identity/infrastructure/hasher"
+	infraMFA "github.com/sujanto-gaws/kopiochi/modules/identity/infrastructure/mfa"
+	authRepo "github.com/sujanto-gaws/kopiochi/modules/identity/infrastructure/persistence/repository"
+	"github.com/sujanto-gaws/kopiochi/modules/identity/infrastructure/token"
+	identitytransport "github.com/sujanto-gaws/kopiochi/modules/identity/transport"
 )
 
 // Container holds all wired handlers and exposes them as RouteRegistrars.
@@ -61,7 +62,7 @@ func New(cfg *config.Config, db bun.IDB) (*Container, error) {
 		totpSvc,
 		mfaStore,
 	)
-	authHandler := handlers.NewAuthHandler(authSvc, cfg.Auth.RefreshTokenTTL)
+	authHandler := identitytransport.NewAuthHandler(authSvc, cfg.Auth.RefreshTokenTTL)
 
 	// ── User ─────────────────────────────────────────────────────────────────
 	userRepo := repository.NewUserRepository(db)

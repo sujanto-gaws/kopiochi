@@ -1,4 +1,4 @@
-package handlers
+package transport
 
 import (
 	"context"
@@ -8,8 +8,14 @@ import (
 	"strings"
 	"time"
 
-	app "github.com/sujanto-gaws/kopiochi/internal/application/auth"
-	domain "github.com/sujanto-gaws/kopiochi/internal/domain/auth"
+	// TODO(task 1.4/1.5): this is a temporary back-reference to the legacy
+	// handlers package, needed only for RouterGroup/RegisterRoutes so this move
+	// leaves the old main.go/routes.go wiring building unchanged. It goes away
+	// once RegisterRoutes is replaced by the self-contained Routes(chi.Router)
+	// method (see module.go).
+	"github.com/sujanto-gaws/kopiochi/internal/infrastructure/http/handlers"
+	app "github.com/sujanto-gaws/kopiochi/modules/identity/application"
+	domain "github.com/sujanto-gaws/kopiochi/modules/identity/domain"
 )
 
 // AuthService is the set of application operations AuthHandler depends on.
@@ -263,7 +269,7 @@ func (h *AuthHandler) Refresh(w http.ResponseWriter, r *http.Request) {
 //	  POST /auth/logout
 //	  POST /auth/mfa/setup
 //	  POST /auth/mfa/setup/verify
-func (h *AuthHandler) RegisterRoutes(g RouterGroup) {
+func (h *AuthHandler) RegisterRoutes(g handlers.RouterGroup) {
 	g.Public.Post("/auth/login", h.Login)
 	g.Public.Post("/auth/refresh", h.Refresh)
 	g.Public.Post("/auth/mfa/verify", h.MFAVerify)
