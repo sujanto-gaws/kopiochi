@@ -140,8 +140,8 @@ import (
 // RegisterBuiltinPlugins registers all plugins
 func RegisterBuiltinPlugins(registry *plugin.Registry) {
     // Authentication plugins
-    registry.Register("jwt-auth", func() plugin.Plugin {
-        return &authPluginAdapter{auth.NewJWTPlugin()}
+    registry.Register("fido2-auth", func() plugin.Plugin {
+        return &authPluginAdapter{auth.NewFIDO2Plugin()}
     })
 
     // Middleware plugins
@@ -574,7 +574,7 @@ import (
 
 func RegisterBuiltinPlugins(registry *plugin.Registry) {
     // Built-in plugins
-    registry.Register("jwt-auth", ...)
+    registry.Register("fido2-auth", ...)
     
     // Custom middleware
     registry.Register("compression", func() plugin.Plugin {
@@ -618,11 +618,18 @@ if mwPlugin != nil {
 }
 
 // Get as auth plugin
-authPlugin := pluginRegistry.GetAuth("jwt-auth")
+authPlugin := pluginRegistry.GetAuth("fido2-auth")
 if authPlugin != nil {
     userID := authPlugin.ExtractUserID(ctx)
 }
 ```
+
+> **There is no `jwt-auth` plugin.** It was deleted along with its config block
+> and `APP_JWT_SECRET`; the API's own authentication comes from the `identity`
+> module's RS256 token service, wired as a constructor dependency rather than
+> resolved from the registry. Use the registry for optional auth *plugins* only.
+> See [PLUGIN_GUIDE.md](PLUGIN_GUIDE.md) and
+> [docs/architectures/04-security/token-architecture.md](docs/architectures/04-security/token-architecture.md).
 
 ---
 

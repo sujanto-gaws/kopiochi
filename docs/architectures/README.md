@@ -40,8 +40,8 @@ read on its own; cross-references are relative links.
 | [005](adr/005%20-%20Module%20Boundaries%20and%20Dependency%20Direction.md) | Module Boundaries and Dependency Direction | Proposed |
 | [006](adr/006%20-%20Explicit%20Compile-Time%20Dependency%20Injection.md) | Explicit Compile-Time Dependency Injection | Accepted — implemented |
 | [007](adr/007%20-%20API%20Versioning%20at%20the%20Router%20Boundary.md) | API Versioning at the Router Boundary | Accepted — implemented |
-| [008](adr/008%20-%20Configuration%20Precedence%20and%20Secret%20Handling.md) | Configuration Precedence and Secret Handling | Proposed |
-| [009](adr/009%20-%20Token%20Classes%20and%20Asymmetric%20Signing.md) | Token Classes and Asymmetric Signing | Proposed |
+| [008](adr/008%20-%20Configuration%20Precedence%20and%20Secret%20Handling.md) | Configuration Precedence and Secret Handling | Accepted — partially implemented |
+| [009](adr/009%20-%20Token%20Classes%20and%20Asymmetric%20Signing.md) | Token Classes and Asymmetric Signing | Accepted — partially implemented |
 | [010](adr/010%20-%20Module-Owned%20Database%20Migrations.md) | Module-Owned Database Migrations | Proposed |
 | [011](adr/011%20-%20Build%20Artifacts%20Excluded%20from%20Version%20Control.md) | Build Artifacts Excluded from Version Control | Accepted — partially implemented |
 
@@ -53,9 +53,27 @@ implementation steps land; its Context and Decision are still append-only.
 
 ## Scope note
 
-These documents were produced from a full review of the repository, and Phases 0
-and 1 of the [remediation plan](07-roadmap/remediation-plan.md) have since landed
-against them.
+These documents were produced from a full review of the repository, and Phases 0,
+1, and 2 of the [remediation plan](07-roadmap/remediation-plan.md) have since
+landed against them.
+
+**Phase 2 (security) is complete.** The rate limiter, client-IP resolution, CORS,
+security response headers, token validation, and configuration/secret handling
+were all rewritten; the HS256 JWT plugin was deleted. Every security finding on
+the live request path in
+[`00-overview/current-state.md`](00-overview/current-state.md) is now marked
+**Resolved**, and ADRs 008 and 009 moved from `Proposed` to
+`Accepted — partially implemented` with per-decision status tables. Rotation of
+the historically exposed credentials remains outstanding and cannot be verified
+from the repository.
+
+One limitation is recorded across several documents and is worth knowing up
+front: **`go test -race` cannot run in this development environment** — every
+package fails with `0xc0000139` against a 2018 mingw-w64 toolchain. Race coverage
+is outstanding, a real data race shipped inside Phase 2 and was caught by
+inspection rather than tooling, and Phase 4.4's Linux CI is what closes the gap.
+See
+[`06-quality/testing-strategy.md`](06-quality/testing-strategy.md#race-detection-is-outstanding).
 
 The review's headline finding — that the application compiled but **served no
 business routes** — has been **withdrawn as unsubstantiated**. It rested on a

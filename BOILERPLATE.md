@@ -329,19 +329,25 @@ plugins:
   middleware:
     - cors
     - ratelimit
-  
-  auth:
-    jwt:
-      enabled: true
-      provider: jwt-auth
-      config:
-        # secret is intentionally left out of YAML — supply it via the
-        # APP_JWT_SECRET environment variable, which internal/config binds
-        # to plugins.auth.jwt.config.secret. Viper does not expand
-        # "${JWT_SECRET}" placeholders.
-        expiry: "24h"
-        issuer: "kopiochi"
+
+  # No auth plugin is enabled by default. The HS256 jwt-auth plugin was
+  # deleted; the API's authentication comes from the identity module's RS256
+  # token service, configured under the top-level `auth:` block below.
+  auth: {}
+
+auth:
+  private_key_path: "keys/private.pem"   # generate with `make keys`
+  public_key_path: "keys/public.pem"
+  issuer: "kopiochi"
+  client_id: "kopiochi"
+  access_token_ttl: "15m"
+  refresh_token_ttl: "168h"
+  token_leeway: "30s"                    # clock-skew allowance on exp
 ```
+
+Secrets are never written into YAML. `db.password` comes from
+`APP_DB_PASSWORD`, and the process refuses to start if it is empty or a known
+placeholder. There is no JWT secret to supply — RS256 uses the keypair above.
 
 ### 5. Build and Deploy
 
@@ -407,7 +413,7 @@ func NewRouter(cfg config.Server, mw ...func(http.Handler) http.Handler) *chi.Mu
     r.Use(middleware.Recoverer)
     r.Use(middleware.RequestID)
     r.Use(MyCustomMiddleware)  // Add here
-    // ... RealIP, Timeout, ZerologRequestLogger
+    // ... httpx.SecurityHeaders, zlog.RealIP, Timeout, ZerologRequestLogger
 
     return r
 }

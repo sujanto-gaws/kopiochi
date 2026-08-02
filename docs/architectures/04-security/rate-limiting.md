@@ -1,15 +1,27 @@
 # Rate Limiting
 
-**Status:** Proposed
+**Status:** Accepted — partially implemented (Phase 2.1, `dcc6e5d` + `d130519`)
 **Date:** 2026-08-02
-**Severity:** Critical — the current implementation serialises the entire server.
+**Last verified:** 2026-08-02, after Phase 2 — problems 1–6 below are all
+resolved. What remains unshipped from the target design is listed under
+[What did not ship](#what-did-not-ship).
+
+> **The `Severity: Critical` header no longer applies and has been removed.**
+> It read *"Critical — the current implementation serialises the entire
+> server."* `dcc6e5d` replaced the fixed-window counter with a token bucket
+> whose lock is released inside `allow()` before `next.ServeHTTP` is ever
+> reached, so the server no longer serialises.
+> `TestRateLimitAllowsConcurrentRequests` — task 1.1(c), previously `t.Skip`ped
+> because it failed by design — now runs unconditionally in the default suite
+> and passes.
 
 `ratelimit` is listed in `config/default.yaml` under `plugins.middleware`, so this
-code is **active in every deployment**.
+code is **active in every deployment**. It is still a plugin; converting it to
+direct construction in `internal/httpx` is Phase 3.5.
 
 ---
 
-## Problem 1: the mutex is held across the downstream handler
+## Problem 1 (fixed): the mutex is held across the downstream handler
 
 `internal/plugins/middleware/ratelimit.go:66-113`:
 
@@ -48,10 +60,16 @@ many cores or connections are available. A single slow query blocks every other
 client. Under load this presents as latency growing linearly with concurrency —
 and it will not show up in a single-user smoke test.
 
-This is the highest-impact performance defect in the repository, and it is on by
-default.
+This was the highest-impact performance defect in the repository, and it was on
+by default.
 
-## Problem 2: the map never evicts
+*Fixed in `dcc6e5d`. `allow()` (`ratelimit.go:233-270`) takes the mutex, does the
+bucket lookup, refill, and decrement, and returns; `Middleware` calls
+`next.ServeHTTP` only after `allow()` has returned, outside any critical
+section. Regression test: `TestRateLimitAllowsConcurrentRequests`
+(`internal/plugins/middleware/ratelimit_test.go`), which now runs by default.*
+
+## Problem 2 (fixed): the map never evicts
 
 ```go
 p.requests = make(map[string]*clientRate)    // line 50 — created once
@@ -61,7 +79,16 @@ Entries are added on first sight of a key and **never removed**. `Close()` nils
 the whole map, but that only runs at shutdown. Memory grows with the number of
 distinct keys, forever.
 
-## Problem 3: the key is attacker-controlled
+*Fixed in `dcc6e5d` two ways. `Initialize` starts a `sweepLoop` goroutine that
+ticks every `ttl` (default 10m) and calls `evictExpired`
+(`ratelimit.go:207-227`), which drops any bucket idle past the cutoff **and**
+already projected back to full burst — a bucket with no state left to lose.
+`Close` stops the loop. Independently, `max_keys` (default 100,000) caps the
+table; see [the `max_keys` behavioural note](#the-max_keys-rejection-path)
+below. Tests: `TestEvictExpired_RemovesIdleFullyRefilledBuckets`,
+`TestMaxKeysCap_RejectsNewKeysOnceTableIsFull`.*
+
+## Problem 3 (fixed): the key is attacker-controlled
 
 ```go
 clientIP := r.RemoteAddr
@@ -81,13 +108,26 @@ Two failures at once:
 Using the *entire* XFF chain rather than a resolved client address also means
 adding a legitimate proxy hop silently changes everyone's key.
 
-## Problem 4: fixed windows allow 2× bursts
+*Fixed in `dcc6e5d` + `333968c`. This file no longer reads `X-Forwarded-For` at
+all. `clientKey` (`ratelimit.go:315-325`) reads the address resolved upstream by
+`internal/middleware.RealIP`, which honours forwarded headers only from
+configured trusted-proxy CIDRs and defaults to trusting none; if `RealIP` has
+not run it falls back to the raw peer address, never to a header. See
+[middleware hardening](middleware-hardening.md).*
+
+## Problem 4 (fixed): fixed windows allow 2× bursts
 
 A fixed window resets abruptly. A client can send the full budget at the end of
 one window and again at the start of the next — 2× the intended rate across the
 boundary.
 
-## Problem 5: the counter increments even when rejecting
+*Fixed in `dcc6e5d`: there is no window any more. Tokens refill continuously in
+proportion to elapsed time, capped at `burst`
+(`b.tokens = math.Min(p.burst, b.tokens+elapsed*p.rate)`), so there is no
+boundary to double up across. `TestAllow_RefillsTokensOverInjectedClock` proves
+the refill maths against an injected clock rather than a sleep.*
+
+## Problem 5 (fixed): the counter increments even when rejecting
 
 ```go
 client.count++
@@ -100,16 +140,35 @@ A client that keeps hammering after being limited drives the counter up
 indefinitely. Harmless with an `int` in practice, but it means the counter no
 longer measures "requests served" and complicates any future logging on it.
 
-## Problem 6: rate-limit headers are inconsistent
+*Fixed in `dcc6e5d`: `allow()` decrements only on the accept path
+(`if b.tokens >= 1 { b.tokens-- }`). A rejected request leaves the bucket
+untouched, so a client hammering a limit does not push its own recovery further
+away. `TestAllow_DoesNotDrainBelowZeroOnRepeatedRejection` covers it.*
+
+## Problem 6 (fixed): rate-limit headers are inconsistent
 
 `X-RateLimit-*` headers are set only on the success path; the 429 response omits
 them and sets only `Retry-After`. Clients that read the headers to self-throttle
 get nothing exactly when they need it most. The header names are also the legacy
 `X-` forms rather than the standardised `RateLimit-*` fields.
 
+*Fixed in `dcc6e5d`: `RateLimit-Limit` and `RateLimit-Remaining` are set before
+the accept/reject branch, so both paths carry them, and the names are the
+standardised forms. `Retry-After` is added on the 429. The 429 **body** is still
+the ad-hoc `{"error":"rate limit exceeded"}` rather than `problem+json` — see
+[What did not ship](#what-did-not-ship).*
+
 ---
 
 ## Target design
+
+*Shipped in `dcc6e5d`, with three deliberate deviations from the sketch below:
+the type is still `RateLimiterPlugin` in
+`internal/plugins/middleware/ratelimit.go` rather than a `RateLimiter` in
+`internal/httpx` (the move is Phase 3.5); eviction runs on a goroutine owned by
+`Initialize`/`Close` rather than on a lifecycle stack that does not exist yet
+(Phase 3.9); and the 429 body is unchanged. Everything else — bucket, clock
+injection, TTL eviction, `max_keys`, header handling — matches.*
 
 ### Token bucket with per-key locking, no lock held downstream
 
@@ -215,15 +274,41 @@ Additionally cap `len(rl.buckets)`; when the cap is reached, reject new keys wit
 429 rather than growing without bound. That converts a memory-exhaustion attack
 into a rate-limit rejection.
 
+### The `max_keys` rejection path
+
+Shipped as written, and the choice is worth stating explicitly because the
+obvious alternative is worse. When the table is full, `allow()` **rejects the
+new key** (`ratelimit.go:243-253`); it does not evict an existing bucket to make
+room. Evict-oldest would be gameable: an attacker who floods fresh keys could
+push a legitimate, actively-throttled client's bucket out of the table, and that
+client's next request would start a brand-new bucket at full burst — the flood
+would hand the throttled client its budget back. Rejecting instead leaves every
+admitted key served normally, and the TTL sweep continuously reclaims idle slots,
+so the state self-heals rather than needing intervention.
+
+One behavioural consequence to carry, because it is visible to clients and is
+not what the headers usually mean:
+
+> A request rejected by the `max_keys` cap gets `RateLimit-Remaining: 0` and a
+> `Retry-After` of 1 second (`maxKeysRetryAfter`) for a key that was **never
+> admitted** and therefore has no bucket. Both values are synthetic. There is no
+> per-key state to derive a real `Retry-After` from, so the constant is a
+> deliberately conservative hint rather than a fabricated per-key number — but a
+> client reading `Remaining: 0` here is not being told "you exhausted your
+> budget", it is being told "the server is not tracking you at all right now".
+> Anything that reports on limiter rejections should distinguish the two, or the
+> saturation signal reads as ordinary throttling.
+
 ### Keying
 
 - Key on the client IP resolved by the `RealIP` middleware from **trusted
   proxies only** (see [middleware hardening](middleware-hardening.md)). Never
-  read `X-Forwarded-For` here.
+  read `X-Forwarded-For` here. ✅ Shipped — `clientKey`, `dcc6e5d` + `333968c`.
 - For authenticated requests, prefer keying on the subject: `user:<sub>`. It is
-  more accurate than IP for shared NAT.
+  more accurate than IP for shared NAT. ⏳ Not shipped.
 - Normalise IPv6 to a /64 prefix — a single client typically holds many addresses
-  in one /64, so per-address keying is trivially bypassable.
+  in one /64, so per-address keying is trivially bypassable. ⏳ Not shipped;
+  `clientKey` returns the full address.
 
 ### Per-route limits
 
@@ -249,6 +334,28 @@ behind the same `allow(key)` interface so the middleware does not change.
 
 ### Configuration
 
+The `security.rate_limit` block below is the target shape and is **not** what
+ships. Config still reaches the limiter through the generic plugin map, so the
+tunables live under `plugins.custom.ratelimit` and are parsed by
+`Initialize` (`ratelimit.go:74-141`):
+
+| Key | Meaning | Default |
+|---|---|---|
+| `rate` | sustained requests per minute | derived from `requests`/`window` |
+| `burst` | bucket capacity / instantaneous allowance | `requests` |
+| `ttl` | idle bucket eviction interval | `10m` |
+| `max_keys` | hard cap on tracked keys | `100000` |
+| `requests` + `window` | legacy fixed-window pair, translated to `burst` = `requests`, `rate` = `requests`/`window` | `100`, `1m` |
+
+The legacy pair is accepted so existing deployments' config keeps working across
+the rewrite (`TestInitialize_LegacyRequestsWindowStillWorks`). `config/default.yaml`
+ships `plugins.custom: {}`, so the shipped defaults are burst 100, rate 100/min,
+ttl 10m, max_keys 100,000. Invalid values — non-positive `rate`, `burst`, `ttl`,
+or `max_keys`, or an unparseable duration — are errors from `Initialize` rather
+than silent fallbacks.
+
+Target shape, for when Phase 3.5 lifts this out of the plugin map:
+
 ```yaml
 security:
   rate_limit:
@@ -264,24 +371,61 @@ security:
 
 ---
 
+## What did not ship
+
+Phase 2.1 closed every defect above. These items from the target design are
+still outstanding, and none of them is a security regression on the old code:
+
+| Item | Where it goes |
+|---|---|
+| 429 body as `problem+json` instead of `{"error":"rate limit exceeded"}` | Needs the shared `problem` writer that [middleware hardening](middleware-hardening.md) proposes alongside `httpx.Recovery`; neither exists yet |
+| Per-route limits (tighter budgets on `/auth/login`, `/auth/refresh`) | Needs direct construction — Phase 3.5 |
+| Keying on `user:<sub>` for authenticated requests | Phase 3.5 |
+| IPv6 /64 normalisation | Phase 3.5 |
+| `security.rate_limit` typed config replacing the plugin map | Phase 3.5 / [ADR-008](../adr/008%20-%20Configuration%20Precedence%20and%20Secret%20Handling.md) decision 8 |
+| Shared store for multi-replica deployments | Unchanged: the in-process limiter still allows N× the rate across N replicas |
+
+---
+
+## A race the fix introduced, and what that says about coverage
+
+`dcc6e5d` was a concurrency fix, and it shipped with a data race of its own:
+`p.now` (written by `setClock`) and `p.initialized` / `p.burst` (written by
+`Initialize` and `Close`) were read without the mutex that guards their writes.
+A request served concurrently with shutdown races on `initialized` and `burst`.
+
+It was **found by inspection, not by tooling**, and fixed in `d130519`:
+`snapshot()` reads `initialized` and `burst` together under the lock, `allow()`
+takes the clock inside its own critical section, and `evictExpired` already held
+the lock.
+
+That is exactly the class of bug `go test -race` exists to catch, and `-race`
+**cannot run in this development environment** — see
+[testing strategy](../06-quality/testing-strategy.md#race-detection-is-outstanding).
+Concurrency correctness here currently rests on review. Phase 4.4's CI, running
+on Linux, is what turns that back into a machine check.
+
+---
+
 ## Tests
 
-```go
-func TestAllowDoesNotHoldLockDuringHandler(t *testing.T) {
-    // Two concurrent requests to a handler that blocks on a channel.
-    // Both must enter the handler; with the current code the second never does.
-}
+Shipped in `dcc6e5d`, in `internal/plugins/middleware/`:
 
-func TestBucketRefillsOverTime(t *testing.T)      // inject rl.now for determinism
-func TestEvictsIdleBuckets(t *testing.T)
-func TestRejectsBeyondMaxKeys(t *testing.T)
-func TestXForwardedForIsIgnoredWithoutTrustedProxies(t *testing.T)
-func TestHeadersPresentOn429(t *testing.T)
-```
+| Test | File | Covers |
+|---|---|---|
+| `TestRateLimitAllowsConcurrentRequests` | `ratelimit_test.go` | Problem 1 — no longer skipped, runs by default |
+| `TestAllow_RefillsTokensOverInjectedClock` | `ratelimit_tokenbucket_test.go` | Refill maths, injected clock, no sleeps |
+| `TestAllow_DoesNotDrainBelowZeroOnRepeatedRejection` | `ratelimit_tokenbucket_test.go` | Problem 5 |
+| `TestEvictExpired_RemovesIdleFullyRefilledBuckets` | `ratelimit_tokenbucket_test.go` | Problem 2 |
+| `TestMaxKeysCap_RejectsNewKeysOnceTableIsFull` | `ratelimit_tokenbucket_test.go` | The cap, including the rejection semantics above |
+| `TestInitialize_LegacyRequestsWindowStillWorks` | `ratelimit_tokenbucket_test.go` | Config back-compat |
 
-`TestAllowDoesNotHoldLockDuringHandler` is the direct regression test for the
-critical defect and should be written first — it fails against the current
-implementation.
+The originally sketched `TestXForwardedForIsIgnoredWithoutTrustedProxies` landed
+next to the code it actually exercises, as
+`TestRealIP_IgnoresForwardedHeadersWithoutTrustedProxies` in
+`internal/middleware/clientip_test.go`. `TestHeadersPresentOn429` is not written;
+the header behaviour is asserted incidentally by the cap test rather than
+directly.
 
 ---
 
