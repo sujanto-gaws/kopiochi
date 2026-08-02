@@ -143,6 +143,16 @@ func (p *RateLimiterPlugin) Initialize(cfg map[string]interface{}) error {
 // setClock overrides the injected clock under lock. Unexported: it exists
 // purely so white-box tests can install a fake, deterministic clock without
 // racing the background eviction sweep started by Initialize.
+// snapshot returns the fields Middleware needs, read together under the lock.
+// Initialize and Close mutate them, so an unlocked read here would be a data
+// race with a concurrent shutdown -- the kind the race detector would catch if
+// it could run on this toolchain.
+func (p *RateLimiterPlugin) snapshot() (initialized bool, burst float64) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.initialized, p.burst
+}
+
 func (p *RateLimiterPlugin) setClock(now func() time.Time) {
 	p.mu.Lock()
 	p.now = now
@@ -221,10 +231,12 @@ func (p *RateLimiterPlugin) evictExpired() {
 // function's own bucket lookup/refill/decrement, never across
 // next.ServeHTTP.
 func (p *RateLimiterPlugin) allow(key string) (ok bool, remaining int, retryAfter time.Duration) {
-	now := p.now()
-
 	p.mu.Lock()
 	defer p.mu.Unlock()
+
+	// Read the clock under the lock: setClock writes p.now under the same
+	// mutex, so reading it unlocked is a data race on the field itself.
+	now := p.now()
 
 	b, exists := p.buckets[key]
 	if !exists {
@@ -261,7 +273,11 @@ func (p *RateLimiterPlugin) allow(key string) (ok bool, remaining int, retryAfte
 func (p *RateLimiterPlugin) Middleware() func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if !p.initialized {
+			// Snapshot both fields under the lock in one go: Initialize and
+			// Close write them under the same mutex, so reading them
+			// unlocked races with a concurrent shutdown.
+			initialized, burst := p.snapshot()
+			if !initialized {
 				next.ServeHTTP(w, r)
 				return
 			}
@@ -273,7 +289,7 @@ func (p *RateLimiterPlugin) Middleware() func(http.Handler) http.Handler {
 			// Headers are set on both the success and rejection paths so a
 			// well-behaved client always has enough information to
 			// self-throttle, not just when it's already too late.
-			w.Header().Set("RateLimit-Limit", strconv.Itoa(int(p.burst)))
+			w.Header().Set("RateLimit-Limit", strconv.Itoa(int(burst)))
 			w.Header().Set("RateLimit-Remaining", strconv.Itoa(remaining))
 
 			if !ok {
