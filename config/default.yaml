@@ -6,7 +6,12 @@ server:
   write_timeout: "30s"
   idle_timeout: "120s"
   shutdown_timeout: "30s"
-  request_timeout: "60s"
+  # Must not exceed write_timeout: the write deadline is what actually cuts
+  # the connection, so a request_timeout above it would let the connection
+  # be severed mid-response instead of completing or timing out cleanly
+  # (see docs/architectures/03-configuration/configuration-model.md and
+  # Config.Validate).
+  request_timeout: "25s"
   # CIDR allowlist of proxies whose X-Forwarded-For/X-Real-Ip headers are
   # trusted when resolving the client IP. Empty (default) = trust nothing,
   # always use the raw socket address. Only add entries here if the service

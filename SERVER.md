@@ -179,7 +179,7 @@ server:
   write_timeout: "30s"
   idle_timeout: "120s"
   shutdown_timeout: "30s"
-  request_timeout: "60s"
+  request_timeout: "25s"
 ```
 
 Values support Go duration strings (`"10s"`, `"1m30s"`, etc.) and can be overridden at runtime via environment variables with the `APP_` prefix and `.` → `_` substitution, e.g.:
