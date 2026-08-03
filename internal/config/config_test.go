@@ -329,19 +329,18 @@ func TestValidate_RejectsMinConnsAboveMaxConns(t *testing.T) {
 // regression test for middleware-hardening.md, Problem 2: the CORS spec
 // forbids combining a wildcard allowed origin with credentialed requests,
 // and the server must refuse to start rather than let that combination
-// reach request handling (internal/plugins/middleware/cors.go).
+// reach request handling (internal/httpx/cors.go).
 func TestValidate_RejectsWildcardCORSOriginWithCredentials(t *testing.T) {
 	cfg := validConfig()
-	cfg.Plugins.Custom = map[string]map[string]interface{}{
-		"cors": {
-			"allowed_origins":   []interface{}{"*"},
-			"allow_credentials": true,
-		},
+	cfg.Security.CORS = CORS{
+		Enabled:          true,
+		AllowedOrigins:   []string{"*"},
+		AllowCredentials: true,
 	}
 
 	err := cfg.Validate()
 	if err == nil {
-		t.Fatal("Validate() accepted plugins.custom.cors allowed_origins \"*\" combined with allow_credentials: true")
+		t.Fatal("Validate() accepted security.cors allowed_origins \"*\" combined with allow_credentials: true")
 	}
 	if !strings.Contains(err.Error(), "cors") {
 		t.Errorf("error = %v, want it to mention cors", err)
@@ -353,10 +352,9 @@ func TestValidate_RejectsWildcardCORSOriginWithCredentials(t *testing.T) {
 // a legitimate, if permissive, deliberate choice and must not be rejected.
 func TestValidate_AllowsWildcardCORSOriginWithoutCredentials(t *testing.T) {
 	cfg := validConfig()
-	cfg.Plugins.Custom = map[string]map[string]interface{}{
-		"cors": {
-			"allowed_origins": []interface{}{"*"},
-		},
+	cfg.Security.CORS = CORS{
+		Enabled:        true,
+		AllowedOrigins: []string{"*"},
 	}
 
 	if err := cfg.Validate(); err != nil {
@@ -370,11 +368,10 @@ func TestValidate_AllowsWildcardCORSOriginWithoutCredentials(t *testing.T) {
 // the combination CORS supports.
 func TestValidate_AllowsSpecificCORSOriginWithCredentials(t *testing.T) {
 	cfg := validConfig()
-	cfg.Plugins.Custom = map[string]map[string]interface{}{
-		"cors": {
-			"allowed_origins":   []interface{}{"https://app.example.com"},
-			"allow_credentials": true,
-		},
+	cfg.Security.CORS = CORS{
+		Enabled:          true,
+		AllowedOrigins:   []string{"https://app.example.com"},
+		AllowCredentials: true,
 	}
 
 	if err := cfg.Validate(); err != nil {
@@ -387,18 +384,64 @@ func TestValidate_AllowsSpecificCORSOriginWithCredentials(t *testing.T) {
 // not just against a hand-built Config.
 func TestLoad_RejectsWildcardCORSOriginWithCredentials(t *testing.T) {
 	cfgPath := writeConfig(t, validYAML+`
-plugins:
-  custom:
-    cors:
-      allowed_origins: ["*"]
-      allow_credentials: true
+security:
+  cors:
+    enabled: true
+    allowed_origins: ["*"]
+    allow_credentials: true
 `)
 
 	_, err := Load(cfgPath)
 	if err == nil {
-		t.Fatal("Load succeeded with plugins.custom.cors allowed_origins \"*\" and allow_credentials: true")
+		t.Fatal("Load succeeded with security.cors allowed_origins \"*\" and allow_credentials: true")
 	}
 	if !strings.Contains(err.Error(), "cors") {
 		t.Errorf("error = %v, want it to mention cors", err)
+	}
+}
+
+// TestLoad_SecurityEnvOverrides proves the APP_SECURITY_* variables
+// documented in .env.example are real: they reach the typed struct through
+// Viper's replacer, including the comma-separated origin list, which relies
+// on Viper's StringToSliceHookFunc to become a []string rather than a single
+// string. The variables this replaced (APP_RATELIMIT_REQUESTS,
+// APP_CORS_ALLOWED_ORIGINS) mapped to no Viper key at all and were silently
+// ignored — the exact failure this test exists to prevent recurring.
+func TestLoad_SecurityEnvOverrides(t *testing.T) {
+	cfgPath := writeConfig(t, validYAML)
+
+	t.Setenv("APP_SECURITY_CORS_ENABLED", "true")
+	t.Setenv("APP_SECURITY_CORS_ALLOWED_ORIGINS", "https://a.example.com,https://b.example.com")
+	t.Setenv("APP_SECURITY_RATE_LIMIT_ENABLED", "true")
+	t.Setenv("APP_SECURITY_RATE_LIMIT_RATE", "250")
+	t.Setenv("APP_SECURITY_RATE_LIMIT_TTL", "3m")
+
+	cfg, err := Load(cfgPath)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+
+	if !cfg.Security.CORS.Enabled {
+		t.Error("security.cors.enabled did not pick up APP_SECURITY_CORS_ENABLED")
+	}
+	want := []string{"https://a.example.com", "https://b.example.com"}
+	got := cfg.Security.CORS.AllowedOrigins
+	if len(got) != len(want) {
+		t.Fatalf("allowed_origins = %#v, want %#v (comma-separated env list must split)", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("allowed_origins[%d] = %q, want %q", i, got[i], want[i])
+		}
+	}
+
+	if !cfg.Security.RateLimit.Enabled {
+		t.Error("security.rate_limit.enabled did not pick up APP_SECURITY_RATE_LIMIT_ENABLED")
+	}
+	if cfg.Security.RateLimit.Rate != 250 {
+		t.Errorf("rate = %v, want 250", cfg.Security.RateLimit.Rate)
+	}
+	if cfg.Security.RateLimit.TTL != 3*time.Minute {
+		t.Errorf("ttl = %v, want 3m", cfg.Security.RateLimit.TTL)
 	}
 }

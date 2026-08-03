@@ -11,14 +11,10 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/go-chi/chi/v5/middleware"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/rs/zerolog/log"
 
 	"github.com/sujanto-gaws/kopiochi/internal/config"
-	"github.com/sujanto-gaws/kopiochi/internal/httpx"
-	zlog "github.com/sujanto-gaws/kopiochi/internal/middleware"
-	"github.com/sujanto-gaws/kopiochi/internal/plugin"
 )
 
 // ShutdownFunc is a function that performs cleanup during shutdown
@@ -29,7 +25,6 @@ type Server struct {
 	httpServer      *http.Server
 	shutdownFuncs   []ShutdownFunc
 	shutdownTimeout time.Duration
-	pluginRegistry  *plugin.Registry
 }
 
 // ServerOption is a function that configures the Server
@@ -40,44 +35,6 @@ func WithShutdownFunc(fn ShutdownFunc) ServerOption {
 	return func(s *Server) {
 		s.shutdownFuncs = append(s.shutdownFuncs, fn)
 	}
-}
-
-// WithPluginRegistry sets the plugin registry for the server
-func WithPluginRegistry(registry *plugin.Registry) ServerOption {
-	return func(s *Server) {
-		s.pluginRegistry = registry
-	}
-}
-
-// NewRouter creates a new chi router with core middleware applied.
-// Timeouts are sourced from cfg; additional middlewares are applied after the core stack.
-func NewRouter(cfg config.Server, mw ...func(http.Handler) http.Handler) *chi.Mux {
-	r := chi.NewRouter()
-
-	// Core middleware stack (order matters)
-	r.Use(middleware.Recoverer)
-	r.Use(middleware.RequestID)
-	// Cheap and applies to every response, including ones later middleware
-	// or the router itself produces (panics recovered by Recoverer above,
-	// 404s, 405s): headers set here are already on the ResponseWriter by
-	// the time anything downstream writes a status.
-	r.Use(httpx.SecurityHeaders(httpx.SecurityHeadersConfig{EnableHSTS: cfg.EnableHSTS}))
-	// zlog.RealIP replaces chi's middleware.RealIP, which trusts forwarded
-	// headers from any peer unconditionally. Ours resolves the client IP
-	// from trusted proxies only (empty by default = trust nothing) and
-	// stores it in the request context for the request logger and the rate
-	// limiter to consume, instead of every consumer re-parsing headers
-	// itself. It must run before anything that keys or logs on client IP.
-	r.Use(zlog.RealIP(zlog.ParseTrustedProxies(cfg.TrustedProxies)))
-	r.Use(middleware.Timeout(cfg.RequestTimeout))
-	r.Use(zlog.ZerologRequestLogger)
-
-	// Caller-supplied middleware applied after the core stack
-	if len(mw) > 0 {
-		r.Use(mw...)
-	}
-
-	return r
 }
 
 // NewServer creates a new server instance from the provided config and options
@@ -152,12 +109,6 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	for i, fn := range s.shutdownFuncs {
 		if err := fn(); err != nil {
 			errs = append(errs, fmt.Errorf("shutdown func[%d]: %w", i, err))
-		}
-	}
-
-	if s.pluginRegistry != nil {
-		if err := s.pluginRegistry.Close(); err != nil {
-			errs = append(errs, fmt.Errorf("plugin registry shutdown: %w", err))
 		}
 	}
 

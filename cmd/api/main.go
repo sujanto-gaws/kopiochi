@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"net/http"
 	"os"
 
 	"github.com/rs/zerolog/log"
@@ -13,8 +12,6 @@ import (
 	"github.com/sujanto-gaws/kopiochi/internal/httpx"
 	"github.com/sujanto-gaws/kopiochi/internal/infrastructure/http/server"
 	"github.com/sujanto-gaws/kopiochi/internal/logger"
-	"github.com/sujanto-gaws/kopiochi/internal/plugin"
-	"github.com/sujanto-gaws/kopiochi/internal/plugins"
 )
 
 // @title Kopiochi API
@@ -51,18 +48,6 @@ func main() {
 			log.Logger = logger.Init(cfg.Log.Level, cfg.Log.Format)
 			log.Info().Msg("application starting")
 
-			// Initialize plugins
-			// Step 1: Create registry and register built-in plugins
-			pluginRegistry := plugin.NewRegistry()
-			plugins.RegisterBuiltinPlugins(pluginRegistry)
-
-			// Step 2: Initialize plugins from configuration
-			if _, err := plugin.InitializeFromConfig(pluginRegistry, &cfg.Plugins); err != nil {
-				return fmt.Errorf("initialize plugins: %w", err)
-			}
-			defer pluginRegistry.Close()
-			log.Info().Strs("plugins", pluginRegistry.ListInitialized()).Msg("plugins initialized")
-
 			// Initialize database
 			dsn := db.BuildDSN(cfg.DB.Host, cfg.DB.Port, cfg.DB.User, cfg.DB.Password.Reveal(), cfg.DB.Name, cfg.DB.SSLMode)
 			bunDB, pool, err := db.NewDB(db.Config{
@@ -82,15 +67,15 @@ func main() {
 				return fmt.Errorf("build app: %w", err)
 			}
 
-			// Setup router with plugin middleware chain
-			r := server.NewRouter(cfg.Server)
-
-			// Apply plugin middleware chain to router
-			middlewareChain := plugin.NewMiddlewareChainFromRegistry(pluginRegistry, plugin.GetMiddlewareNames(&cfg.Plugins))
-			if middlewareChain.Len() > 0 {
-				r.Use(func(next http.Handler) http.Handler {
-					return middlewareChain.Build(next)
-				})
+			// Build the router: core middleware plus whichever cross-cutting
+			// middlewares security config enables. There is no plugin
+			// registry any more — CORS and rate limiting are constructed
+			// directly from typed config (see internal/httpx/router.go).
+			// closeRouter releases what the router owns (the rate limiter's
+			// eviction goroutine) and runs as part of graceful shutdown.
+			r, closeRouter, err := httpx.NewRouter(cfg.Server, cfg.Security)
+			if err != nil {
+				return fmt.Errorf("build router: %w", err)
 			}
 
 			// Mount operational endpoints (/healthz, /readyz, /swagger) and every
@@ -107,8 +92,8 @@ func main() {
 			server.Run(
 				cfg.Server,
 				r,
+				server.WithShutdownFunc(closeRouter),
 				server.WithShutdownFunc(server.NewPoolShutdownFunc(pool)),
-				server.WithPluginRegistry(pluginRegistry),
 			)
 			return nil
 		},

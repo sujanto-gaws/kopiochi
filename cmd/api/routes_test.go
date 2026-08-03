@@ -17,7 +17,6 @@ import (
 
 	"github.com/sujanto-gaws/kopiochi/internal/config"
 	"github.com/sujanto-gaws/kopiochi/internal/httpx"
-	"github.com/sujanto-gaws/kopiochi/internal/infrastructure/http/server"
 )
 
 // testConfig builds a *config.Config that satisfies identity.Config.Validate,
@@ -78,7 +77,9 @@ func TestRouteTable(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEmpty(t, app.Modules, "application must register at least one module")
 
-	r := server.NewRouter(cfg.Server)
+	r, closeRouter, err := httpx.NewRouter(cfg.Server, cfg.Security)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = closeRouter() })
 	httpx.Mount(r, app.Modules, httpx.Deps{Pinger: nil})
 
 	var got []string

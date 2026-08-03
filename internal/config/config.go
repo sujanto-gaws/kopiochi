@@ -12,11 +12,15 @@ import (
 )
 
 type Config struct {
-	Server  `mapstructure:"server"`
-	DB      `mapstructure:"db"`
-	Log     `mapstructure:"log"`
-	Auth    `mapstructure:"auth"`
-	Plugins `mapstructure:"plugins"`
+	Server `mapstructure:"server"`
+	DB     `mapstructure:"db"`
+	Log    `mapstructure:"log"`
+	Auth   `mapstructure:"auth"`
+	// Security is a named field rather than an embedded struct: it carries
+	// nested sections (CORS, RateLimit) whose field names would otherwise be
+	// promoted into Config and collide as the config grows. See
+	// docs/architectures/03-configuration/configuration-model.md.
+	Security Security `mapstructure:"security"`
 }
 
 type Server struct {
@@ -75,23 +79,53 @@ type Auth struct {
 	TokenLeeway time.Duration `mapstructure:"token_leeway"`
 }
 
-type Plugins struct {
-	Middleware []string                          `mapstructure:"middleware"`
-	Auth       map[string]PluginAuthConfig       `mapstructure:"auth"`
-	Cache      map[string]PluginCacheConfig      `mapstructure:"cache"`
-	Custom     map[string]map[string]interface{} `mapstructure:"custom"`
+// Security holds the cross-cutting HTTP concerns that used to be configured
+// through the generic plugin map (plugins.middleware / plugins.custom). They
+// are ordinary typed configuration, not business modules, so they are
+// constructed directly in internal/httpx rather than registered in a plugin
+// framework -- see
+// docs/architectures/01-modularity/extension-framework.md, "What about
+// genuinely optional middleware?".
+//
+// Because the fields are typed, a YAML type error (requests: "500") is now a
+// startup failure instead of a silently-applied default, which was defect 3
+// of the plugin config contract.
+type Security struct {
+	CORS      CORS      `mapstructure:"cors"`
+	RateLimit RateLimit `mapstructure:"rate_limit"`
 }
 
-type PluginAuthConfig struct {
-	Enabled  bool                   `mapstructure:"enabled"`
-	Provider string                 `mapstructure:"provider"`
-	Config   map[string]interface{} `mapstructure:"config"`
+// CORS configures the Cross-Origin Resource Sharing middleware
+// (internal/httpx.CORS). It is allowlist-only and deny-by-default: an empty
+// AllowedOrigins grants no origin access, and a wildcard must be listed
+// explicitly as "*".
+type CORS struct {
+	// Enabled gates the middleware entirely. Disabled (the default) means
+	// no CORS headers are ever emitted -- which, for a same-origin or
+	// non-browser API, is the correct posture.
+	Enabled          bool          `mapstructure:"enabled"`
+	AllowedOrigins   []string      `mapstructure:"allowed_origins"`
+	AllowedMethods   []string      `mapstructure:"allowed_methods"`
+	AllowedHeaders   []string      `mapstructure:"allowed_headers"`
+	AllowCredentials bool          `mapstructure:"allow_credentials"`
+	MaxAge           time.Duration `mapstructure:"max_age"`
 }
 
-type PluginCacheConfig struct {
-	Enabled  bool                   `mapstructure:"enabled"`
-	Provider string                 `mapstructure:"provider"`
-	Config   map[string]interface{} `mapstructure:"config"`
+// RateLimit configures the token-bucket rate limiter
+// (internal/httpx.NewRateLimiter).
+type RateLimit struct {
+	Enabled bool `mapstructure:"enabled"`
+	// Rate is the sustained allowance in requests per minute.
+	Rate float64 `mapstructure:"rate"`
+	// Burst is the bucket capacity: the instantaneous allowance a key may
+	// spend before it is throttled to Rate.
+	Burst float64 `mapstructure:"burst"`
+	// TTL is how long an idle bucket is kept before the sweep evicts it.
+	TTL time.Duration `mapstructure:"ttl"`
+	// MaxKeys caps the number of tracked keys. New keys are rejected once
+	// the table is full rather than evicting an existing bucket, which
+	// would be gameable -- see internal/httpx/ratelimit.go.
+	MaxKeys int `mapstructure:"max_keys"`
 }
 
 func Load(cfgPath string) (*Config, error) {
@@ -153,10 +187,20 @@ func Load(cfgPath string) (*Config, error) {
 	v.SetDefault("auth.max_failed_attempts", 5)
 	v.SetDefault("auth.lock_duration", "15m")
 	v.SetDefault("auth.token_leeway", "30s")
-	v.SetDefault("plugins.middleware", []string{})
-	v.SetDefault("plugins.auth", map[string]interface{}{})
-	v.SetDefault("plugins.cache", map[string]interface{}{})
-	v.SetDefault("plugins.custom", map[string]interface{}{})
+	// Both cross-cutting middlewares default to off. Enabling CORS without
+	// an allowlist still grants nothing (deny-by-default), and enabling the
+	// rate limiter uses the tunables below.
+	v.SetDefault("security.cors.enabled", false)
+	v.SetDefault("security.cors.allowed_origins", []string{})
+	v.SetDefault("security.cors.allowed_methods", []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"})
+	v.SetDefault("security.cors.allowed_headers", []string{"Accept", "Content-Type", "Content-Length", "Accept-Encoding", "X-CSRF-Token", "Authorization"})
+	v.SetDefault("security.cors.allow_credentials", false)
+	v.SetDefault("security.cors.max_age", "5m")
+	v.SetDefault("security.rate_limit.enabled", false)
+	v.SetDefault("security.rate_limit.rate", 100)
+	v.SetDefault("security.rate_limit.burst", 100)
+	v.SetDefault("security.rate_limit.ttl", "10m")
+	v.SetDefault("security.rate_limit.max_keys", 100000)
 
 	if err := v.ReadInConfig(); err != nil {
 		if _, ok := err.(viper.ConfigFileNotFoundError); !ok {
@@ -207,30 +251,6 @@ func isPlaceholderSecret(v string) bool {
 	return legacyPlaceholderSecrets[v]
 }
 
-// corsAllowedOriginsAndCredentials extracts the "cors" middleware plugin's
-// allowed_origins/allow_credentials from the generic plugins.custom map
-// (internal/plugins/middleware/cors.go's config surface is still
-// map[string]interface{}). A missing "cors" section returns no origins and
-// no credentials -- the same safe, deny-everything state the plugin itself
-// defaults to.
-func corsAllowedOriginsAndCredentials(c *Config) (origins []string, allowCredentials bool) {
-	cors, ok := c.Plugins.Custom["cors"]
-	if !ok {
-		return nil, false
-	}
-	if raw, ok := cors["allowed_origins"].([]interface{}); ok {
-		for _, o := range raw {
-			if s, ok := o.(string); ok {
-				origins = append(origins, s)
-			}
-		}
-	}
-	if b, ok := cors["allow_credentials"].(bool); ok {
-		allowCredentials = b
-	}
-	return origins, allowCredentials
-}
-
 // Validate rejects configuration that would otherwise fail later, at first
 // request or first DB connection, instead of at startup. Load calls this so
 // the process refuses to start rather than serve traffic against a broken
@@ -245,12 +265,31 @@ func (c *Config) Validate() error {
 	// looks like it grants credentialed cross-origin access and does not
 	// (or, in a browser that gets it wrong, does). See
 	// docs/architectures/04-security/middleware-hardening.md, Problem 2.
-	if origins, allowCreds := corsAllowedOriginsAndCredentials(c); allowCreds {
-		for _, o := range origins {
+	if c.Security.CORS.AllowCredentials {
+		for _, o := range c.Security.CORS.AllowedOrigins {
 			if o == "*" {
-				errs = append(errs, errors.New(`plugins.custom.cors: allowed_origins "*" cannot be combined with allow_credentials`))
+				errs = append(errs, errors.New(`security.cors: allowed_origins "*" cannot be combined with allow_credentials`))
 				break
 			}
+		}
+	}
+
+	// The rate limiter's tunables are only meaningful when it is on, but a
+	// nonsensical value in a disabled block is still a configuration
+	// mistake worth surfacing at boot rather than at the moment someone
+	// flips enabled: true in production.
+	if c.Security.RateLimit.Enabled {
+		if c.Security.RateLimit.Rate <= 0 {
+			errs = append(errs, errors.New("security.rate_limit.rate must be positive"))
+		}
+		if c.Security.RateLimit.Burst <= 0 {
+			errs = append(errs, errors.New("security.rate_limit.burst must be positive"))
+		}
+		if c.Security.RateLimit.TTL <= 0 {
+			errs = append(errs, errors.New("security.rate_limit.ttl must be positive"))
+		}
+		if c.Security.RateLimit.MaxKeys <= 0 {
+			errs = append(errs, errors.New("security.rate_limit.max_keys must be positive"))
 		}
 	}
 
