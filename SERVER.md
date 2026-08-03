@@ -11,11 +11,12 @@
 
 | File | Responsibility |
 |---|---|
-| `router.go` | `NewRouter` — core middleware stack, plus CORS and rate limiting when enabled |
+| `router.go` | `NewRouter` — core middleware stack, plus CORS, rate limiting and metrics when enabled |
 | `server.go` | `Server` — listen, serve, drain |
 | `routes.go` | `Mount` — operational endpoints and the `/api/v1` group |
 | `health.go` | `/healthz` liveness, `/readyz` readiness |
-| `cors.go`, `ratelimit.go`, `security_headers.go` | the middlewares themselves |
+| `cors.go`, `ratelimit.go`, `security_headers.go`, `recovery.go` | the middlewares themselves |
+| `problem.go` | RFC 7807 responses, the 404/405 handlers, `EchoRequestID` |
 
 ---
 
@@ -25,21 +26,28 @@
 func NewRouter(
     srv config.Server,
     sec config.Security,
+    log zerolog.Logger,
+    m *metrics.Metrics,          // nil disables instrumentation entirely
     mw ...func(http.Handler) http.Handler,
 ) (*chi.Mux, func() error, error)
 ```
 
-Builds the router and applies the core middleware stack, in this order:
+It also registers `NotFound` and `MethodNotAllowed`, so the router's own
+errors are problem+json like everything else.
 
-1. `chi.Recoverer` — panics become 500s, not process exits
-2. `chi.RequestID`
-3. `SecurityHeaders` — cheap, and applies to everything downstream produces, including 404s, 405s and recovered panics
-4. `middleware.RealIP` — resolves the client IP from **trusted proxies only** and puts it in the request context. Empty `trusted_proxies` (the default) means trust nothing and use the socket address. Must run before anything that keys or logs on client IP
-5. `chi.Timeout(request_timeout)`
-6. `ZerologRequestLogger`
-7. `CORS`, **if `security.cors.enabled`**
-8. `RateLimit`, **if `security.rate_limit.enabled`**
-9. any caller-supplied middleware
+The core middleware stack, in order:
+
+1. `chi.RequestID` — **first**, ahead of recovery. It used to run second, which meant a recovered panic could not carry a request id even in principle: none had been generated yet
+2. `EchoRequestID` — returns it in `X-Request-Id`. chi only puts the id in the request *context*, so without this a client with a successful response has nothing to quote when reporting it later
+3. `Recovery(log)` — replaces `chi.Recoverer`. problem+json instead of an empty body, and a structured correlated log line instead of a plain-text stack dump on stderr
+4. `SecurityHeaders` — cheap, and applies to everything downstream produces, including 404s, 405s and recovered panics
+5. `middleware.RealIP` — resolves the client IP from **trusted proxies only** and puts it in the request context. Empty `trusted_proxies` (the default) means trust nothing and use the socket address. Must run before anything that keys or logs on client IP
+6. `chi.Timeout(request_timeout)`
+7. `middleware.RequestLogger(log)` — one line per request, and a request-scoped logger in the context for every layer below
+8. `metrics.Middleware`, **if metrics are enabled**
+9. `CORS`, **if `security.cors.enabled`**
+10. `RateLimit`, **if `security.rate_limit.enabled`**
+11. any caller-supplied middleware
 
 CORS is registered *before* the rate limiter deliberately: a throttled
 cross-origin request must still carry `Access-Control-Allow-Origin`, or the
@@ -47,6 +55,12 @@ cross-origin request must still carry `Access-Control-Allow-Origin`, or the
 the status it is supposed to back off on. The cost is that a preflight
 short-circuits before the limiter and does not consume budget — a few header
 writes and no I/O, which is the cheaper side of the trade.
+
+Metrics sit above both for the same reason in reverse: a limiter that
+short-circuits *below* the instrumentation makes rejected traffic invisible,
+which is exactly the traffic worth seeing. The consequence is that a
+short-circuited request never reaches the mux and so has no route pattern; it
+is labelled `unmatched`, and the status label still distinguishes it.
 
 **The second return value is a closer.** It releases what the router
 constructed that owns a resource — today, the rate limiter's eviction
@@ -194,3 +208,81 @@ mounted every module at the root instead of under `/api/v1`.
 | Cross-origin access | Allowlist-only CORS; `"*"` with credentials is rejected at config load |
 | Partial shutdown | The lifecycle stack collects every error; no resource is silently skipped |
 | Stuck drain | A second signal forces `exit(130)` |
+
+---
+
+## Error responses
+
+Every error this service emits is RFC 7807 `application/problem+json`, produced
+by `httpx.WriteProblem`:
+
+```json
+{
+  "type": "not_found",
+  "title": "Not Found",
+  "status": 404,
+  "detail": "No route matches this path.",
+  "instance": "/api/v1/nope",
+  "request_id": "kopiochi-000123"
+}
+```
+
+`request_id` is an extension member, not part of RFC 7807. It is there so a
+user can quote the id from a failed response and have it match a log line
+exactly, rather than anyone guessing from timestamps. The same id is on every
+response in the `X-Request-Id` header, including successful ones.
+
+`detail` is shown to the client, so it never carries internal state — no panic
+values, no stack traces, no driver errors. Anything an operator needs is in the
+log line under the same `request_id`.
+
+**404 and 405 use this shape too.** chi's defaults are `text/plain`, which
+meant a client that content-negotiated JSON got an unparseable body for the two
+statuses it is most likely to hit while integrating.
+
+> **Registering a custom 405 handler with chi silently drops the `Allow`
+> header.** `Mux.MethodNotAllowedHandler` returns a registered handler
+> *instead of* chi's default, and only the default sets `Allow` — which
+> RFC 9110 requires a 405 to carry, and which is the only thing telling a
+> client what to try instead. `httpx.MethodNotAllowed` therefore takes the
+> router and recomputes the set by probing the routing tree, because chi keeps
+> it in an unexported context field.
+
+---
+
+## Metrics
+
+Off by default. When `metrics.enabled` is set, a second `httpx.Server` listens
+on `metrics.addr` and serves `metrics.path`:
+
+```yaml
+metrics:
+  enabled: false
+  addr: "127.0.0.1:9090"   # loopback by default
+  path: "/metrics"
+```
+
+It is a separate listener on purpose. `/metrics` exposes the route table,
+latency distributions, database pool saturation and the process's memory and
+file-descriptor counts — an inventory of the service's internals with no
+business being reachable from the internet. `Config.Validate` **rejects a
+`metrics.addr` equal to the API's own address**, because serving it on the
+public listener is the one outcome a separate admin port exists to prevent.
+
+The admin server goes on the same lifecycle stack, pushed *after* the API so
+LIFO stops it first — a scrape landing mid-drain would otherwise report a
+process that is already going away. A failure to bind it is logged, not fatal:
+losing observability is bad, losing the service is worse.
+
+Requests are labelled with the chi **route pattern** (`/api/v1/users/{id}`),
+never the raw path. A raw path makes one time series per distinct URL, so a
+crawler walking `/api/v1/users/1` … `/9999999` creates millions of series and
+takes the Prometheus server down — an availability incident caused by the
+monitoring, from traffic nobody had to authenticate to send. Unmatched paths
+collapse to a single `unmatched` label for the same reason.
+
+Database pool statistics are collected at scrape time rather than on a ticker,
+so there is no goroutine to own and no staleness in a saturation signal.
+`kopiochi_db_pool_empty_acquires_total` is the one to alert on: a nonzero rate
+means requests are queueing for a connection, which is saturation showing up
+before latency does.

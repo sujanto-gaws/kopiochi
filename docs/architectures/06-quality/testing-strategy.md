@@ -1,13 +1,24 @@
 # Testing Strategy
 
-**Status:** Partially implemented
+**Status:** Implemented
 **Date:** 2026-08-02
-**Last verified:** 2026-08-02, after Phase 2
+**Last verified:** 2026-08-03, after Phase 4
 
-> **Read [Race detection is outstanding](#race-detection-is-outstanding) before
-> relying on any concurrency claim in these documents.** `go test -race` cannot
-> run in this development environment, and a real data race shipped and was
-> caught by inspection rather than by tooling.
+> **Phase 4 landed the pipeline this document specifies.** 397 tests (up from
+> 154), per-package coverage floors with a no-regression ratchet
+> (`tools/coverage`), and a five-job CI workflow running `go test -race`
+> against a real Postgres service, `golangci-lint` with the standard set,
+> migrations up/down/up, `govulncheck` and `gitleaks`.
+>
+> **`-race` still cannot run in this development environment** — see
+> [Race detection](#race-detection-is-outstanding), which is now accurate only
+> about the local machine. CI measures it on every push and pull request, so
+> concurrency claims are verified; they are just not verified *before* you
+> push.
+>
+> The section below describes the state as of Phase 2 and is kept for the
+> history it records. Where it says "not started", read the Phase 4 section of
+> the [remediation plan](../07-roadmap/remediation-plan.md) instead.
 
 ---
 
@@ -377,19 +388,26 @@ doing ad hoc before any further concurrency change.
    failing tests, and **all five now pass** after Phase 2.
 2b. ✅ Unit coverage for every Phase 2 change — six new test files, `dcc6e5d`
    through `acc057d`.
-3. ⏳ CI pipeline with build, vet, lint, test, `-race` — **not started**; no CI
-   config exists in the repository. This is now the single highest-value item
-   left in this document: it is the only route to `-race` coverage (see
-   [above](#race-detection-is-outstanding)), and it is what turns every other
-   check here from opt-in into a gate.
-4. ⏳ `internal/testsupport` + integration tests as modules are migrated — partially anticipated by `internal/testutil/postgres.go`.
-5. ⏳ Coverage floors and the ratchet.
-6. ⏳ E2E flows once the identity module is wired and serving — one exists (`cmd/api/login_e2e_test.go`, `720e580`); the refresh and protected-call flows do not.
+3. ✅ CI pipeline with build, vet, lint, test, `-race` — Phase 3.2 (`1b46d87`)
+   created the minimum that made the dependency rules binding; Phase 4.4/4.5
+   (`d56ad0e`) extended it to five jobs including `-race` against a real
+   Postgres service, `govulncheck`, `gitleaks` and migrations up/down/up. This
+   is what turned every other check here from opt-in into a gate.
+4. ✅ `internal/testsupport` + integration tests — Phase 4.1 (`64c52be`) and
+   4.3 (`92a2cf7`). `db.go`, `config.go`, `auth.go`, `http.go`, replacing the
+   earlier `internal/testutil`.
+5. ✅ Coverage floors and the ratchet — Phase 4.6 (`b7ac597`), `tools/coverage`
+   with the policy in `tools/coverage/policy.json`.
+6. ◐ E2E flows — login exists (`cmd/api/login_e2e_test.go`, `720e580`) and the
+   protected-route guards are covered end to end through the real router
+   (`cmd/api/protected_routes_test.go`, Phase 4.3). The full
+   register → login → refresh → logout chain, and refresh-reuse family
+   revocation, are still unwritten; the latter waits on Phase 5.6, which is
+   what introduces reuse detection in the first place.
 
 Writing the priority-1 tests *before* the fixes gave a red-green signal for the
-whole remediation effort, and it worked — Phase 2 turned the last of them green.
-Step 3 is what turns that signal into a gate. Until it lands, every check in this
-document is opt-in, and `-race` is not available at all.
+whole remediation effort, and it worked — Phase 2 turned the last of them
+green, and Phase 4 turned that signal into a gate.
 
 ---
 
