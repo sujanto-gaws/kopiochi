@@ -3,6 +3,7 @@ package auth
 import (
 	"strings"
 	"testing"
+	"time"
 )
 
 // HashToken is what keeps refresh tokens out of the database in plaintext: a
@@ -69,5 +70,66 @@ func TestHashToken_EmptyInputStillHashes(t *testing.T) {
 
 	if got := HashToken(""); len(got) != 64 {
 		t.Errorf("HashToken(\"\") = %q, want a 64-char hash rather than an empty string", got)
+	}
+}
+
+func TestRefreshToken_Expired(t *testing.T) {
+	t.Parallel()
+
+	now := time.Now()
+
+	tests := []struct {
+		name      string
+		expiresAt time.Time
+		want      bool
+	}{
+		{"future", now.Add(time.Hour), false},
+		{"past", now.Add(-time.Hour), true},
+		// Exactly at the boundary counts as expired: ExpiresAt is the instant
+		// the token stops being valid, not the last instant it works.
+		{"exactly now", now, true},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			tok := RefreshToken{ExpiresAt: tc.expiresAt}
+			if got := tok.Expired(now); got != tc.want {
+				t.Errorf("Expired() = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestRefreshToken_Usable pins all three disqualifiers. Any one of them being
+// dropped would let a token be exchanged that should not be — a revoked one
+// after logout, a spent one after rotation, or an expired one indefinitely.
+func TestRefreshToken_Usable(t *testing.T) {
+	t.Parallel()
+
+	now := time.Now()
+	valid := RefreshToken{ExpiresAt: now.Add(time.Hour)}
+
+	tests := []struct {
+		name string
+		tok  RefreshToken
+		want bool
+	}{
+		{"fresh", valid, true},
+		{"revoked", RefreshToken{ExpiresAt: now.Add(time.Hour), Revoked: true}, false},
+		{"already used", RefreshToken{ExpiresAt: now.Add(time.Hour), Used: true}, false},
+		{"expired", RefreshToken{ExpiresAt: now.Add(-time.Hour)}, false},
+		{"used and expired", RefreshToken{ExpiresAt: now.Add(-time.Hour), Used: true}, false},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			if got := tc.tok.Usable(now); got != tc.want {
+				t.Errorf("Usable() = %v, want %v", got, tc.want)
+			}
+		})
 	}
 }

@@ -10,8 +10,10 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/sujanto-gaws/kopiochi/internal/audit"
 	"github.com/sujanto-gaws/kopiochi/internal/module"
 	application "github.com/sujanto-gaws/kopiochi/modules/identity/application"
+	"github.com/sujanto-gaws/kopiochi/modules/identity/infrastructure/auditlog"
 	"github.com/sujanto-gaws/kopiochi/modules/identity/infrastructure/hasher"
 	"github.com/sujanto-gaws/kopiochi/modules/identity/infrastructure/mfa"
 	"github.com/sujanto-gaws/kopiochi/modules/identity/infrastructure/persistence/repository"
@@ -115,6 +117,9 @@ func New(deps module.Deps, cfg Config) (*module.Module, error) {
 		},
 		totpSvc,
 		mfaStore,
+		// Security events go to the audit stream, not the request log: rare,
+		// never sampled, and read months later during an incident review.
+		auditlog.New(audit.New(deps.Logger)),
 	)
 
 	// authMW is derived from the same jwtSvc used to mint tokens, so it is

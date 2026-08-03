@@ -31,7 +31,7 @@ type BunUser struct {
 	UpdatedAt           time.Time  `bun:"updated_at,default:now()"`
 }
 
-// RefreshTokenRow maps to "refresh_tokens"
+// RefreshTokenRow maps to "auth_refresh_tokens".
 type RefreshTokenRow struct {
 	bun.BaseModel `bun:"table:auth_refresh_tokens,alias:rt"`
 
@@ -41,6 +41,16 @@ type RefreshTokenRow struct {
 	ExpiresAt time.Time `bun:"expires_at,notnull"`
 	Revoked   bool      `bun:"revoked,default:false"`
 	CreatedAt time.Time `bun:"created_at,default:now()"`
+
+	// FamilyID chains every token descending from one login. Reuse anywhere in
+	// the chain revokes all of it — see migration 00006.
+	FamilyID uuid.UUID `bun:"family_id,type:uuid,default:gen_random_uuid()"`
+	// UsedAt is set when the token is exchanged. Presenting a token that
+	// already has one is the theft signal.
+	UsedAt *time.Time `bun:"used_at"`
+	// ReuseDetectedAt distinguishes a family revoked for a security event from
+	// one revoked by an ordinary logout.
+	ReuseDetectedAt *time.Time `bun:"reuse_detected_at"`
 }
 
 // MfaBackupCodeRow maps to "mfa_backup_codes"

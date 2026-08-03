@@ -68,3 +68,12 @@ type MFAService interface {
 	GenerateSecret(email string) (secret string, qrCodeURL string, err error)
 	ValidateCode(secret, code string) bool
 }
+
+// ErrRefreshTokenAlreadyUsed is returned when a refresh token that has already
+// been exchanged is presented again.
+//
+// It is a domain error rather than a storage detail because of what it means:
+// the legitimate holder and someone else both have a token from the same
+// chain. That is either theft or a client bug, and either way the family must
+// be revoked rather than the request merely refused.
+var ErrRefreshTokenAlreadyUsed = errors.New("refresh token: already used")

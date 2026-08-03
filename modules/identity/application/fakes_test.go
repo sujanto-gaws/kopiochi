@@ -161,10 +161,13 @@ func (f *fakeTokenIssuer) accessTokensIssued() int {
 
 // fakeTokenStore is an in-memory RefreshTokenStore keyed by hash.
 type fakeTokenStore struct {
-	mu       sync.Mutex
-	byHash   map[string]domain.RefreshToken
-	storeErr error
-	revoked  []string
+	mu              sync.Mutex
+	byHash          map[string]domain.RefreshToken
+	storeErr        error
+	rotateErr       error
+	revokeFamilyErr error
+	revoked         []string
+	revokedFamilies []string
 }
 
 func newFakeTokenStore() *fakeTokenStore {
@@ -178,11 +181,28 @@ func (s *fakeTokenStore) Store(_ context.Context, tok domain.RefreshToken) error
 	if s.storeErr != nil {
 		return s.storeErr
 	}
+	if tok.FamilyID == "" {
+		// A fresh login starts its own family, as the real store does.
+		tok.FamilyID = uuid.New().String()
+	}
 	s.byHash[tok.TokenHash] = tok
 	return nil
 }
 
 func (s *fakeTokenStore) FindValid(_ context.Context, hash string) (*domain.RefreshToken, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	tok, ok := s.byHash[hash]
+	if !ok || !tok.Usable(time.Now()) {
+		return nil, errNotFound
+	}
+	return &tok, nil
+}
+
+// FindAny mirrors the real store: it returns spent and revoked tokens too, so
+// the service can tell a stolen credential from one that never existed.
+func (s *fakeTokenStore) FindAny(_ context.Context, hash string) (*domain.RefreshToken, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -193,6 +213,53 @@ func (s *fakeTokenStore) FindValid(_ context.Context, hash string) (*domain.Refr
 	return &tok, nil
 }
 
+// Rotate marks the old token used and stores the new one, refusing if the old
+// one was already spent — the same rowsAffected==0 guard the real store gets
+// from SQL.
+func (s *fakeTokenStore) Rotate(_ context.Context, oldHash string, next domain.RefreshToken) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.rotateErr != nil {
+		return s.rotateErr
+	}
+
+	old, ok := s.byHash[oldHash]
+	if !ok || old.Used || old.Revoked {
+		return domain.ErrRefreshTokenAlreadyUsed
+	}
+
+	old.Used = true
+	old.Revoked = true
+	s.byHash[oldHash] = old
+
+	if s.storeErr != nil {
+		return s.storeErr
+	}
+	s.byHash[next.TokenHash] = next
+	return nil
+}
+
+func (s *fakeTokenStore) RevokeFamily(_ context.Context, familyID string) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.revokeFamilyErr != nil {
+		return 0, s.revokeFamilyErr
+	}
+
+	n := 0
+	for h, tok := range s.byHash {
+		if tok.FamilyID == familyID && !tok.Revoked {
+			tok.Revoked = true
+			s.byHash[h] = tok
+			n++
+		}
+	}
+	s.revokedFamilies = append(s.revokedFamilies, familyID)
+	return n, nil
+}
+
 func (s *fakeTokenStore) RevokeAllForUser(_ context.Context, userID string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -200,22 +267,11 @@ func (s *fakeTokenStore) RevokeAllForUser(_ context.Context, userID string) erro
 	s.revoked = append(s.revoked, userID)
 	for h, tok := range s.byHash {
 		if tok.UserID == userID {
-			delete(s.byHash, h)
+			tok.Revoked = true
+			s.byHash[h] = tok
 		}
 	}
 	return nil
-}
-
-func (s *fakeTokenStore) revokedFor(userID string) bool {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	for _, id := range s.revoked {
-		if id == userID {
-			return true
-		}
-	}
-	return false
 }
 
 // fakeMFAService accepts one fixed code.
@@ -297,6 +353,7 @@ type harness struct {
 	tokens   *fakeTokenStore
 	mfaSvc   fakeMFAService
 	mfaStore *fakeMFAStore
+	audit    *recordingAuditor
 }
 
 func newHarness(users ...*domain.User) *harness {
@@ -306,7 +363,93 @@ func newHarness(users ...*domain.User) *harness {
 		tokens:   newFakeTokenStore(),
 		mfaSvc:   fakeMFAService{validCode: "123456"},
 		mfaStore: &fakeMFAStore{backupCode: "backup-code-1"},
+		audit:    &recordingAuditor{},
 	}
-	h.svc = NewService(h.users, fakeHasher{}, h.issuer, h.tokens, testConfig(), h.mfaSvc, h.mfaStore)
+	h.svc = NewService(h.users, fakeHasher{}, h.issuer, h.tokens, testConfig(), h.mfaSvc, h.mfaStore, h.audit)
 	return h
+}
+
+// recordingAuditor captures emitted events so a test can assert that a
+// security-relevant thing was actually recorded.
+//
+// This is the reason Auditor is an interface rather than a concrete logger:
+// "was the reuse detection audited?" is exactly as important as "was the
+// family revoked?", and an incident review only ever sees the former.
+type recordingAuditor struct {
+	mu     sync.Mutex
+	events []auditEvent
+}
+
+type auditEvent struct {
+	Action   string
+	ActorID  string
+	Subject  string
+	Reason   string
+	FamilyID string
+	Revoked  int
+	Err      error
+}
+
+func (a *recordingAuditor) record(e auditEvent) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.events = append(a.events, e)
+}
+
+func (a *recordingAuditor) LoginSucceeded(_ context.Context, userID string) {
+	a.record(auditEvent{Action: "login.success", ActorID: userID})
+}
+
+func (a *recordingAuditor) LoginFailed(_ context.Context, username, reason string) {
+	a.record(auditEvent{Action: "login.failure", Subject: username, Reason: reason})
+}
+
+func (a *recordingAuditor) AccountLocked(_ context.Context, userID string) {
+	a.record(auditEvent{Action: "account.locked", ActorID: userID})
+}
+
+func (a *recordingAuditor) LogoutSucceeded(_ context.Context, userID string) {
+	a.record(auditEvent{Action: "logout", ActorID: userID})
+}
+
+func (a *recordingAuditor) MFAEnrolled(_ context.Context, userID string) {
+	a.record(auditEvent{Action: "mfa.enrolled", ActorID: userID})
+}
+
+func (a *recordingAuditor) MFAFailed(_ context.Context, userID, reason string) {
+	a.record(auditEvent{Action: "mfa.failed", ActorID: userID, Reason: reason})
+}
+
+func (a *recordingAuditor) RefreshReuseDetected(_ context.Context, userID, familyID string, revoked int, err error) {
+	a.record(auditEvent{
+		Action: "refresh.reuse", ActorID: userID, FamilyID: familyID,
+		Revoked: revoked, Err: err,
+	})
+}
+
+// find returns the first event with the given action, and whether one existed.
+func (a *recordingAuditor) find(action string) (auditEvent, bool) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	for _, e := range a.events {
+		if e.Action == action {
+			return e, true
+		}
+	}
+	return auditEvent{}, false
+}
+
+// count returns how many events with the given action were emitted.
+func (a *recordingAuditor) count(action string) int {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	n := 0
+	for _, e := range a.events {
+		if e.Action == action {
+			n++
+		}
+	}
+	return n
 }
