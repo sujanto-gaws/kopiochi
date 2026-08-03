@@ -119,3 +119,20 @@ func allowedMethods(routes chi.Routes, path string) []string {
 	}
 	return allowed
 }
+
+// RequestIDHeader is the response header carrying the per-request id.
+const RequestIDHeader = "X-Request-Id"
+
+// EchoRequestID copies the request id chi generated into the response.
+//
+// It must run after chimw.RequestID (which generates it) and before anything
+// that writes a status, since headers cannot be added once the status line is
+// committed.
+func EchoRequestID(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if id := chimw.GetReqID(r.Context()); id != "" {
+			w.Header().Set(RequestIDHeader, id)
+		}
+		next.ServeHTTP(w, r)
+	})
+}

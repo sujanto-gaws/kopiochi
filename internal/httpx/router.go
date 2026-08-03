@@ -45,6 +45,12 @@ func NewRouter(srv config.Server, sec config.Security, log zerolog.Logger, m *me
 	// most — could not carry a request ID even in principle, because none had
 	// been generated yet. See observability.md, Problem 3.
 	r.Use(chimw.RequestID)
+	// chi's RequestID only puts the id in the request context — it sets no
+	// response header. So the id appears in our logs and in problem+json
+	// bodies, but a client that got a *successful* response has nothing to
+	// quote when they later report that it was wrong. Echoing it makes every
+	// response correlatable, not just the failures.
+	r.Use(EchoRequestID)
 	// Recovery replaces chi's middleware.Recoverer: problem+json instead of an
 	// empty body, and a structured log line instead of a plain-text stack
 	// dump on stderr that no log pipeline can read.

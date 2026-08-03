@@ -507,3 +507,72 @@ func TestValidate_MetricsAcceptsASeparateAddress(t *testing.T) {
 		t.Errorf("Validate() = %v, want nil", err)
 	}
 }
+
+// The remaining Validate branches, each asserted individually. Validate
+// accumulates every problem rather than returning the first, so a values file
+// with three mistakes reports three — these confirm each branch is reachable
+// and names the field it rejects.
+func TestValidate_RejectsIndividualBadValues(t *testing.T) {
+	tests := []struct {
+		name    string
+		mutate  func(*Config)
+		wantSub string
+	}{
+		{"empty db name", func(c *Config) { c.DB.Name = "" }, "db.name"},
+		{"empty db user", func(c *Config) { c.DB.User = "" }, "db.user"},
+		{"port too low", func(c *Config) { c.Server.Port = 0 }, "server.port"},
+		{"port too high", func(c *Config) { c.Server.Port = 70000 }, "server.port"},
+		{"request timeout exceeds write timeout", func(c *Config) {
+			c.Server.RequestTimeout = 60 * time.Second
+			c.Server.WriteTimeout = 30 * time.Second
+		}, "request_timeout"},
+		{"shutdown shorter than request", func(c *Config) {
+			c.Server.ShutdownTimeout = time.Second
+			c.Server.RequestTimeout = 25 * time.Second
+		}, "shutdown_timeout"},
+		{"empty issuer", func(c *Config) { c.Auth.Issuer = "" }, "auth.issuer"},
+		{"non-positive access ttl", func(c *Config) { c.Auth.AccessTokenTTL = 0 }, "access_token_ttl"},
+		{"non-positive refresh ttl", func(c *Config) { c.Auth.RefreshTokenTTL = 0 }, "refresh_token_ttl"},
+		{"access ttl not shorter than refresh", func(c *Config) {
+			c.Auth.AccessTokenTTL = 200 * time.Hour
+			c.Auth.RefreshTokenTTL = 168 * time.Hour
+		}, "shorter"},
+		{"non-positive mfa ttl", func(c *Config) { c.Auth.MFATemporaryTTL = 0 }, "mfa_temporary_ttl"},
+		{"placeholder password", func(c *Config) { c.DB.Password = "postgres" }, "db.password"},
+		{"empty password", func(c *Config) { c.DB.Password = "" }, "db.password"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := validConfig()
+			tc.mutate(cfg)
+
+			err := cfg.Validate()
+			if err == nil {
+				t.Fatalf("Validate() = nil, want an error mentioning %q", tc.wantSub)
+			}
+			if !strings.Contains(err.Error(), tc.wantSub) {
+				t.Errorf("Validate() = %v, want it to mention %q", err, tc.wantSub)
+			}
+		})
+	}
+}
+
+// TestValidate_ReportsEveryProblemAtOnce: fixing a config one error per run is
+// the difference between one edit and six.
+func TestValidate_ReportsEveryProblemAtOnce(t *testing.T) {
+	cfg := validConfig()
+	cfg.DB.Name = ""
+	cfg.DB.User = ""
+	cfg.Auth.Issuer = ""
+
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatal("Validate() = nil, want errors")
+	}
+	for _, want := range []string{"db.name", "db.user", "auth.issuer"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("Validate() = %v, want it to also mention %q", err, want)
+		}
+	}
+}
