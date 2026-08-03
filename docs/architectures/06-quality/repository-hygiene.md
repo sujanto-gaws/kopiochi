@@ -1,12 +1,23 @@
 # Repository Hygiene & Build Weight
 
-**Status:** Partially implemented — see [ADR-011](../adr/011%20-%20Build%20Artifacts%20Excluded%20from%20Version%20Control.md)
+**Status:** Largely implemented — see [ADR-011](../adr/011%20-%20Build%20Artifacts%20Excluded%20from%20Version%20Control.md)
 **Date:** 2026-08-02
 **Last verified:** 2026-08-02, after Phase 0
 
-Phase 0 stopped new artifacts entering the repository. It did **not** remove the
-existing ones from history — that is Phase 5.1, and until it runs every clone
-still carries ~120 MB of binaries.
+Phase 0 stopped new artifacts entering the repository. Phase 5 did the rest of
+this document except the history rewrite itself.
+
+**The rewrite is still outstanding** — every clone still carries ~120 MB of
+binaries. It is prepared as `scripts/purge-history.sh` (dry run by default,
+backup bundle first, explicit confirmation) but deliberately not run: it needs
+an announced freeze and everyone to re-clone. CI now rejects any file over 1 MB
+added by a pull request, which is the half that can run unattended.
+
+Also done in Phase 5: `.qwen/` untracked and ignored; the swagger spec
+untracked and the UI moved behind a build tag; release builds stripped and
+trimmed; a `docker-compose.yml` that actually exists; and the image rebuilt on
+distroless/static:nonroot with a `.dockerignore` that keeps keys out of the
+build context. cmd/api is now 17.0 MB, down from 41.6 MB.
 
 | Problem | State |
 |---|---|

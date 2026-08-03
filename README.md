@@ -527,6 +527,40 @@ server:
   trusted_proxies: []       # CIDRs whose X-Forwarded-For is honoured; empty = trust nothing
   enable_hsts: false        # only turn on where TLS is terminated in front of this process
 ```
+## 🐳 Running locally
+
+```bash
+make keys          # generate a signing keypair into keys/ (never committed)
+cp .env.example .env
+                   # set APP_DB_PASSWORD — compose refuses to start without it
+make compose-up    # Postgres, migrations, then the API on 127.0.0.1:8080
+make compose-logs
+make compose-down  # add compose-reset to drop the database volume
+```
+
+Migrations run as their own one-shot service, not from the API entrypoint: an
+application that migrates on boot will, with two replicas, run two concurrent
+migrations against one database.
+
+The image is `distroless/static:nonroot` — no shell, no package manager,
+running as uid 65532 — so the container healthcheck runs the binary's own
+`healthcheck` subcommand rather than curl. `.dockerignore` keeps `keys/`,
+`*.pem` and `.env` out of the build context entirely, so they are absent from
+every layer rather than merely uncopied.
+
+### Swagger
+
+The UI is behind a build tag and its spec is generated, not committed:
+
+```bash
+make swagger-run   # generate the spec, then run with -tags swagger
+```
+
+A default build answers /swagger/* with a problem document explaining the flag.
+Leaving the UI out halves the binary — it links swaggo/swag, the embedded
+Swagger UI distribution and four go-openapi packages, none of which a
+production server needs.
+
 ## 🧪 Testing
 
 ```bash
