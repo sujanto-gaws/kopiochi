@@ -15,18 +15,15 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"path/filepath"
 	"testing"
 
 	"github.com/google/uuid"
-	"github.com/pressly/goose/v3"
 	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/require"
 	"github.com/uptrace/bun"
-	"github.com/uptrace/bun/dialect/pgdialect"
 
 	"github.com/sujanto-gaws/kopiochi/internal/httpx"
-	"github.com/sujanto-gaws/kopiochi/internal/testutil"
+	"github.com/sujanto-gaws/kopiochi/internal/testsupport"
 	identityapp "github.com/sujanto-gaws/kopiochi/modules/identity/application"
 	domain "github.com/sujanto-gaws/kopiochi/modules/identity/domain"
 	"github.com/sujanto-gaws/kopiochi/modules/identity/infrastructure/hasher"
@@ -40,24 +37,13 @@ import (
 // format match production exactly; this test never fabricates a hash string.
 const testSeededPassword = "correct horse battery staple"
 
-// scratchIdentityDB returns a *bun.DB backed by a disposable Postgres
-// container with every migration in migrations/ applied (goose.Up), reusing
-// internal/testutil.ScratchPostgres — the same helper internal/db/
-// schema_test.go uses — rather than inventing a second way to stand up a
-// throwaway database.
+// scratchIdentityDB returns a *bun.DB backed by a disposable Postgres with
+// every migration applied. The container/skip logic and the migration run both
+// live in internal/testsupport now, so there is one way to stand up a
+// throwaway database rather than one per test package.
 func scratchIdentityDB(t *testing.T) *bun.DB {
 	t.Helper()
-
-	sqlDB, cleanup := testutil.ScratchPostgres(t)
-	t.Cleanup(cleanup)
-
-	migrationsDir, err := filepath.Abs(filepath.Join("..", "..", "migrations"))
-	require.NoError(t, err)
-
-	require.NoError(t, goose.SetDialect("postgres"))
-	require.NoError(t, goose.Up(sqlDB, migrationsDir))
-
-	return bun.NewDB(sqlDB, pgdialect.New())
+	return testsupport.MigratedDB(t)
 }
 
 // seedAuthUser inserts one row into auth_users directly through the identity

@@ -13,16 +13,12 @@ package schemacheck
 
 import (
 	"database/sql"
-	"path/filepath"
 	"reflect"
 	"testing"
 
-	"github.com/pressly/goose/v3"
 	"github.com/stretchr/testify/require"
-	"github.com/uptrace/bun"
-	"github.com/uptrace/bun/dialect/pgdialect"
 
-	"github.com/sujanto-gaws/kopiochi/internal/testutil"
+	"github.com/sujanto-gaws/kopiochi/internal/testsupport"
 	identitymodels "github.com/sujanto-gaws/kopiochi/modules/identity/infrastructure/persistence/models"
 	usermodels "github.com/sujanto-gaws/kopiochi/modules/user/infrastructure/persistence/models"
 )
@@ -37,19 +33,10 @@ import (
 //
 // Database access: this test needs a real Postgres server. It never guesses
 // at credentials for whatever may be listening on localhost:5432. See
-// internal/testutil.ScratchPostgres for the source-of-truth precedence
+// internal/testsupport.ScratchPostgres for the source-of-truth precedence
 // (TEST_DATABASE_URL, then a disposable docker container, then a clean skip).
 func TestModelsMatchMigratedSchema(t *testing.T) {
-	sqlDB, cleanup := testutil.ScratchPostgres(t)
-	defer cleanup()
-
-	migrationsDir, err := filepath.Abs(filepath.Join("..", "..", "migrations"))
-	require.NoError(t, err)
-
-	require.NoError(t, goose.SetDialect("postgres"))
-	require.NoError(t, goose.Up(sqlDB, migrationsDir))
-
-	bunDB := bun.NewDB(sqlDB, pgdialect.New())
+	bunDB := testsupport.MigratedDB(t)
 
 	cases := []struct {
 		table string
@@ -71,7 +58,7 @@ func TestModelsMatchMigratedSchema(t *testing.T) {
 				expected = append(expected, f.Name)
 			}
 
-			actual := actualColumns(t, sqlDB, tc.table)
+			actual := actualColumns(t, bunDB.DB, tc.table)
 
 			require.ElementsMatch(t, expected, actual,
 				"table %q: model columns %v vs information_schema columns %v", tc.table, expected, actual)

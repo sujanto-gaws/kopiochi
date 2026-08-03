@@ -1,15 +1,8 @@
 package main
 
 import (
-	"crypto/rand"
-	"crypto/rsa"
-	"crypto/x509"
-	"encoding/pem"
 	"net/http"
-	"os"
-	"path/filepath"
 	"testing"
-	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/rs/zerolog"
@@ -17,50 +10,21 @@ import (
 
 	"github.com/sujanto-gaws/kopiochi/internal/config"
 	"github.com/sujanto-gaws/kopiochi/internal/httpx"
+	"github.com/sujanto-gaws/kopiochi/internal/testsupport"
 )
 
 // testConfig builds a *config.Config that satisfies identity.Config.Validate,
 // backed by a freshly generated (test-only) RSA key pair — it does not depend
 // on any key files checked into the repo.
+//
+// The fixture itself moved to internal/testsupport in Phase 4.1 so that module
+// tests can build a valid config without importing package main. This wrapper
+// stays because the callers in this package do not need the keypair.
 func testConfig(t *testing.T) *config.Config {
 	t.Helper()
 
-	priv, err := rsa.GenerateKey(rand.Reader, 2048)
-	require.NoError(t, err)
-
-	dir := t.TempDir()
-	privPath := filepath.Join(dir, "private.pem")
-	pubPath := filepath.Join(dir, "public.pem")
-
-	privBytes := x509.MarshalPKCS1PrivateKey(priv)
-	writePEM(t, privPath, "RSA PRIVATE KEY", privBytes)
-
-	pubBytes, err := x509.MarshalPKIXPublicKey(&priv.PublicKey)
-	require.NoError(t, err)
-	writePEM(t, pubPath, "PUBLIC KEY", pubBytes)
-
-	cfg := &config.Config{}
-	cfg.Auth = config.Auth{
-		PrivateKeyPath:    privPath,
-		PublicKeyPath:     pubPath,
-		Issuer:            "kopiochi-test",
-		ClientID:          "kopiochi-test",
-		AccessTokenTTL:    15 * time.Minute,
-		RefreshTokenTTL:   168 * time.Hour,
-		MFATemporaryTTL:   5 * time.Minute,
-		MaxFailedAttempts: 5,
-		LockDuration:      15 * time.Minute,
-	}
-	cfg.Server = config.Server{
-		RequestTimeout: 5 * time.Second,
-	}
+	cfg, _ := testsupport.Config(t)
 	return cfg
-}
-
-func writePEM(t *testing.T, path, typ string, bytes []byte) {
-	t.Helper()
-	encoded := pem.EncodeToMemory(&pem.Block{Type: typ, Bytes: bytes})
-	require.NoError(t, os.WriteFile(path, encoded, 0o600))
 }
 
 // TestRouteTable builds the real application (BuildApp) and the real router
