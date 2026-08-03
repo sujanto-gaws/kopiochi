@@ -2,7 +2,28 @@
 
 > **Interactive API Documentation for Kopiochi**
 
-This project uses [Swagger UI](https://swagger.io/tools/swagger-ui/) to provide interactive, auto-generated API documentation. Swagger allows developers and consumers to explore, test, and understand the API without reading source code or making manual requests.
+This project uses [Swagger UI](https://swagger.io/tools/swagger-ui/) to provide
+interactive, auto-generated API documentation.
+
+> ## Two things changed in Phase 5
+>
+> **The UI is behind a build tag.** A default build does not serve it and does
+> not link it. Importing the UI pulls in `swaggo/swag`, the embedded Swagger UI
+> distribution and four `go-openapi` packages — 14.8 MB, 46% of the binary —
+> none of it reachable unless somebody browses `/swagger`. Build with
+> `-tags swagger`, or just run `make swagger-run`.
+>
+> **The generated spec is no longer committed.** `docs/docs.go`,
+> `docs/swagger.json` and `docs/swagger.yaml` are gitignored and produced by
+> `make swagger-docs`. They were committed until Phase 5.2, and that is exactly
+> how `swag init` came to be broken for two phases without anyone noticing: the
+> annotations stopped matching the code, the generator started failing, and the
+> stale committed copy kept being served — describing types under names the
+> code no longer used. A stale spec is worse than no spec, because it is
+> confidently wrong.
+>
+> CI regenerates the spec, builds with the tag and runs the tagged tests on
+> every pull request, so it cannot rot again unnoticed.
 
 ## 📋 Table of Contents
 

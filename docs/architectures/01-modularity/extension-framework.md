@@ -1,7 +1,18 @@
 # Extension Framework Consolidation
 
-**Status:** Proposed — see [ADR-004](../adr/004%20-%20Consolidate%20on%20a%20Single%20Extension%20Framework.md)
+**Status:** ✅ Done — see [ADR-004](../adr/004%20-%20Consolidate%20on%20a%20Single%20Extension%20Framework.md)
 **Date:** 2026-08-02
+**Last verified:** 2026-08-03, after Phase 5
+
+> **Both frameworks were deleted in Phase 3.6** (`de7e242`), along with
+> `internal/extension/`, `internal/plugin/`, `internal/plugins/` and
+> `examples/extension-demo/` — 4,023 lines. `internal/module.Module` is the
+> only registration mechanism that remains, and CORS and rate limiting are
+> constructed directly from typed config in `internal/httpx`.
+>
+> This document is kept as the analysis that justified the deletion. Everything
+> below describes code that no longer exists; read it as history, not as a
+> description of the repository.
 
 ---
 

@@ -426,12 +426,19 @@ releases it in order.
 `NewRouter` also accepts variadic middleware appended after the core stack, so
 a caller can pass one in without editing the core stack at all.
 
-### Adding new plugins
+### There is no plugin system
 
-**There is no plugin system.** It was deleted in Phase 3 -- see
-[PLUGIN_GUIDE.md](PLUGIN_GUIDE.md) for what replaced it. Business
-capabilities are modules under `modules/`; cross-cutting HTTP behaviour goes
-in `internal/httpx` as above.
+Both extension frameworks were deleted in Phase 3.6 — 4,023 lines that nothing
+imported. Whatever you were going to build is one of two things:
+
+- **A business capability** — anything owning data, routes or domain rules.
+  Write a module under `modules/<name>/` and build it in `BuildApp`. That
+  function call is the entire registration mechanism.
+- **Cross-cutting HTTP behaviour** — a header, a limiter, a tracer. Put it in
+  `internal/httpx`, give it a typed config struct in `internal/config`, and
+  register it in `NewRouter` behind an `if`, as CORS and rate limiting are.
+
+Do not build a registry. That is what Phase 3 removed.
 
 ### Changing Database
 

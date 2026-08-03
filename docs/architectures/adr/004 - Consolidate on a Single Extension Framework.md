@@ -1,14 +1,19 @@
 # ADR-004: Consolidate on a Single Extension Framework
 
 ## Status
-**Accepted — partially implemented** – *Decided: 2026-08-02 · Steps 1–3 implemented: 2026-08-02 (Phase 1)*
+**Accepted — fully implemented** – *Decided: 2026-08-02 · Steps 1–3: 2026-08-02 (Phase 1) · Steps 4–6: 2026-08-03 (Phase 3.6, `de7e242`)*
 
-The new module contract exists and identity runs on it (steps 1–3). The old
-frameworks have **not** been removed: `internal/extension/`, `internal/plugin/`,
-and `internal/plugins/` are all still present, and `internal/plugin{,s}` is still
-what `cmd/api/main.go:56-64` initialises. Steps 4–6 are Phase 3 work, so the
-consolidation this ADR is named for has not actually happened yet — for now the
-repository has *three* registration mechanisms, not one.
+The consolidation is complete. `internal/extension/`, `internal/plugin/`,
+`internal/plugins/` and `examples/extension-demo/` were deleted — 4,023 lines —
+leaving `internal/module.Module` as the single registration mechanism.
+
+The outcome differs from the decision in one respect worth recording: the two
+frameworks were not consolidated *into* one another. Nothing depended on either
+of them, so both were deleted outright and the middleware they nominally
+hosted — CORS and rate limiting — became direct construction from typed config
+in `internal/httpx`. Roughly 1,100 lines of registration machinery collapsed
+into one `if` per middleware. Consolidating them would have preserved a
+mechanism that had no users.
 
 ## Context
 
