@@ -96,7 +96,7 @@ func TestSecurityHeaders_SwaggerCSPIsRelaxed(t *testing.T) {
 	t.Run("index.html renders with the relaxed swagger CSP", func(t *testing.T) {
 		resp, err := client.Get(srv.URL + "/swagger/index.html")
 		require.NoError(t, err)
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 
 		require.Equal(t, http.StatusOK, resp.StatusCode)
 		require.Equal(t, swaggerCSP, resp.Header.Get("Content-Security-Policy"))
@@ -119,7 +119,7 @@ func TestSecurityHeaders_SwaggerCSPIsRelaxed(t *testing.T) {
 		} {
 			resp, err := client.Get(srv.URL + asset)
 			require.NoError(t, err)
-			resp.Body.Close()
+			_ = resp.Body.Close()
 			require.Equalf(t, http.StatusOK, resp.StatusCode, "asset %s must be servable for the page to render", asset)
 		}
 	})
@@ -127,7 +127,7 @@ func TestSecurityHeaders_SwaggerCSPIsRelaxed(t *testing.T) {
 	t.Run("non-swagger routes keep the strict API CSP", func(t *testing.T) {
 		resp, err := client.Get(srv.URL + "/healthz")
 		require.NoError(t, err)
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 
 		require.Equal(t, apiCSP, resp.Header.Get("Content-Security-Policy"))
 	})

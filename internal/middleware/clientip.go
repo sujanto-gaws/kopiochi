@@ -1,3 +1,7 @@
+// Package middleware holds HTTP middleware shared by every entry point and
+// owned by no business module: client-IP resolution and request logging.
+//
+// Middleware that only the API server mounts lives in internal/httpx instead.
 package middleware
 
 import (
@@ -7,7 +11,7 @@ import (
 	"net/netip"
 	"strings"
 
-	"github.com/rs/zerolog/log"
+	"github.com/rs/zerolog"
 )
 
 // clientIPKey is the context key RealIP uses to store the resolved client
@@ -30,7 +34,12 @@ func ClientIP(ctx context.Context) string {
 // aborting startup -- full config validation is a later phase -- but note
 // that an empty, nil, or all-invalid input all mean the same thing to
 // RealIP: trust nothing, always use the socket address.
-func ParseTrustedProxies(cidrs []string) []netip.Prefix {
+//
+// The logger is a parameter rather than zerolog's package global so that a
+// test can assert this warning actually fires: an entry silently dropped from
+// the trusted list changes who is allowed to set X-Forwarded-For, which is a
+// security-relevant configuration change that must not pass unremarked.
+func ParseTrustedProxies(cidrs []string, log zerolog.Logger) []netip.Prefix {
 	prefixes := make([]netip.Prefix, 0, len(cidrs))
 	for _, c := range cidrs {
 		p, err := netip.ParsePrefix(strings.TrimSpace(c))

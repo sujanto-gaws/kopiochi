@@ -6,8 +6,11 @@ import (
 	"github.com/uptrace/bun"
 )
 
-// OFBizUserLoginDBModel is the database model for the OFBiz USER_LOGIN table
-// Maps to Apache OFBiz standard UserLogin entity
+// OFBizUserLoginPasswordHistoryDBModel is the database model for the OFBiz
+// USER_LOGIN_PASSWORD_HISTORY table, which records superseded credentials so
+// that password reuse can be rejected.
+//
+// Maps to the Apache OFBiz standard UserLoginPasswordHistory entity.
 type OFBizUserLoginPasswordHistoryDBModel struct {
 	bun.BaseModel      `bun:"table:user_login_password_history,alias:ul"`
 	UserLoginID        string     `bun:"user_login_id,pk,type:varchar(255)"`

@@ -1,3 +1,8 @@
+// Package config loads and validates the process's typed configuration.
+//
+// Precedence is file, then APP_-prefixed environment variables, then flags.
+// Validate is the single place that rejects a configuration the process
+// cannot safely run under, so startup fails at boot rather than at first use.
 package config
 
 import (
@@ -21,6 +26,22 @@ type Config struct {
 	// promoted into Config and collide as the config grows. See
 	// docs/architectures/03-configuration/configuration-model.md.
 	Security Security `mapstructure:"security"`
+	// Metrics is named for the same reason as Security.
+	Metrics Metrics `mapstructure:"metrics"`
+}
+
+// Metrics configures the Prometheus scrape endpoint.
+//
+// It listens on its own address, separate from the API. /metrics exposes the
+// route table, latency distributions, pool saturation and the process's
+// memory and file-descriptor counts — an inventory of the service's internals
+// that has no business being reachable from the internet. The default binds
+// loopback only, so exposing it is a deliberate act rather than the result of
+// enabling a feature.
+type Metrics struct {
+	Enabled bool   `mapstructure:"enabled"`
+	Addr    string `mapstructure:"addr"`
+	Path    string `mapstructure:"path"`
 }
 
 type Server struct {
@@ -227,6 +248,11 @@ func Load(cfgPath string) (*Config, error) {
 	v.SetDefault("security.rate_limit.burst", 100)
 	v.SetDefault("security.rate_limit.ttl", "10m")
 	v.SetDefault("security.rate_limit.max_keys", 100000)
+	// Off by default, and loopback-only when switched on: /metrics describes
+	// the service's internals and must be an explicit exposure decision.
+	v.SetDefault("metrics.enabled", false)
+	v.SetDefault("metrics.addr", "127.0.0.1:9090")
+	v.SetDefault("metrics.path", "/metrics")
 
 	if err := v.ReadInConfig(); err != nil {
 		if _, ok := err.(viper.ConfigFileNotFoundError); !ok {
@@ -375,6 +401,24 @@ func (c *Config) Validate() error {
 	}
 	if c.Server.ShutdownTimeout < c.Server.RequestTimeout {
 		errs = append(errs, errors.New("server.shutdown_timeout must be >= server.request_timeout"))
+	}
+
+	if c.Metrics.Enabled {
+		if c.Metrics.Addr == "" {
+			errs = append(errs, errors.New("metrics.addr must not be empty when metrics.enabled is true"))
+		}
+		if !strings.HasPrefix(c.Metrics.Path, "/") {
+			errs = append(errs, fmt.Errorf(
+				"metrics.path (%q) must begin with '/'", c.Metrics.Path))
+		}
+		// Same port as the API would put /metrics — the pool sizes, the route
+		// table, the process's memory and fd counts — on the public listener,
+		// which is the one thing a separate admin port exists to prevent.
+		if c.Metrics.Addr == fmt.Sprintf("%s:%d", c.Server.Host, c.Server.Port) {
+			errs = append(errs, fmt.Errorf(
+				"metrics.addr (%s) must not be the API's own address; /metrics belongs on a separate, non-public listener",
+				c.Metrics.Addr))
+		}
 	}
 
 	if c.Auth.Issuer == "" {

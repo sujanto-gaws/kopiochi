@@ -6,8 +6,10 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	chimw "github.com/go-chi/chi/v5/middleware"
+	"github.com/rs/zerolog"
 
 	"github.com/sujanto-gaws/kopiochi/internal/config"
+	"github.com/sujanto-gaws/kopiochi/internal/metrics"
 	corenet "github.com/sujanto-gaws/kopiochi/internal/middleware"
 )
 
@@ -26,16 +28,37 @@ import (
 // owns a resource -- today, the rate limiter's eviction goroutine. Callers
 // must call it on shutdown. It is safe to call even when nothing was
 // constructed.
-func NewRouter(srv config.Server, sec config.Security, mw ...func(http.Handler) http.Handler) (*chi.Mux, func() error, error) {
+// m may be nil, which disables instrumentation entirely — no counters, no
+// middleware, no cost.
+func NewRouter(srv config.Server, sec config.Security, log zerolog.Logger, m *metrics.Metrics, mw ...func(http.Handler) http.Handler) (*chi.Mux, func() error, error) {
 	r := chi.NewRouter()
 
+	// Errors the router itself produces get the same problem+json shape as
+	// everything a handler emits, rather than chi's bare text/plain default.
+	r.NotFound(NotFound())
+	r.MethodNotAllowed(MethodNotAllowed(r))
+
 	// Core middleware stack (order matters).
-	r.Use(chimw.Recoverer)
+	//
+	// RequestID comes first, ahead of recovery. It used to run second, which
+	// meant a recovered panic — the one log line where correlation matters
+	// most — could not carry a request ID even in principle, because none had
+	// been generated yet. See observability.md, Problem 3.
 	r.Use(chimw.RequestID)
+	// chi's RequestID only puts the id in the request context — it sets no
+	// response header. So the id appears in our logs and in problem+json
+	// bodies, but a client that got a *successful* response has nothing to
+	// quote when they later report that it was wrong. Echoing it makes every
+	// response correlatable, not just the failures.
+	r.Use(EchoRequestID)
+	// Recovery replaces chi's middleware.Recoverer: problem+json instead of an
+	// empty body, and a structured log line instead of a plain-text stack
+	// dump on stderr that no log pipeline can read.
+	r.Use(Recovery(log))
 	// Cheap and applies to every response, including ones later middleware
-	// or the router itself produces (panics recovered by Recoverer above,
-	// 404s, 405s): headers set here are already on the ResponseWriter by the
-	// time anything downstream writes a status.
+	// or the router itself produces (recovered panics, 404s, 405s): headers
+	// set here are already on the ResponseWriter by the time anything
+	// downstream writes a status.
 	r.Use(SecurityHeaders(SecurityHeadersConfig{EnableHSTS: srv.EnableHSTS}))
 	// corenet.RealIP replaces chi's middleware.RealIP, which trusts
 	// forwarded headers from any peer unconditionally. Ours resolves the
@@ -44,9 +67,22 @@ func NewRouter(srv config.Server, sec config.Security, mw ...func(http.Handler) 
 	// rate limiter to consume, instead of every consumer re-parsing headers
 	// itself. It must run before anything that keys or logs on client IP --
 	// including the rate limiter registered below.
-	r.Use(corenet.RealIP(corenet.ParseTrustedProxies(srv.TrustedProxies)))
+	r.Use(corenet.RealIP(corenet.ParseTrustedProxies(srv.TrustedProxies, log)))
 	r.Use(chimw.Timeout(srv.RequestTimeout))
-	r.Use(corenet.ZerologRequestLogger)
+	// RequestLogger runs after RealIP so the resolved client IP is available
+	// to bind onto the request-scoped logger, and after Recovery so that the
+	// 500 a panic produces is counted and logged like any other response.
+	r.Use(corenet.RequestLogger(log))
+
+	// Ahead of CORS and the rate limiter, so a preflight and a 429 are both
+	// counted. A limiter that short-circuits below an instrumentation
+	// middleware makes rejected traffic invisible — exactly the traffic worth
+	// seeing. The cost is that a short-circuited request never reaches the
+	// mux, so it has no route pattern and is labelled "unmatched"; the status
+	// label still distinguishes it.
+	if m != nil {
+		r.Use(m.Middleware())
+	}
 
 	closers := make([]func() error, 0, 1)
 	closeAll := func() error {

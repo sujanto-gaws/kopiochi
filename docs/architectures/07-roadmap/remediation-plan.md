@@ -233,20 +233,112 @@ trustworthy, not merely finished.
   Phase 3 task and remains open.
 ---
 
-## Phase 4 — Build the safety net (3–4 days) — ⏳ NOT STARTED
+## Phase 4 — Build the safety net — ✅ COMPLETE
 
-| # | Task | Effort | Doc |
-|---|------|--------|-----|
-| 4.1 | `internal/testsupport` — testcontainers Postgres, fixtures, auth helpers | M | [testing](../06-quality/testing-strategy.md) |
-| 4.2 | Unit tests: domain, tokens, config, CORS, rate limiter, recovery | L | [testing](../06-quality/testing-strategy.md) |
-| 4.3 | Integration tests: repositories + handlers via `httptest` | L | [testing](../06-quality/testing-strategy.md) |
-| 4.4 | CI pipeline: build, vet, lint, `-race` tests, `govulncheck`, `gitleaks`, size check | M | [testing](../06-quality/testing-strategy.md) |
-| 4.5 | Migration CI: up → down → up, plus the model/schema drift test | M | [migrations](../05-data/migration-strategy.md) |
-| 4.6 | Coverage floors + the no-regression ratchet | S | [testing](../06-quality/testing-strategy.md) |
-| 4.7 | Injected loggers, request-scoped logger in context | M | [observability](../06-quality/observability.md) |
-| 4.8 | Prometheus metrics + pool stats on an admin port | M | [observability](../06-quality/observability.md) |
+| # | Task | Commit |
+|---|------|--------|
+| 4.4a | Clear the 35 lint findings; `default: standard` | `b02c20f` |
+| 4.7 | Injected loggers, request-scoped correlation, problem+json errors | `4b516b8` |
+| 4.1 | `internal/testsupport` (replaces `internal/testutil`) | `64c52be` |
+| 4.2 | Unit tests: domain and application layers | `97af65c` |
+| 4.3 | Integration tests: repositories + auth guards via `httptest` | `92a2cf7` |
+| 4.8 | Prometheus metrics + pool stats on an admin port | `f29f8a5` |
+| 4.6 | Coverage floors + the no-regression ratchet | `b7ac597` |
+| 4.4b/4.5 | CI: Postgres service, `-race`, `govulncheck`, `gitleaks`, migrations | `d56ad0e` |
 
-**Exit criteria:** CI fails on a real regression; coverage floors enforced.
+**Exit criteria — met.**
+
+- ✅ **CI fails on a real regression.** Five jobs, and each gate was checked
+  against a failing input rather than assumed: the coverage tool fails on a
+  drop, on a package that vanished from the profile, and on an empty profile;
+  the architecture tests fail on an injected cross-module import.
+- ✅ **Coverage floors enforced.** `go run ./tools/coverage` runs in CI with
+  `-with-database`. Coverage was raised to meet the floors, not the reverse:
+
+  | package | before | after |
+  |---|---|---|
+  | `internal/httpx` | 81.2% | **93.5%** |
+  | `modules/identity/application` | 67.3% | **88.8%** |
+  | `internal/config` | 84.6% | **86.0%** |
+  | `modules/*/domain` | 0% | **100%** |
+
+- ✅ **`-race` runs.** Not on the maintainer's machine — see the standing
+  environment note — but on every push and pull request.
+- ✅ **The integration suite actually executes.** CI has a Postgres service,
+  and a step fails the build if the schema test *skipped*, since a broken
+  service container would otherwise produce a green run over an untested
+  persistence layer.
+- ✅ **Test count: 154 → 397.**
+
+### Corrections and findings
+
+Four things were found by writing the tests rather than by reading the code:
+
+1. **chi drops the `Allow` header on a custom 405 handler.**
+   `Mux.MethodNotAllowedHandler` returns a registered handler *instead of*
+   chi's default, and only the default sets `Allow` — which RFC 9110 requires.
+   `httpx.MethodNotAllowed` recomputes it by probing the routing tree.
+2. **`tools/schemacheck` never registered the `pgx` driver.** It relied on
+   another package pulling in `internal/db`, and would have failed with
+   `sql: unknown driver "pgx"` the first time a database was reachable. It
+   passed only because it skipped.
+3. **`cmd/generator` reported `✓ <file>` after an unchecked `Close`.** A
+   failed flush meant the file was never written; the tick said otherwise.
+4. **`matchPattern` in the new coverage tool matched nothing** for
+   `modules/*/infrastructure/...` — it prefix-compared the literal text, star
+   included. A pattern that matches nothing is indistinguishable from no
+   policy: the floor looked configured and enforced zero packages.
+
+And two silent caps were removed, both the same class as Phase 3's test-cache
+problem:
+
+- **golangci-lint truncates its own output.** `max-issues-per-linter: 50` and
+  `max-same-issues: 3` are the defaults; the tree reported "35 issues" and,
+  with the caps off, 21 more appeared. Both are now 0.
+- **`go test` reports 0% for a package whose integration tests skipped**,
+  which is indistinguishable from "the tests were deleted". The coverage tool
+  refuses to guess: without `-with-database` those packages are printed as
+  NOT CHECKED and excluded from both floors and ratchet.
+
+### Judgement calls
+
+- **testcontainers-go is not used.** What it adds over the existing
+  `docker run` helper is lifecycle management for leaked containers, and in CI
+  neither path runs because `TEST_DATABASE_URL` points at the service
+  container. A Docker API client and its dependency tree was not worth that.
+- **`internal/testsupport` mints JWTs itself** rather than reusing the
+  identity module's `JWTService`, because rule R3 forbids `internal/**` from
+  importing `modules/**`. The duplication is guarded by
+  `modules/identity/infrastructure/token/testsupport_contract_test.go`, on the
+  one side of the boundary allowed to see both. Without that check the drift
+  is silent and every authenticated test keeps passing against a token shape
+  the application no longer issues.
+- **`auth_failures_total{reason}` was not shipped.** Rate-limit rejections are
+  already `http_requests_total{status="429"}`, but auth failures by reason are
+  genuinely not derivable — `status="401"` hides `wrong_class`. Getting them
+  means instrumenting the identity module. Carried forward rather than
+  stubbed: a collector nothing increments reports zero, which reads as "no
+  attacks" rather than "not measured".
+- **Binary size is reported, not gated.** A hard threshold fails an honest
+  feature and gets raised on the spot, which teaches everyone to raise it. A
+  real budget belongs with 5.3.
+- **QF1008 is disabled.** It rewrites `cfg.DB.Name` into `cfg.Name`, removing
+  the only token that says which config section is being read.
+
+### Carried forward
+
+- **Every GitHub Action uses a moving major tag, not a pinned digest** —
+  including gitleaks, which runs with access to the full history. Belongs with
+  Phase 5's hygiene work.
+- **`auth_failures_total{reason}`**, as above.
+- **`Migrations fs.FS` is still nil on every module.** Unchanged since Phase 3
+  and never a Phase 4 task.
+- **The local toolchain is missing `covdata`**, so
+  `go test -coverprofile ./...` exits 1 here on packages with no test files.
+  The profile is written correctly and the check reads it; `make
+  coverage-check` tolerates the exit and says why. CI's toolchain is complete
+  and its equivalent step is not tolerant. Second instance of the same class
+  of problem as `-race`.
 
 ---
 
@@ -293,7 +385,7 @@ Phase 0 ──▶ Phase 1 ──▶ Phase 3 ──▶ Phase 5
 | **M1 — It works** | A real endpoint serves a real request against a real schema | Phase 1 |
 | **M2 — It's safe** | No credential leak, no auth bypass, handles concurrency | Phase 2 — **reached**, with the caveat below |
 | **M3 — It's coherent** | One layout, one framework, enforced boundaries | Phase 3 — **reached** |
-| **M4 — It's defended** | CI catches regressions; failures are observable | Phase 4 |
+| **M4 — It's defended** | CI catches regressions; failures are observable | Phase 4 — **reached** |
 | **M5 — It's clean** | Small repo, small binary, rotatable keys | Phase 5 |
 
 ---
@@ -327,23 +419,23 @@ Three caveats on "done" that the ticks do not capture:
   Phase 2.6 deleting the HS256 plugin does not discharge it either — the secret
   is still in history, and pre-`0cf07d9` builds still accept tokens signed with
   it.
-- **M2 is reached on the "handles concurrency" criterion by inspection, not by
-  measurement.** `TestRateLimitAllowsConcurrentRequests` proves the server no
-  longer serialises, but `-race` cannot run in this environment, and a real race
-  did ship inside Phase 2 before being caught by review (`d130519`). Read M2 as
-  "the known unsafe behaviours are fixed and tested", not as "concurrency is
-  verified".
-- **Milestones M1, M2 and M3 are reached; M4 and M5 are not.** Phase 3 landed
-  one layout, one module contract and mechanically enforced boundaries.
-- **CI now exists** (`.github/workflows/ci.yml`, Phase 3.2), so exit criteria
-  are enforced automatically for the first time — but only partially. It runs
-  gofmt, build, vet, the test suite, the architecture rules and `depguard`. It
-  does **not** yet run `-race`, `govulncheck`, `gitleaks`, the migration
-  up/down/up check, or coverage floors, and `golangci-lint` is scoped to
-  `depguard` alone while 35 pre-existing findings remain. That is Phase 4.4.
-- **The `-race` caveat under M2 is unchanged.** CI runs on Linux and could
-  carry it, but the workflow does not enable it yet, so concurrency
-  correctness is still review-enforced rather than measured.
+- **M2's concurrency caveat is now closed in CI, and only in CI.**
+  `TestRateLimitAllowsConcurrentRequests` proved the server no longer
+  serialises, but `-race` still cannot run on the maintainer's machine, and a
+  real race did ship inside Phase 2 before being caught by review (`d130519`).
+  Phase 4.4 put `go test -race` on every push and pull request, so concurrency
+  correctness is measured rather than reviewed — but nobody sees that result
+  until they push.
+- **Milestones M1 through M4 are reached; M5 is not.** Phase 3 landed one
+  layout, one module contract and mechanically enforced boundaries; Phase 4
+  put a gate in front of all of it.
+- **CI is now the full pipeline** (`.github/workflows/ci.yml`, Phases 3.2 and
+  4.4/4.5): gofmt, build, vet, `go test -race` against a real Postgres, the
+  architecture rules, the standard `golangci-lint` set, the coverage floors
+  and ratchet, migrations up/down/up with the schema-drift check,
+  `govulncheck`, `gitleaks` over full history, and a binary-size report.
+- **What CI still does not do:** pin its actions by digest, and enforce a
+  binary-size budget. Both are Phase 5.
 
 ---
 

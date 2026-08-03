@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
@@ -16,6 +17,7 @@ import (
 	"github.com/sujanto-gaws/kopiochi/internal/httpx"
 	"github.com/sujanto-gaws/kopiochi/internal/lifecycle"
 	"github.com/sujanto-gaws/kopiochi/internal/logger"
+	"github.com/sujanto-gaws/kopiochi/internal/metrics"
 )
 
 // @title Kopiochi API
@@ -79,9 +81,12 @@ func serve(cfgPath string) error {
 		return fmt.Errorf("load config: %w", err)
 	}
 
-	// Phase 2 — logger.
-	log.Logger = logger.Init(cfg.Log.Level, cfg.Log.Format)
-	appLog := log.Logger
+	// Phase 2 — logger. appLog is the one every constructor below is handed;
+	// nothing in this tree reads zerolog's package global. The global is still
+	// assigned so that a dependency which does reach for it writes in our
+	// format and at our level rather than to a default stderr writer.
+	appLog := logger.Init(cfg.Log.Level, cfg.Log.Format)
+	log.Logger = appLog
 	appLog.Info().Msg("application starting")
 
 	// The base context is cancelled by the first SIGINT/SIGTERM, so
@@ -110,7 +115,7 @@ func serve(cfgPath string) error {
 	// modules, so a server that would start and serve nothing fails here.
 	app, err := BuildApp(cfg, database.Bun, appLog)
 	if err != nil {
-		return shutdownAfter(stack, cfg, fmt.Errorf("build app: %w", err))
+		return shutdownAfter(stack, cfg, appLog, fmt.Errorf("build app: %w", err))
 	}
 	for _, m := range app.Modules {
 		if m.Close != nil {
@@ -118,19 +123,59 @@ func serve(cfgPath string) error {
 		}
 	}
 
-	// Phase 5 — router and routes. CORS and rate limiting are constructed
+	// Phase 5 — metrics. Built before the router so the HTTP middleware can be
+	// registered, and after the database so the pool collector has a pool to
+	// read. nil when disabled, which the router understands as "no
+	// instrumentation" rather than requiring a second code path.
+	var m *metrics.Metrics
+	if cfg.Metrics.Enabled {
+		m = metrics.New()
+		// Read at scrape time rather than on a ticker: no goroutine to own,
+		// and no staleness in a saturation signal.
+		if err := m.RegisterPool(func() metrics.PoolStats {
+			if database.Pool == nil {
+				return nil
+			}
+			return database.Pool.Stat()
+		}); err != nil {
+			return shutdownAfter(stack, cfg, appLog, fmt.Errorf("register pool metrics: %w", err))
+		}
+	}
+
+	// Phase 6 — router and routes. CORS and rate limiting are constructed
 	// directly from typed config; closeRouter releases what they own (the
 	// rate limiter's eviction goroutine).
-	r, closeRouter, err := httpx.NewRouter(cfg.Server, cfg.Security)
+	r, closeRouter, err := httpx.NewRouter(cfg.Server, cfg.Security, appLog, m)
 	if err != nil {
-		return shutdownAfter(stack, cfg, fmt.Errorf("build router: %w", err))
+		return shutdownAfter(stack, cfg, appLog, fmt.Errorf("build router: %w", err))
 	}
 	stack.PushCloser("router", closeRouter)
 
-	// Phase 6 — server. Registered on the stack before it starts listening,
+	// Phase 7 — servers. Registered on the stack before they start listening,
 	// so a failure between here and Serve still drains cleanly.
 	srv := httpx.NewServer(cfg.Server, r, appLog)
 	stack.Push("http server", srv.Shutdown)
+
+	// The metrics listener is a second server on its own address. It goes on
+	// the same stack so it drains like anything else, and it is pushed after
+	// the API so LIFO stops it first — a scrape landing mid-drain would
+	// otherwise report a process that is already going away.
+	if m != nil {
+		adminMux := http.NewServeMux()
+		adminMux.Handle(cfg.Metrics.Path, m.Handler())
+
+		admin := httpx.NewAdminServer(cfg.Metrics, adminMux, appLog.With().Str("component", "metrics").Logger())
+		stack.Push("metrics server", admin.Shutdown)
+
+		go func() {
+			// A failed metrics listener must not take the API down with it:
+			// losing observability is bad, losing the service is worse. It is
+			// logged at error level so the gap is visible.
+			if err := admin.Serve(ctx); err != nil {
+				appLog.Error().Err(err).Str("addr", cfg.Metrics.Addr).Msg("metrics server stopped with error")
+			}
+		}()
+	}
 
 	// /readyz pings the pool directly (it satisfies httpx.Pinger) so
 	// orchestrators stop routing traffic the moment the database becomes
@@ -141,13 +186,13 @@ func serve(cfgPath string) error {
 		Draining: srv.Draining,
 	})
 
-	// Phase 7 — serve until the first signal, or until listening fails.
+	// Phase 8 — serve until the first signal, or until listening fails.
 	serveErr := srv.Serve(ctx)
 	if serveErr != nil {
 		appLog.Error().Err(serveErr).Msg("server stopped with error")
 	}
 
-	return shutdownAfter(stack, cfg, serveErr)
+	return shutdownAfter(stack, cfg, appLog, serveErr)
 }
 
 // shutdownAfter tears the stack down and folds the teardown outcome into
@@ -156,7 +201,7 @@ func serve(cfgPath string) error {
 // The shutdown context is deliberately built from context.Background() and
 // not from the (already-cancelled) signal context: the drain needs its full
 // budget precisely in the case where the process is being asked to stop.
-func shutdownAfter(stack *lifecycle.Stack, cfg *config.Config, cause error) error {
+func shutdownAfter(stack *lifecycle.Stack, cfg *config.Config, log zerolog.Logger, cause error) error {
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), cfg.Server.ShutdownTimeout)
 	defer cancel()
 

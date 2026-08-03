@@ -43,7 +43,7 @@ func main() {
 			if err != nil {
 				return fmt.Errorf("open database: %w", err)
 			}
-			defer database.Close()
+			defer func() { _ = database.Close() }()
 
 			if err := goose.Up(database, migrationsDir); err != nil {
 				return fmt.Errorf("run migrations up: %w", err)
@@ -74,7 +74,7 @@ func main() {
 			if err != nil {
 				return fmt.Errorf("open database: %w", err)
 			}
-			defer database.Close()
+			defer func() { _ = database.Close() }()
 
 			if err := goose.Down(database, migrationsDir); err != nil {
 				return fmt.Errorf("run migrations down: %w", err)
@@ -105,7 +105,7 @@ func main() {
 			if err != nil {
 				return fmt.Errorf("open database: %w", err)
 			}
-			defer database.Close()
+			defer func() { _ = database.Close() }()
 
 			if err := goose.Status(database, migrationsDir); err != nil {
 				return fmt.Errorf("get migration status: %w", err)
@@ -135,7 +135,7 @@ func main() {
 			if err != nil {
 				return fmt.Errorf("open database: %w", err)
 			}
-			defer database.Close()
+			defer func() { _ = database.Close() }()
 
 			if err := goose.Reset(database, migrationsDir); err != nil {
 				return fmt.Errorf("reset migrations: %w", err)

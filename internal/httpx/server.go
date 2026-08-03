@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"sync/atomic"
+	"time"
 
 	"github.com/rs/zerolog"
 
@@ -42,6 +43,37 @@ func NewServer(cfg config.Server, handler http.Handler, log zerolog.Logger) *Ser
 			ReadHeaderTimeout: cfg.ReadHeaderTimeout,
 			WriteTimeout:      cfg.WriteTimeout,
 			IdleTimeout:       cfg.IdleTimeout,
+		},
+		log: log,
+	}
+}
+
+// NewAdminServer builds the metrics listener.
+//
+// It is a *Server like the API's, so it goes on the same lifecycle stack and
+// drains the same way rather than being a bare http.Server nobody shuts down.
+// Its timeouts are fixed rather than configurable: the only client is a
+// scraper, and a value tuned for API traffic is not the right value here.
+//
+// The address comes from config.Metrics, which Validate rejects if it matches
+// the API's own — putting /metrics on the public listener defeats the point of
+// a separate one.
+func NewAdminServer(cfg config.Metrics, handler http.Handler, log zerolog.Logger) *Server {
+	const (
+		adminReadHeaderTimeout = 5 * time.Second
+		adminReadTimeout       = 10 * time.Second
+		adminWriteTimeout      = 30 * time.Second // a large scrape can be slow
+		adminIdleTimeout       = 60 * time.Second
+	)
+
+	return &Server{
+		httpServer: &http.Server{
+			Addr:              cfg.Addr,
+			Handler:           handler,
+			ReadTimeout:       adminReadTimeout,
+			ReadHeaderTimeout: adminReadHeaderTimeout,
+			WriteTimeout:      adminWriteTimeout,
+			IdleTimeout:       adminIdleTimeout,
 		},
 		log: log,
 	}

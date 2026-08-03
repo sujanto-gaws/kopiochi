@@ -1,3 +1,5 @@
+// Package user holds the user module's application layer: the use cases
+// that orchestrate user CRUD over the domain's repository interfaces.
 package user
 
 import (

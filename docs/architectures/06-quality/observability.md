@@ -1,9 +1,31 @@
 # Observability
 
-**Status:** Proposed
+**Status:** Largely implemented
 **Date:** 2026-08-02
-**Last verified:** 2026-08-02 — nothing in this document has been implemented
-(Phases 4.7/4.8 and 5.7 have not run). Only line references were refreshed.
+**Last verified:** 2026-08-03, after Phase 4.
+
+Phases 4.7 and 4.8 landed most of this document:
+
+| Problem | State |
+|---|---|
+| 1 — the global logger is used directly | ✅ Fixed. Nothing reads zerolog's package global; `RequestLogger`, `ParseTrustedProxies` and `NewRouter` all take a `zerolog.Logger`. |
+| 2 — the extension manager prints to stdout | ✅ Gone with the framework, Phase 3.6. |
+| 3 — request-scoped context is not propagated | ✅ Fixed. `RequestLogger` installs a child logger bound to `request_id` and the resolved client IP; any layer calls `zerolog.Ctx(ctx)`. `RequestID` now runs *before* recovery. |
+| 4 — no metrics at all | ✅ `internal/metrics`, `/metrics` on a separate admin port, plus pool statistics. |
+| 5 — no tracing | ⏳ Not started. OpenTelemetry remains sequencing step 8. |
+| 6 — nothing prevents secrets reaching the logs | ✅ `secret.String`, Phase 2.9. |
+
+Also shipped beyond the list: `httpx.Recovery` replaces chi's `Recoverer` with
+problem+json and a structured, correlated log line; 404 and 405 emit the same
+shape; and every response carries `X-Request-Id`, not just the failures.
+
+Still outstanding: **`auth_failures_total{reason}`**. Rate-limit rejections
+are derivable from `http_requests_total{status="429"}`, but auth failures by
+reason are not — `status="401"` hides `wrong_class`, the one that matters —
+and collecting them means instrumenting the identity module. It was carried
+forward rather than stubbed, because a collector nothing increments reports
+zero, which reads as "no attacks" rather than "not measured". Audit events
+(5.7) and tracing are also still open.
 
 ---
 

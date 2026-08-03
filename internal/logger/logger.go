@@ -1,3 +1,9 @@
+// Package logger builds the process's root zerolog logger from configuration.
+//
+// It is called once, at startup, by each entry point in cmd/. Everything else
+// receives a logger through its constructor rather than reaching for the
+// zerolog package-level global — see
+// docs/architectures/06-quality/observability.md.
 package logger
 
 import (

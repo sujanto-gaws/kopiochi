@@ -64,7 +64,9 @@ func readyzHandler(pinger Pinger, draining func() bool) http.HandlerFunc {
 func writeHealth(w http.ResponseWriter, status int, state string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(map[string]string{
+	// Status and headers are already committed; a failed encode leaves a
+	// truncated body and nothing actionable. Probes read the status code.
+	_ = json.NewEncoder(w).Encode(map[string]string{
 		"status":  state,
 		"version": version.Version,
 	})

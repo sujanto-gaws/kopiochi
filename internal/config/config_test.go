@@ -449,3 +449,199 @@ func TestLoad_SecurityEnvOverrides(t *testing.T) {
 		t.Errorf("ttl = %v, want 3m", cfg.Security.RateLimit.TTL)
 	}
 }
+
+// TestValidate_MetricsChecksOnlyApplyWhenEnabled: the metrics block is off by
+// default, and an unset addr must not fail a config that never listens.
+func TestValidate_MetricsChecksOnlyApplyWhenEnabled(t *testing.T) {
+	cfg := validConfig()
+	cfg.Metrics = Metrics{Enabled: false, Addr: "", Path: ""}
+
+	if err := cfg.Validate(); err != nil {
+		t.Errorf("Validate() = %v, want nil when metrics are disabled", err)
+	}
+}
+
+func TestValidate_MetricsRejectsAnEmptyAddr(t *testing.T) {
+	cfg := validConfig()
+	cfg.Metrics = Metrics{Enabled: true, Addr: "", Path: "/metrics"}
+
+	err := cfg.Validate()
+	if err == nil || !strings.Contains(err.Error(), "metrics.addr") {
+		t.Errorf("Validate() = %v, want a metrics.addr error", err)
+	}
+}
+
+func TestValidate_MetricsRejectsAPathWithoutASlash(t *testing.T) {
+	cfg := validConfig()
+	cfg.Metrics = Metrics{Enabled: true, Addr: "127.0.0.1:9090", Path: "metrics"}
+
+	err := cfg.Validate()
+	if err == nil || !strings.Contains(err.Error(), "metrics.path") {
+		t.Errorf("Validate() = %v, want a metrics.path error", err)
+	}
+}
+
+// TestValidate_MetricsRefusesTheAPIsOwnAddress is the check worth having here.
+// /metrics exposes the route table, pool sizes and process memory; serving it
+// on the public listener is the one outcome a separate admin port exists to
+// prevent, and it is a plausible mistake to make in a values file.
+func TestValidate_MetricsRefusesTheAPIsOwnAddress(t *testing.T) {
+	cfg := validConfig()
+	cfg.Server.Host = "0.0.0.0"
+	cfg.Server.Port = 8080
+	cfg.Metrics = Metrics{Enabled: true, Addr: "0.0.0.0:8080", Path: "/metrics"}
+
+	err := cfg.Validate()
+	if err == nil || !strings.Contains(err.Error(), "separate") {
+		t.Errorf("Validate() = %v, want a refusal to serve /metrics on the API's own address", err)
+	}
+}
+
+func TestValidate_MetricsAcceptsASeparateAddress(t *testing.T) {
+	cfg := validConfig()
+	cfg.Server.Host = "0.0.0.0"
+	cfg.Server.Port = 8080
+	cfg.Metrics = Metrics{Enabled: true, Addr: "127.0.0.1:9090", Path: "/metrics"}
+
+	if err := cfg.Validate(); err != nil {
+		t.Errorf("Validate() = %v, want nil", err)
+	}
+}
+
+// The remaining Validate branches, each asserted individually. Validate
+// accumulates every problem rather than returning the first, so a values file
+// with three mistakes reports three — these confirm each branch is reachable
+// and names the field it rejects.
+func TestValidate_RejectsIndividualBadValues(t *testing.T) {
+	tests := []struct {
+		name    string
+		mutate  func(*Config)
+		wantSub string
+	}{
+		{"empty db name", func(c *Config) { c.DB.Name = "" }, "db.name"},
+		{"empty db user", func(c *Config) { c.DB.User = "" }, "db.user"},
+		{"port too low", func(c *Config) { c.Server.Port = 0 }, "server.port"},
+		{"port too high", func(c *Config) { c.Server.Port = 70000 }, "server.port"},
+		{"request timeout exceeds write timeout", func(c *Config) {
+			c.Server.RequestTimeout = 60 * time.Second
+			c.Server.WriteTimeout = 30 * time.Second
+		}, "request_timeout"},
+		{"shutdown shorter than request", func(c *Config) {
+			c.Server.ShutdownTimeout = time.Second
+			c.Server.RequestTimeout = 25 * time.Second
+		}, "shutdown_timeout"},
+		{"empty issuer", func(c *Config) { c.Auth.Issuer = "" }, "auth.issuer"},
+		{"non-positive access ttl", func(c *Config) { c.Auth.AccessTokenTTL = 0 }, "access_token_ttl"},
+		{"non-positive refresh ttl", func(c *Config) { c.Auth.RefreshTokenTTL = 0 }, "refresh_token_ttl"},
+		{"access ttl not shorter than refresh", func(c *Config) {
+			c.Auth.AccessTokenTTL = 200 * time.Hour
+			c.Auth.RefreshTokenTTL = 168 * time.Hour
+		}, "shorter"},
+		{"non-positive mfa ttl", func(c *Config) { c.Auth.MFATemporaryTTL = 0 }, "mfa_temporary_ttl"},
+		{"placeholder password", func(c *Config) { c.DB.Password = "postgres" }, "db.password"},
+		{"empty password", func(c *Config) { c.DB.Password = "" }, "db.password"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := validConfig()
+			tc.mutate(cfg)
+
+			err := cfg.Validate()
+			if err == nil {
+				t.Fatalf("Validate() = nil, want an error mentioning %q", tc.wantSub)
+			}
+			if !strings.Contains(err.Error(), tc.wantSub) {
+				t.Errorf("Validate() = %v, want it to mention %q", err, tc.wantSub)
+			}
+		})
+	}
+}
+
+// TestValidate_ReportsEveryProblemAtOnce: fixing a config one error per run is
+// the difference between one edit and six.
+func TestValidate_ReportsEveryProblemAtOnce(t *testing.T) {
+	cfg := validConfig()
+	cfg.DB.Name = ""
+	cfg.DB.User = ""
+	cfg.Auth.Issuer = ""
+
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatal("Validate() = nil, want errors")
+	}
+	for _, want := range []string{"db.name", "db.user", "auth.issuer"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("Validate() = %v, want it to also mention %q", err, want)
+		}
+	}
+}
+
+// TestDefaultYAMLLoads parses the config file the repository actually ships.
+//
+// Nothing else does: every other test builds a Config in code or uses a
+// fixture under testdata/. So a typo in config/default.yaml — a mis-indented
+// block, a duration written as a bare number — would be found by the first
+// person to run the server, not by the suite.
+//
+// APP_DB_PASSWORD is set because Validate rejects the placeholder the sample
+// file carries, which is the intended behaviour and not what this test is
+// about.
+func TestDefaultYAMLLoads(t *testing.T) {
+	t.Setenv("APP_DB_PASSWORD", "a-real-dev-password")
+
+	cfg, err := Load(filepath.Join("..", "..", "config", "default.yaml"))
+	if err != nil {
+		t.Fatalf("config/default.yaml does not load: %v", err)
+	}
+
+	// Spot-check a value from each section, so a block that silently failed to
+	// map (the usual symptom of bad indentation) is caught rather than
+	// defaulted over.
+	if cfg.Server.Port == 0 {
+		t.Error("server.port did not load")
+	}
+	if cfg.DB.MaxConns == 0 {
+		t.Error("db.max_conns did not load")
+	}
+	if len(cfg.Security.CORS.AllowedMethods) == 0 {
+		t.Error("security.cors.allowed_methods did not load")
+	}
+	if cfg.Security.RateLimit.MaxKeys == 0 {
+		t.Error("security.rate_limit.max_keys did not load")
+	}
+	if cfg.Metrics.Addr == "" {
+		t.Error("metrics.addr did not load")
+	}
+	if cfg.Metrics.Path != "/metrics" {
+		t.Errorf("metrics.path = %q, want /metrics", cfg.Metrics.Path)
+	}
+}
+
+// TestDefaultYAMLShipsBothMiddlewaresOff: CORS and the rate limiter default to
+// off, and the sample must not quietly turn either on — an allowlist someone
+// forgot to edit is worse than no CORS at all.
+func TestDefaultYAMLShipsSafeDefaults(t *testing.T) {
+	t.Setenv("APP_DB_PASSWORD", "a-real-dev-password")
+
+	cfg, err := Load(filepath.Join("..", "..", "config", "default.yaml"))
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+
+	if cfg.Security.CORS.Enabled {
+		t.Error("config/default.yaml enables CORS")
+	}
+	if cfg.Security.RateLimit.Enabled {
+		t.Error("config/default.yaml enables the rate limiter")
+	}
+	if cfg.Metrics.Enabled {
+		t.Error("config/default.yaml enables the metrics listener")
+	}
+	if cfg.Server.EnableHSTS {
+		t.Error("config/default.yaml enables HSTS, which is not safe over plain http in development")
+	}
+	if len(cfg.Server.TrustedProxies) != 0 {
+		t.Errorf("config/default.yaml trusts proxies %v; the default must trust nothing", cfg.Server.TrustedProxies)
+	}
+}

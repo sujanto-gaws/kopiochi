@@ -1,3 +1,9 @@
+// Package token implements the identity domain's JWT issuing and
+// verification ports.
+//
+// Verification pins the signing algorithm and checks issuer, audience and
+// token class, so a token minted for one purpose cannot be replayed as
+// another — see docs/architectures/04-security/token-architecture.md.
 package token
 
 import (

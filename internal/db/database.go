@@ -133,7 +133,7 @@ func OpenSQL(ctx context.Context, cfg config.DB) (*sql.DB, error) {
 	sqlDB.SetMaxOpenConns(1)
 
 	if err := sqlDB.PingContext(ctx); err != nil {
-		sqlDB.Close()
+		_ = sqlDB.Close()
 		return nil, fmt.Errorf("ping database: %w", err)
 	}
 

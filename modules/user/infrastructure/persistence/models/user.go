@@ -1,3 +1,5 @@
+// Package models holds the user module's bun row structs — the storage
+// shape, translated to and from the domain shape by the repository.
 package models
 
 import (

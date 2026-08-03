@@ -1,3 +1,5 @@
+// Package version carries the build identity of the binary. Its values are
+// injected at link time, so importing it does not pull in anything else.
 package version
 
 // Version is set at build time via:

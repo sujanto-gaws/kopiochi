@@ -533,26 +533,69 @@ server:
 # Run all tests
 go test ./...
 
-# Run tests with coverage
-go test -cover ./...
-
 # Run a single module's tests
 go test ./modules/identity/...
 
 # Check the dependency rules (docs/architectures/01-modularity/dependency-rules.md)
 make arch
+
+# Enforce the per-package coverage floors and the no-regression ratchet
+make coverage-check
+
+# Raise the baseline after genuinely improving coverage
+make coverage-update
 ```
 
 Tests that need a database stand up a throwaway Postgres container, or use
 `TEST_DATABASE_URL` if it is set, and skip cleanly when neither is available
-(`internal/testutil.ScratchPostgres`). They never guess at credentials for
+(`internal/testsupport.ScratchPostgres`). They never guess at credentials for
 whatever happens to be listening on `localhost:5432`.
+
+Shared fixtures live in `internal/testsupport`: `MigratedDB` and `TruncateAll`
+for a clean database, `Config` for a valid `*config.Config` backed by a
+freshly generated keypair, `MintToken` for tokens login cannot produce
+(expired, wrong issuer, wrong class), and JSON request/response helpers.
+
+### Two things that will lie to you
 
 > **`make arch` passes `-count=1`, and so must you.** The architecture tests
 > read the whole repository through `go/packages`, but Go's test cache keys
 > only on the `tools/archtest` package's own files — so a violation introduced
 > anywhere else returns a cached `ok` against a tree that now fails. Plain
 > `go test ./tools/archtest/...` will lie to you.
+
+> **A local `go test ./...` does not run the integration suite.** Every
+> database-backed test skips cleanly without a Postgres, and a skip prints
+> `ok`. `make coverage-check` names the packages it could not check for that
+> reason rather than passing them at 0%. CI has a service container, so that
+> is where they actually run.
+
+### Coverage policy
+
+Floors are per-package, in `tools/coverage/policy.json`, each with the reason
+it exists — 90% for `domain`, 80% for `application`, 85% for `internal/config`
+and the HTTP middleware. There is no global percentage target, because a
+global number is met most cheaply by testing trivial getters.
+
+The same file carries a baseline that coverage may not drop below.
+`-update` refuses to lower a recorded value without `-allow-decrease`, so
+re-baselining is a deliberate, reviewable act.
+
+### CI
+
+`.github/workflows/ci.yml` runs five jobs on every push and pull request:
+
+| Job | What it gates |
+|---|---|
+| **build** | gofmt, build, vet, `go test -race` against a real Postgres, the architecture rules, the coverage floors and ratchet |
+| **migrations** | up → reset (every `Down`) → up, then the model/schema drift test |
+| **lint** | `golangci-lint` with the standard set plus the `depguard` layering rules |
+| **security** | `govulncheck`, and `gitleaks` over the full history |
+| **size** | reports the `cmd/api` binary size to the job summary |
+
+`-race` is the one that matters most: it does not run on Windows without a
+modern mingw-w64, and a data race once shipped in the very commit whose
+purpose was concurrency correctness. CI is the only place that check exists.
 
 ## 📄 License
 

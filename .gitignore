@@ -1,40 +1,34 @@
+
+# Archives
 # Compiled and build artifacts
+# Coverage
+# Dependencies
+# Editors
+# Environment
+# Go-specific
+# Logs and temp files
+# Secrets / keys
+*.env.*
+*.exe
+*.log
 *.o
 *.obj
 *.out
-bin/
-*.exe
-
-# Dependencies
-vendor/
-
-# Logs and temp files
-*.log
-*.tmp
+*.pem
+*.prof
 *.swp
-
-# Environment
+*.test
+*.tmp
+*.zipcoverage.out
+.coverage
 .env
 .env.local
-*.env.*
-
-# Editors
-.vscode/
 .idea/
-
-# Coverage
+.vscode/
+bin/
+coverage.*
+coverage.html
 coverage/
 htmlcov/
-.coverage
-coverage.*
-
-# Go-specific
-*.test
-*.prof
-
-# Secrets / keys
 keys/
-*.pem
-
-# Archives
-*.zip
+vendor/

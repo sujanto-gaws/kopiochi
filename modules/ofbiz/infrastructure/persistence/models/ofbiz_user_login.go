@@ -1,3 +1,5 @@
+// Package models holds bun row structs mapped onto the Apache OFBiz
+// standard entity schema, for reading an existing OFBiz database.
 package models
 
 import (

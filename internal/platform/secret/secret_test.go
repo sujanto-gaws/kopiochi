@@ -19,6 +19,11 @@ func TestString_RedactsEverywhere(t *testing.T) {
 	if got := fmt.Sprintf("%v", s); got != redacted {
 		t.Errorf("%%v formatting = %q, want %q", got, redacted)
 	}
+	// staticcheck's S1025 suggests s.String() here. Taking that advice would
+	// delete the assertion: the point is that the %s *verb* redacts, which is
+	// the path any log line or error message actually takes. Calling String()
+	// directly is already covered three lines up.
+	//nolint:staticcheck // S1025: exercising the %s verb is the test
 	if got := fmt.Sprintf("%s", s); got != redacted {
 		t.Errorf("%%s formatting = %q, want %q", got, redacted)
 	}

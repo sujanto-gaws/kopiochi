@@ -12,25 +12,27 @@
 
 version: "2"
 
-# Only depguard is on. This is Phase 3.2's scope — the dependency rules —
-# and CI has to be green from the first commit or nobody will trust it.
-#
-# The standard set (errcheck, staticcheck, unused, govet, ineffassign) was
-# run against this tree and reports 35 pre-existing findings: 18 errcheck,
-# 14 staticcheck, 3 unused (all in cmd/generator). None of them are
-# architecture violations, none were introduced by Phase 3, and fixing them
-# is Phase 4.4's job along with -race, govulncheck and the coverage floors.
-# Turning them on here would mean landing a workflow that fails on its first
-# run, which trains everyone to ignore it.
-#
-# `default: standard` is the line to restore in 4.4, once those 35 are dealt
-# with.
+# The standard set is on as of Phase 4.4. It was scoped to depguard alone
+# through Phase 3 because the tree carried 35 pre-existing findings and a
+# workflow that fails on its first run trains everyone to ignore it. Those 35
+# are now cleared, so the gate is real.
 linters:
-  default: none
+  default: standard
   enable:
     - depguard
 
   settings:
+    staticcheck:
+      # Everything except QF1008. That check rewrites `cfg.DB.Name` into
+      # `cfg.Name` because DB is an embedded field — which removes the only
+      # token telling the reader *which* config section is being read.
+      # Config is the one place in this tree where the embedded-field name
+      # carries the meaning, so the check is wrong here and applying it
+      # across the 11 sites it flags would make the code harder to read.
+      checks:
+        - "all"
+        - "-QF1008"
+
     depguard:
       rules:
         # R1 — the domain layer is the innermost ring. Standard library and
@@ -79,6 +81,16 @@ linters:
       - path: ^docs/
         linters:
           - depguard
+
+issues:
+  # Report everything. golangci-lint defaults to max-issues-per-linter: 50 and
+  # max-same-issues: 3, which silently truncates its own output — a run can
+  # print "21 issues" when the tree actually has 60, and the count shrinks as
+  # you fix them rather than the list. That is the same class of silent cap as
+  # the go test cache masking architecture violations (see tools/archtest),
+  # and it is worth exactly as little in a gate.
+  max-issues-per-linter: 0
+  max-same-issues: 0
 
 formatters:
   enable:

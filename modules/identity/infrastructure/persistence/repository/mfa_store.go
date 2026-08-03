@@ -1,3 +1,6 @@
+// Package repository implements the identity domain's persistence ports
+// over bun, translating between domain entities and the row structs in the
+// sibling models package.
 package repository
 
 import (
