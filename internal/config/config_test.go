@@ -576,3 +576,72 @@ func TestValidate_ReportsEveryProblemAtOnce(t *testing.T) {
 		}
 	}
 }
+
+// TestDefaultYAMLLoads parses the config file the repository actually ships.
+//
+// Nothing else does: every other test builds a Config in code or uses a
+// fixture under testdata/. So a typo in config/default.yaml — a mis-indented
+// block, a duration written as a bare number — would be found by the first
+// person to run the server, not by the suite.
+//
+// APP_DB_PASSWORD is set because Validate rejects the placeholder the sample
+// file carries, which is the intended behaviour and not what this test is
+// about.
+func TestDefaultYAMLLoads(t *testing.T) {
+	t.Setenv("APP_DB_PASSWORD", "a-real-dev-password")
+
+	cfg, err := Load(filepath.Join("..", "..", "config", "default.yaml"))
+	if err != nil {
+		t.Fatalf("config/default.yaml does not load: %v", err)
+	}
+
+	// Spot-check a value from each section, so a block that silently failed to
+	// map (the usual symptom of bad indentation) is caught rather than
+	// defaulted over.
+	if cfg.Server.Port == 0 {
+		t.Error("server.port did not load")
+	}
+	if cfg.DB.MaxConns == 0 {
+		t.Error("db.max_conns did not load")
+	}
+	if len(cfg.Security.CORS.AllowedMethods) == 0 {
+		t.Error("security.cors.allowed_methods did not load")
+	}
+	if cfg.Security.RateLimit.MaxKeys == 0 {
+		t.Error("security.rate_limit.max_keys did not load")
+	}
+	if cfg.Metrics.Addr == "" {
+		t.Error("metrics.addr did not load")
+	}
+	if cfg.Metrics.Path != "/metrics" {
+		t.Errorf("metrics.path = %q, want /metrics", cfg.Metrics.Path)
+	}
+}
+
+// TestDefaultYAMLShipsBothMiddlewaresOff: CORS and the rate limiter default to
+// off, and the sample must not quietly turn either on — an allowlist someone
+// forgot to edit is worse than no CORS at all.
+func TestDefaultYAMLShipsSafeDefaults(t *testing.T) {
+	t.Setenv("APP_DB_PASSWORD", "a-real-dev-password")
+
+	cfg, err := Load(filepath.Join("..", "..", "config", "default.yaml"))
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+
+	if cfg.Security.CORS.Enabled {
+		t.Error("config/default.yaml enables CORS")
+	}
+	if cfg.Security.RateLimit.Enabled {
+		t.Error("config/default.yaml enables the rate limiter")
+	}
+	if cfg.Metrics.Enabled {
+		t.Error("config/default.yaml enables the metrics listener")
+	}
+	if cfg.Server.EnableHSTS {
+		t.Error("config/default.yaml enables HSTS, which is not safe over plain http in development")
+	}
+	if len(cfg.Server.TrustedProxies) != 0 {
+		t.Errorf("config/default.yaml trusts proxies %v; the default must trust nothing", cfg.Server.TrustedProxies)
+	}
+}

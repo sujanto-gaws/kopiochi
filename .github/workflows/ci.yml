@@ -1,13 +1,16 @@
 # Continuous integration.
 #
-# Phase 3.2 needs this to exist: the depguard rules in .golangci.yml and the
-# architecture tests in tools/archtest are documentation, not enforcement,
-# until something fails the build on them.
+# Phase 3.2 created this as the minimum that made the depguard rules and the
+# architecture tests binding. Phase 4.4/4.5 extends it to the pipeline in
+# docs/architectures/06-quality/testing-strategy.md: a real Postgres, -race,
+# govulncheck, gitleaks, the migration up/down/up check and the coverage gate.
 #
-# This is deliberately the minimum that makes those rules binding. Phase 4.4
-# extends it with -race, govulncheck, gitleaks, the migration up/down/up
-# check, and coverage floors — see
-# docs/architectures/06-quality/testing-strategy.md.
+# The single most valuable line in this file is `-race`. It cannot run on the
+# development machine this repository is maintained from — Go's Windows race
+# runtime needs a much newer mingw-w64 than the one installed — and a real data
+# race shipped in Phase 2 inside the very commit whose purpose was concurrency
+# correctness, caught only by re-reading the diff. This job is the only place
+# that check exists.
 
 name: CI
 
@@ -23,10 +26,42 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  # Not a placeholder: Config.Validate rejects "postgres", "password" and the
+  # rest of the known-dummy list, so a throwaway CI credential still has to be
+  # a real string. It is scoped to this job's service container and never
+  # leaves it.
+  POSTGRES_PASSWORD: ci-ephemeral-not-a-placeholder
+  POSTGRES_USER: kopiochi
+  POSTGRES_DB: kopiochi_test
+
 jobs:
   build:
     name: Build, vet, test
     runs-on: ubuntu-latest
+
+    # A real Postgres, so the integration tests actually run instead of
+    # skipping. Before this, every database-backed test in the suite reported
+    # "ok" without ever opening a connection.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: kopiochi
+          POSTGRES_PASSWORD: ci-ephemeral-not-a-placeholder
+          POSTGRES_DB: kopiochi_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U kopiochi"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      # internal/testsupport prefers this over starting its own container.
+      TEST_DATABASE_URL: postgres://kopiochi:ci-ephemeral-not-a-placeholder@127.0.0.1:5432/kopiochi_test?sslmode=disable
+
     steps:
       - uses: actions/checkout@v4
 
@@ -50,25 +85,98 @@ jobs:
       - name: go vet
         run: go vet ./...
 
-      # Tests that need a database skip cleanly when none is reachable (see
-      # internal/testutil.ScratchPostgres). Phase 4.4 gives CI a real
-      # Postgres service so they run instead of skipping.
-      - name: go test
-        run: go test ./...
+      # -race is the reason this job exists at all; see the header comment.
+      # -covermode=atomic is required with -race and is what tools/coverage
+      # reads.
+      - name: go test -race
+        run: go test -race -covermode=atomic -coverprofile=coverage.out ./...
 
-      # Run explicitly as well as via ./... so a failure here is
-      # unmistakably an architecture violation rather than a normal test
-      # failure buried in the output.
+      # Fail loudly if the database was not actually reachable. Every
+      # integration test skips cleanly when it is not, so without this check a
+      # broken service container produces a green build that tested none of the
+      # persistence layer — which is precisely the state this job was added to
+      # end.
+      - name: assert the integration tests did not skip
+        run: |
+          go test -count=1 -v -run TestModelsMatchMigratedSchema ./tools/schemacheck/... 2>&1 | tee /tmp/schema.log
+          if grep -q -- "--- SKIP" /tmp/schema.log; then
+            echo "::error::The schema test skipped, so no database was reachable. The integration suite did not run."
+            exit 1
+          fi
+
+      # Explicit as well as via ./... so a failure here is unmistakably an
+      # architecture violation rather than a normal test failure in the noise.
       #
       # -count=1 is load-bearing, not habit. These tests read the whole
       # repository through go/packages, but Go's test cache keys only on the
-      # archtest package's own files — so a violation introduced anywhere
-      # else does not invalidate it, and the run reports a cached PASS
-      # against a tree that now fails. Verified: injecting a cross-module
-      # import gives "ok (cached)" without this flag and three failures
-      # with it.
+      # archtest package's own files — so a violation introduced anywhere else
+      # does not invalidate it, and the run reports a cached PASS against a
+      # tree that now fails. Verified: injecting a cross-module import gives
+      # "ok (cached)" without this flag and three failures with it.
       - name: architecture rules
         run: go test -count=1 -v ./tools/archtest/...
+
+      # -with-database because the service container above is real, so the
+      # integration-covered floors are enforced rather than reported as
+      # unchecked.
+      - name: coverage floors and ratchet
+        run: go run ./tools/coverage -profile coverage.out -with-database
+
+  migrations:
+    name: Migrations up/down/up
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: kopiochi
+          POSTGRES_PASSWORD: ci-ephemeral-not-a-placeholder
+          POSTGRES_DB: kopiochi_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U kopiochi"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      APP_DB_HOST: 127.0.0.1
+      APP_DB_PORT: "5432"
+      APP_DB_USER: kopiochi
+      APP_DB_PASSWORD: ci-ephemeral-not-a-placeholder
+      APP_DB_NAME: kopiochi_test
+      APP_DB_SSLMODE: disable
+      TEST_DATABASE_URL: postgres://kopiochi:ci-ephemeral-not-a-placeholder@127.0.0.1:5432/kopiochi_test?sslmode=disable
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # up -> reset -> up. The reverse leg is the point: a Down that does not
+      # actually undo its Up is invisible until someone needs to roll back
+      # during an incident, which is the worst possible moment to find out.
+      # `migrate reset` walks every Down in order, so this exercises all of
+      # them rather than only the most recent.
+      - name: migrate up
+        run: go run ./cmd/migrate up --config config/default.yaml
+
+      - name: migrate down (all)
+        run: go run ./cmd/migrate reset --config config/default.yaml
+
+      - name: migrate up again
+        run: go run ./cmd/migrate up --config config/default.yaml
+
+      # The schema the migrations produce must match what the bun models
+      # expect, in both directions: a column the model wants and the database
+      # lacks, and a column the database has that no model maps.
+      - name: model/schema drift
+        run: go test -count=1 -v -run TestModelsMatchMigratedSchema ./tools/schemacheck/...
 
   lint:
     name: golangci-lint
@@ -84,3 +192,62 @@ jobs:
       - uses: golangci/golangci-lint-action@v6
         with:
           version: latest
+
+  security:
+    name: Vulnerabilities and secrets
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # gitleaks scans history, not just the working tree. The repository
+          # has had a committed secret before (Phase 0.5), and a shallow clone
+          # would silently miss exactly that class of finding.
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: govulncheck
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          govulncheck ./...
+
+      # NOTE: this is the moving @v2 tag, not a pinned digest. A secret scanner
+      # runs with access to the full history, so it is exactly the kind of
+      # third-party step that should be pinned by SHA — and every action in
+      # this file has the same gap. Pinning them all belongs with Phase 5's
+      # hygiene work; recording it here beats leaving it implied.
+      #
+      # gitleaks-action is free for public repositories and for individual
+      # accounts. Under an organization it wants GITLEAKS_LICENSE, and without
+      # one this step fails rather than silently scanning nothing.
+      - name: gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  size:
+    name: Binary size
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # Reported, not gated. Phase 3 cut the binary from 39.0 MB to 37.3 MB by
+      # deleting two frameworks, and the number is worth watching — but a hard
+      # threshold here would fail an honest feature and be raised on the spot,
+      # which teaches everyone to raise it. Phase 5.3 (strip symbols, swagger
+      # behind a build tag) is where a real budget belongs.
+      - name: build and report
+        run: |
+          go build -o /tmp/kopiochi ./cmd/api
+          size=$(stat -c%s /tmp/kopiochi)
+          echo "cmd/api binary: $size bytes ($((size / 1024 / 1024)) MB)"
+          echo "### Binary size" >> "$GITHUB_STEP_SUMMARY"
+          echo "\`cmd/api\`: $size bytes ($((size / 1024 / 1024)) MB)" >> "$GITHUB_STEP_SUMMARY"
