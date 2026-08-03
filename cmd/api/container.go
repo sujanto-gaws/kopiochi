@@ -40,16 +40,17 @@ func BuildApp(cfg *config.Config, db bun.IDB, log zerolog.Logger) (*App, error) 
 	var mods []*module.Module
 
 	identityMod, err := identity.New(deps, identity.Config{
-		PrivateKeyPath:    cfg.Auth.PrivateKeyPath,
-		PublicKeyPath:     cfg.Auth.PublicKeyPath,
-		Issuer:            cfg.Auth.Issuer,
-		ClientID:          cfg.Auth.ClientID,
-		AccessTokenTTL:    cfg.Auth.AccessTokenTTL,
-		RefreshTokenTTL:   cfg.Auth.RefreshTokenTTL,
-		MFATemporaryTTL:   cfg.Auth.MFATemporaryTTL,
-		MaxFailedAttempts: cfg.Auth.MaxFailedAttempts,
-		LockDuration:      cfg.Auth.LockDuration,
-		TokenLeeway:       cfg.Auth.TokenLeeway,
+		PrivateKeyPath:        cfg.Auth.PrivateKeyPath,
+		PublicKeyPath:         cfg.Auth.PublicKeyPath,
+		PreviousPublicKeyPath: cfg.Auth.PreviousPublicKeyPath,
+		Issuer:                cfg.Auth.Issuer,
+		ClientID:              cfg.Auth.ClientID,
+		AccessTokenTTL:        cfg.Auth.AccessTokenTTL,
+		RefreshTokenTTL:       cfg.Auth.RefreshTokenTTL,
+		MFATemporaryTTL:       cfg.Auth.MFATemporaryTTL,
+		MaxFailedAttempts:     cfg.Auth.MaxFailedAttempts,
+		LockDuration:          cfg.Auth.LockDuration,
+		TokenLeeway:           cfg.Auth.TokenLeeway,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("build identity module: %w", err)

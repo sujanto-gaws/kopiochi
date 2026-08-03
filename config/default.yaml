@@ -59,6 +59,11 @@ log:
 auth:
   private_key_path: "keys/private.pem"
   public_key_path: "keys/public.pem"
+  # Key rotation: keep the retired public key here until the longest-lived
+  # token it signed has expired (refresh_token_ttl), then remove it. Swapping
+  # the signing key without this invalidates every token already issued —
+  # every active session logged out at once.
+  previous_public_key_path: ""
   issuer: "kopiochi"
   client_id: "kopiochi"
   access_token_ttl: "15m"

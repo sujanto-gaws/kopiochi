@@ -239,7 +239,7 @@ func TestSetupMFA_SecretGenerationFailureIsPropagated(t *testing.T) {
 	u := testUser("alice")
 	h := newHarness(u)
 	h.svc = NewService(h.users, fakeHasher{}, h.issuer, h.tokens, testConfig(),
-		fakeMFAService{genErr: errors.New("no entropy")}, h.mfaStore)
+		fakeMFAService{genErr: errors.New("no entropy")}, h.mfaStore, h.audit)
 
 	if _, err := h.svc.SetupMFA(context.Background(), u.ID.String()); err == nil {
 		t.Error("SetupMFA() = nil error despite the generator failing")

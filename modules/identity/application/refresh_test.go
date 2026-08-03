@@ -61,20 +61,186 @@ func TestRefresh_RotatesTheRefreshToken(t *testing.T) {
 func TestRefresh_OldTokenStopsWorking(t *testing.T) {
 	t.Parallel()
 
-	u := testUser("alice")
-	h := newHarness(u)
+	h := newHarness(testUser("alice"))
 	first := login(t, h, "alice")
 
 	if _, err := h.svc.Refresh(context.Background(), first.RefreshToken); err != nil {
 		t.Fatalf("first Refresh() error = %v", err)
 	}
-	if !h.tokens.revokedFor(u.ID.String()) {
-		t.Error("the user's existing refresh tokens were not revoked")
-	}
 
 	_, err := h.svc.Refresh(context.Background(), first.RefreshToken)
 	if !errors.Is(err, ErrRefreshTokenInvalid) {
 		t.Fatalf("reusing a rotated refresh token gave %v, want ErrRefreshTokenInvalid", err)
+	}
+}
+
+// TestRefresh_DoesNotRevokeOtherSessions records a behaviour change from
+// Phase 5.6, and an improvement.
+//
+// Refresh used to call RevokeAllForUser on every single exchange, so
+// refreshing on a phone silently logged out the same user's laptop. Rotation
+// is now scoped to the family descending from one login, so concurrent
+// sessions are independent — which is also what makes reuse detection
+// meaningful: revoking a family is now a signal, not routine housekeeping.
+func TestRefresh_DoesNotRevokeOtherSessions(t *testing.T) {
+	t.Parallel()
+
+	h := newHarness(testUser("alice"))
+
+	laptop := login(t, h, "alice")
+	phone := login(t, h, "alice")
+
+	if _, err := h.svc.Refresh(context.Background(), phone.RefreshToken); err != nil {
+		t.Fatalf("refreshing the phone session failed: %v", err)
+	}
+
+	if _, err := h.svc.Refresh(context.Background(), laptop.RefreshToken); err != nil {
+		t.Errorf("refreshing one session invalidated another: %v", err)
+	}
+}
+
+// TestRefresh_ReuseRevokesTheWholeFamily is the core of 5.6.
+//
+// Rotation alone does not survive theft: once the stolen token is spent, both
+// parties hold something that looks valid. Refusing only the second request
+// leaves whoever moved first — the attacker — with a working session. Revoking
+// the family logs out both and forces a real re-authentication.
+func TestRefresh_ReuseRevokesTheWholeFamily(t *testing.T) {
+	t.Parallel()
+
+	h := newHarness(testUser("alice"))
+	stolen := login(t, h, "alice")
+
+	// The attacker refreshes first and gets a valid successor.
+	attacker, err := h.svc.Refresh(context.Background(), stolen.RefreshToken)
+	if err != nil {
+		t.Fatalf("first refresh failed: %v", err)
+	}
+
+	// The victim then presents the token they still hold. That is the
+	// detection.
+	if _, err := h.svc.Refresh(context.Background(), stolen.RefreshToken); !errors.Is(err, ErrRefreshTokenInvalid) {
+		t.Fatalf("reuse gave %v, want ErrRefreshTokenInvalid", err)
+	}
+
+	// The attacker's successor must now be dead too. If only the replayed
+	// token were invalidated, the theft would have succeeded.
+	if _, err := h.svc.Refresh(context.Background(), attacker.RefreshToken); !errors.Is(err, ErrRefreshTokenInvalid) {
+		t.Fatalf("the attacker's token still works after reuse detection: %v", err)
+	}
+}
+
+func TestRefresh_ReuseIsAudited(t *testing.T) {
+	t.Parallel()
+
+	h := newHarness(testUser("alice"))
+	stolen := login(t, h, "alice")
+
+	if _, err := h.svc.Refresh(context.Background(), stolen.RefreshToken); err != nil {
+		t.Fatalf("first refresh failed: %v", err)
+	}
+	_, _ = h.svc.Refresh(context.Background(), stolen.RefreshToken)
+
+	ev, ok := h.audit.find("refresh.reuse")
+	if !ok {
+		t.Fatal("token reuse was detected but never audited; an incident review would see nothing")
+	}
+	if ev.FamilyID == "" {
+		t.Error("the audit event carries no family id, so the affected session cannot be identified")
+	}
+	if ev.Revoked < 1 {
+		t.Errorf("audit reports %d tokens revoked, want at least 1", ev.Revoked)
+	}
+}
+
+// TestRefresh_ReuseIsIndistinguishableToTheCaller: telling an attacker that
+// the token was recognised and the family is now locked confirms they held a
+// real credential and tells them exactly when they were caught.
+func TestRefresh_ReuseIsIndistinguishableToTheCaller(t *testing.T) {
+	t.Parallel()
+
+	h := newHarness(testUser("alice"))
+	stolen := login(t, h, "alice")
+	if _, err := h.svc.Refresh(context.Background(), stolen.RefreshToken); err != nil {
+		t.Fatalf("first refresh failed: %v", err)
+	}
+
+	_, reuseErr := h.svc.Refresh(context.Background(), stolen.RefreshToken)
+	_, bogusErr := h.svc.Refresh(context.Background(), "never-issued-at-all")
+
+	if reuseErr.Error() != bogusErr.Error() {
+		t.Errorf("reuse returns %q but an unknown token returns %q; the difference confirms a real credential",
+			reuseErr, bogusErr)
+	}
+}
+
+// TestRefresh_UnknownTokenIsNotAudited keeps the signal worth alerting on.
+// Every scanner probing the endpoint would otherwise raise a token-theft
+// event, and an alert that fires constantly is one nobody reads.
+func TestRefresh_UnknownTokenIsNotAudited(t *testing.T) {
+	t.Parallel()
+
+	h := newHarness(testUser("alice"))
+
+	_, _ = h.svc.Refresh(context.Background(), "never-issued-at-all")
+
+	if n := h.audit.count("refresh.reuse"); n != 0 {
+		t.Errorf("an unknown token produced %d reuse events, want 0", n)
+	}
+}
+
+// TestRefresh_ExpiredTokenIsNotReuse: an expired token is the ordinary end of
+// a session. Treating it as theft would revoke a legitimate user's other
+// sessions every time one simply aged out.
+func TestRefresh_ExpiredTokenIsNotAudited(t *testing.T) {
+	t.Parallel()
+
+	u := testUser("alice")
+	h := newHarness(u)
+
+	const plain = "an-expired-refresh-token"
+	err := h.tokens.Store(context.Background(), domain.RefreshToken{
+		UserID:    u.ID.String(),
+		TokenHash: domain.HashToken(plain),
+		ExpiresAt: time.Now().Add(-time.Minute),
+	})
+	if err != nil {
+		t.Fatalf("seeding the store failed: %v", err)
+	}
+
+	if _, err := h.svc.Refresh(context.Background(), plain); !errors.Is(err, ErrRefreshTokenInvalid) {
+		t.Fatalf("Refresh(expired) = %v, want ErrRefreshTokenInvalid", err)
+	}
+	if n := h.audit.count("refresh.reuse"); n != 0 {
+		t.Errorf("an expired token produced %d reuse events, want 0", n)
+	}
+}
+
+// TestRefresh_RevocationFailureStillRejects: if the family revocation itself
+// fails, the request must still be refused. Returning a 500 would tell the
+// caller something unusual just happened — and returning success would be
+// catastrophic.
+func TestRefresh_RevocationFailureStillRejects(t *testing.T) {
+	t.Parallel()
+
+	h := newHarness(testUser("alice"))
+	stolen := login(t, h, "alice")
+	if _, err := h.svc.Refresh(context.Background(), stolen.RefreshToken); err != nil {
+		t.Fatalf("first refresh failed: %v", err)
+	}
+
+	h.tokens.revokeFamilyErr = errors.New("database is down")
+
+	if _, err := h.svc.Refresh(context.Background(), stolen.RefreshToken); !errors.Is(err, ErrRefreshTokenInvalid) {
+		t.Fatalf("Refresh() = %v, want ErrRefreshTokenInvalid even when revocation fails", err)
+	}
+
+	ev, ok := h.audit.find("refresh.reuse")
+	if !ok {
+		t.Fatal("a failed revocation was not audited at all")
+	}
+	if ev.Err == nil {
+		t.Error("the audit event does not record that revocation failed — the one case where the attacker keeps a live session")
 	}
 }
 

@@ -5,5 +5,9 @@ import (
 )
 
 func (s *Service) Logout(ctx context.Context, userID string) error {
-	return s.tokenStore.RevokeAllForUser(ctx, userID)
+	if err := s.tokenStore.RevokeAllForUser(ctx, userID); err != nil {
+		return err
+	}
+	s.audit.LogoutSucceeded(ctx, userID)
+	return nil
 }

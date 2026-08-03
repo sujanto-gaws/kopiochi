@@ -104,15 +104,24 @@ type Log struct {
 }
 
 type Auth struct {
-	PrivateKeyPath    string        `mapstructure:"private_key_path"`
-	PublicKeyPath     string        `mapstructure:"public_key_path"`
-	Issuer            string        `mapstructure:"issuer"`
-	ClientID          string        `mapstructure:"client_id"`
-	AccessTokenTTL    time.Duration `mapstructure:"access_token_ttl"`
-	RefreshTokenTTL   time.Duration `mapstructure:"refresh_token_ttl"`
-	MFATemporaryTTL   time.Duration `mapstructure:"mfa_temporary_ttl"`
-	MaxFailedAttempts int           `mapstructure:"max_failed_attempts"`
-	LockDuration      time.Duration `mapstructure:"lock_duration"`
+	PrivateKeyPath string `mapstructure:"private_key_path"`
+	PublicKeyPath  string `mapstructure:"public_key_path"`
+	// PreviousPublicKeyPath keeps a retired signing key in the verification
+	// set during a rotation. Optional, and empty means no rotation is in
+	// progress.
+	//
+	// Without it, swapping the signing key invalidates every token already
+	// issued: every session is logged out at once and every client refreshing
+	// at that moment fails. Keep the old key here until the longest-lived
+	// token it signed has expired (auth.refresh_token_ttl), then remove it.
+	PreviousPublicKeyPath string        `mapstructure:"previous_public_key_path"`
+	Issuer                string        `mapstructure:"issuer"`
+	ClientID              string        `mapstructure:"client_id"`
+	AccessTokenTTL        time.Duration `mapstructure:"access_token_ttl"`
+	RefreshTokenTTL       time.Duration `mapstructure:"refresh_token_ttl"`
+	MFATemporaryTTL       time.Duration `mapstructure:"mfa_temporary_ttl"`
+	MaxFailedAttempts     int           `mapstructure:"max_failed_attempts"`
+	LockDuration          time.Duration `mapstructure:"lock_duration"`
 	// TokenLeeway is the clock-skew allowance applied when validating a
 	// token's exp. Kept small and non-zero (see
 	// docs/architectures/04-security/token-architecture.md).

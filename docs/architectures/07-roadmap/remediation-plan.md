@@ -1,8 +1,8 @@
 # Remediation Plan
 
-**Status:** In progress — Phases 0, 1, and 2 ✅ complete; Phases 3–5 not started
+**Status:** In progress — Phases 0–4 ✅ complete; Phase 5 ◐ seven of eight
 **Date:** 2026-08-02
-**Last verified:** 2026-08-02, after Phase 2
+**Last verified:** 2026-08-03, after Phase 5
 
 A sequenced plan to move from [current state](../00-overview/current-state.md) to
 [target architecture](../00-overview/target-architecture.md). Ordered by
@@ -20,9 +20,9 @@ repository · ⏳ not started.
 | **Phase 0** — Stop the bleeding | ✅ Complete (0.5's credential *rotation* excepted — see ⚠️ below) |
 | **Phase 1** — Make the application work | ✅ Complete — exit criteria met |
 | **Phase 2** — Close the security gaps | ✅ Complete — exit criteria met (`-race` coverage ⚠️ unavailable, see below) |
-| **Phase 3** — Consolidate the structure | ⏳ Not started |
-| **Phase 4** — Build the safety net | ⏳ Not started — no CI exists |
-| **Phase 5** — Cleanup and hardening | ⏳ Not started |
+| **Phase 3** — Consolidate the structure | ✅ Complete — exit criteria met |
+| **Phase 4** — Build the safety net | ✅ Complete — CI gates on a real regression |
+| **Phase 5** — Cleanup and hardening | ◐ Seven of eight — 5.1 prepared but deliberately not run |
 
 ---
 
@@ -342,21 +342,95 @@ problem:
 
 ---
 
-## Phase 5 — Cleanup and hardening (2–3 days) — ⏳ NOT STARTED
+## Phase 5 — Cleanup and hardening — ◐ SEVEN OF EIGHT DONE
 
-| # | Task | Effort | Doc |
-|---|------|--------|-----|
-| 5.1 | **One coordinated history rewrite** — purge binaries and secrets together | M | [hygiene](../06-quality/repository-hygiene.md) |
-| 5.2 | Untrack generated swagger output; regenerate in CI with a no-diff check | S | [hygiene](../06-quality/repository-hygiene.md) |
-| 5.3 | Move swagger UI behind a build tag; strip symbols in release builds | S | [hygiene](../06-quality/repository-hygiene.md) |
-| 5.4 | Add `docker-compose.yml` and `.env.example`, or delete the Makefile targets referencing them | S | [hygiene](../06-quality/repository-hygiene.md) |
-| 5.5 | Key rotation: `kid` headers + JWKS endpoint | M | [tokens](../04-security/token-architecture.md) |
-| 5.6 | Refresh-token rotation with reuse detection | M | [tokens](../04-security/token-architecture.md) |
-| 5.7 | Audit event stream | M | [observability](../06-quality/observability.md) |
-| 5.8 | Transaction helper + Postgres error translation | S | [persistence](../05-data/persistence-and-pooling.md) |
+| # | Task | Commit |
+|---|------|--------|
+| 5.1 | Coordinated history rewrite | ⏸ **prepared, not run** — `a7baede` |
+| 5.2 | Untrack generated swagger output | `3373b83` |
+| 5.3 | Swagger behind a build tag; stripped release builds | `a7baede`, `3373b83` |
+| 5.4 | `docker-compose.yml`, hardened image | `a7baede` |
+| 5.6 | Refresh-token rotation with reuse detection | `19b9945` |
+| 5.7 | Audit event stream | `19b9945` |
+| 5.8 | Transaction helper + Postgres error translation | `19b9945` |
+| 5.5 | Key rotation: `kid` headers + JWKS endpoint | `5c62566` |
 
-> 5.1 requires team coordination and a re-clone by everyone. Schedule it; do not
-> surprise anyone with it.
+### 5.1 is deliberately not run
+
+The purge is written and reviewable as `scripts/purge-history.sh`. It was not
+executed, and no agent or CI job should execute it.
+
+Force-pushing rewritten history is irreversible from inside the repository, and
+this plan already says it needs an announced freeze, a backup, and everyone to
+re-clone. What *can* be automated safely is the other half, so CI now rejects
+any file over 1 MB added by a pull request — refusing a PR is reversible;
+rewriting history is not.
+
+The script is a dry run by default, takes a backup bundle first, verifies
+nothing matching survived before offering to push, and requires typing
+`rewrite` to confirm. Its closing note is the part that matters: **rotate the
+exposed credentials regardless.** Removing a secret from history does not
+un-expose it — it was cloned, cached and forked while it was there. The rewrite
+limits future exposure and does nothing about the past.
+
+### Binary size
+
+Phase 5.3 is where the size work landed, measured on `cmd/api`:
+
+| Build | Size |
+|---|---|
+| Phase 4 end (dev) | 41,582,080 B |
+| `-s -w -trimpath` | 31,815,680 B (−23.5%) |
+| …and without the swagger tag | **17,043,968 B (−59% overall)** |
+
+### Findings
+
+- **`swag init` had been failing since Phase 3.** The handler annotations still
+  said `auth.OAuth2Error` after that package was renamed to `transport`, so the
+  generator errored on 15 references. Nobody noticed, because the generated
+  files were committed and the stale copy kept being served — describing types
+  under names the code no longer used. Exactly the failure repository-hygiene.md
+  predicted for committed generated output, already realised.
+- **go.mod pinned `swaggo/swag` v1.8.1** (2022) while any current CLI is
+  v1.16.x, and the newer generator emits `Spec` fields the older library does
+  not have. The error points at generated code rather than at the mismatch.
+- **Refresh revoked every session on every exchange.** `RevokeAllForUser` ran on
+  each refresh, so refreshing on a phone silently logged out the same user's
+  laptop. Rotation is now per-family — which is also what makes a family
+  revocation a signal rather than routine housekeeping.
+- **The coverage ratchet caught its author.** 5.6/5.7/5.8 dropped three
+  packages below baseline and failed the build. The fix was 60 tests, not a new
+  baseline.
+
+### Judgement calls
+
+- **JWKS is at `/api/v1/.well-known/jwks.json`**, not the conventional root
+  path. A module mounts inside the version group, and giving modules a
+  root-mount escape hatch would reintroduce the shadowing hazard
+  routing-and-versioning.md removed. Discoverability is a documentation
+  problem; a second mounting mechanism is a correctness one.
+- **An unknown `kid` is rejected, not retried against every key.** Falling back
+  would quietly undo a rotation and turns key selection into an oracle. A token
+  with *no* kid is still accepted, for tokens minted before 5.5; that path
+  expires on its own.
+- **Reuse detection is invisible to the caller.** Reuse and an unknown token
+  return the same error. Telling an attacker "that one was recognised, and the
+  family is now locked" confirms they held a real credential and says exactly
+  when they were caught.
+- **The swagger spec is not committed and the default build has no UI.**
+  /swagger/* answers with a problem document explaining the build flag rather
+  than a bare 404, which would read as a routing bug.
+
+### Carried forward
+
+- **5.1 itself** — the coordinated rewrite, plus the credential rotation that
+  must happen regardless.
+- **GitHub Actions are still pinned by moving major tag, not digest** —
+  including gitleaks, which reads full history.
+- **`auth_failures_total{reason}`** (from Phase 4.8) is still not collected.
+- **OpenTelemetry tracing** — observability.md sequencing step 8, never a
+  Phase 5 task.
+- **`Migrations fs.FS` is still nil on every module.**
 
 ---
 
@@ -386,7 +460,7 @@ Phase 0 ──▶ Phase 1 ──▶ Phase 3 ──▶ Phase 5
 | **M2 — It's safe** | No credential leak, no auth bypass, handles concurrency | Phase 2 — **reached**, with the caveat below |
 | **M3 — It's coherent** | One layout, one framework, enforced boundaries | Phase 3 — **reached** |
 | **M4 — It's defended** | CI catches regressions; failures are observable | Phase 4 — **reached** |
-| **M5 — It's clean** | Small repo, small binary, rotatable keys | Phase 5 |
+| **M5 — It's clean** | Small repo, small binary, rotatable keys | Phase 5 — **binary and keys done; the repo still carries ~120 MB of history** (5.1) |
 
 ---
 

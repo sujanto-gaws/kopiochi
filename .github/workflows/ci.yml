@@ -178,6 +178,57 @@ jobs:
       - name: model/schema drift
         run: go test -count=1 -v -run TestModelsMatchMigratedSchema ./tools/schemacheck/...
 
+  # The swagger UI is behind `-tags swagger` as of Phase 5.3, and its generated
+  # spec is no longer committed (5.2). Both of those mean the tagged build is
+  # never exercised by the default `go build ./...`, so it needs its own job —
+  # otherwise it rots exactly the way the annotations already did.
+  #
+  # They *had* already rotted: the handler comments still referenced
+  # `auth.OAuth2Error` after Phase 3 renamed that package to `transport`, so
+  # `swag init` had been failing since then. Nobody noticed, because the
+  # generated files were committed and the stale copy kept being served. This
+  # job is what makes that impossible.
+  swagger:
+    name: Swagger spec generates and builds
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: install swag
+        # Pinned to the version go.mod carries: a generator newer than the
+        # library emits fields the library's Spec struct does not have, and the
+        # build fails with an error that points at generated code rather than
+        # at the mismatch. That is exactly what happened during 5.2.
+        run: go install github.com/swaggo/swag/cmd/swag@v1.16.4
+
+      - name: generate
+        run: swag init -g cmd/api/main.go -o docs --parseDependency --parseInternal
+
+      - name: the tagged build compiles against the generated spec
+        run: |
+          go build -tags swagger ./...
+          go vet -tags swagger ./...
+
+      - name: the tagged tests pass
+        run: go test -tags swagger -count=1 ./internal/httpx/...
+
+      # The generated files are gitignored, so a diff here means someone
+      # committed them anyway — which reintroduces the stale-spec problem 5.2
+      # removed.
+      - name: generated output is not committed
+        run: |
+          if ! git diff --quiet --exit-code -- docs/; then
+            echo "::error::Generated swagger output is tracked. It is gitignored for a reason:"
+            echo "a committed spec goes stale silently and is then confidently wrong."
+            git status --short -- docs/
+            exit 1
+          fi
+
   lint:
     name: golangci-lint
     runs-on: ubuntu-latest
@@ -228,6 +279,48 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+  # The repository already carries ~120 MB of committed binaries in history
+  # (Phase 5.1 purges them, once, with coordination). This job is the half that
+  # stops it happening again — and unlike the purge it can run unattended,
+  # because rejecting a pull request is reversible and rewriting history is
+  # not.
+  large-files:
+    name: No large files added
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Need the merge base to diff against, so the shallow default will
+          # not do.
+          fetch-depth: 0
+
+      - name: reject files over 1 MB
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          limit=$((1024 * 1024))
+          failed=0
+
+          # --diff-filter=d skips deletions: a deleted large file has no blob
+          # to measure and is the outcome we want anyway.
+          while IFS= read -r f; do
+            [ -f "$f" ] || continue
+            size=$(wc -c < "$f")
+            if [ "$size" -gt "$limit" ]; then
+              echo "::error file=$f::$f is $((size / 1024)) KB, over the 1 MB limit"
+              failed=1
+            fi
+          done < <(git diff --name-only --diff-filter=d "$BASE...$HEAD")
+
+          if [ "$failed" -ne 0 ]; then
+            echo "Large files belong in a release artifact or object storage, not in git."
+            echo "Every clone downloads them forever, and git cannot delta-compress binaries."
+            exit 1
+          fi
+          echo "No files over 1 MB added."
+
   size:
     name: Binary size
     runs-on: ubuntu-latest
@@ -246,7 +339,7 @@ jobs:
       # behind a build tag) is where a real budget belongs.
       - name: build and report
         run: |
-          go build -o /tmp/kopiochi ./cmd/api
+          go build -trimpath -ldflags "-s -w" -o /tmp/kopiochi ./cmd/api
           size=$(stat -c%s /tmp/kopiochi)
           echo "cmd/api binary: $size bytes ($((size / 1024 / 1024)) MB)"
           echo "### Binary size" >> "$GITHUB_STEP_SUMMARY"

@@ -21,9 +21,11 @@
 *.tmp
 *.zipcoverage.out
 .coverage
+.dockerignore.local
 .env
 .env.local
 .idea/
+.qwen/
 .vscode/
 bin/
 coverage.*
@@ -32,3 +34,9 @@ coverage/
 htmlcov/
 keys/
 vendor/
+
+# Generated swagger output (make swagger-docs). Not committed: a stale spec
+# is worse than none, because it is confidently wrong.
+docs/docs.go
+docs/swagger.json
+docs/swagger.yaml

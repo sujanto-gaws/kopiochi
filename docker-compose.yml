@@ -1,0 +1,91 @@
+# Local development stack: Postgres, migrations, and the API.
+#
+# `make docker-compose-up` referenced this file and it did not exist, so the
+# target silently printed "docker-compose.yml not found" — Phase 5.4.
+#
+# This is a development stack. It is not a deployment manifest: it binds
+# Postgres to loopback, generates nothing, and expects the signing keys to
+# already exist on the host (`make keys`).
+
+name: kopiochi
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${APP_DB_USER:-kopiochi}
+      # No default. Config.Validate rejects "postgres" and the rest of the
+      # known-placeholder list, so leaving this unset fails fast here rather
+      # than producing a stack that boots with a guessable credential.
+      POSTGRES_PASSWORD: ${APP_DB_PASSWORD:?set APP_DB_PASSWORD in .env — see .env.example}
+      POSTGRES_DB: ${APP_DB_NAME:-kopiochi}
+    ports:
+      # Loopback only. Publishing 5432 on 0.0.0.0 puts a development database
+      # with a development password on every interface the host has.
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      # The dependents below wait on this, so the API does not race the
+      # database on a cold start and exit before Postgres finishes booting.
+      test: ["CMD-SHELL", "pg_isready -U ${APP_DB_USER:-kopiochi} -d ${APP_DB_NAME:-kopiochi}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # Migrations run as their own one-shot service rather than from the API's
+  # entrypoint. An application that migrates on boot will, with two replicas,
+  # run two concurrent migrations against one database.
+  migrate:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    entrypoint: ["/app/kopiochi-migrate"]
+    command: ["up", "--config", "config/default.yaml"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment: &db-env
+      APP_DB_HOST: postgres
+      APP_DB_PORT: "5432"
+      APP_DB_USER: ${APP_DB_USER:-kopiochi}
+      APP_DB_PASSWORD: ${APP_DB_PASSWORD:?set APP_DB_PASSWORD in .env}
+      APP_DB_NAME: ${APP_DB_NAME:-kopiochi}
+      APP_DB_SSLMODE: disable
+    restart: "no"
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        VERSION: ${VERSION:-dev}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    environment:
+      <<: *db-env
+      APP_SERVER_HOST: 0.0.0.0
+      APP_SERVER_PORT: "8080"
+      APP_LOG_LEVEL: ${APP_LOG_LEVEL:-debug}
+      APP_LOG_FORMAT: ${APP_LOG_FORMAT:-console}
+    ports:
+      - "127.0.0.1:8080:8080"
+    volumes:
+      # Read-only, and mounted rather than copied: the image deliberately does
+      # not contain the signing keys. Run `make keys` first.
+      - ./keys:/app/keys:ro
+    healthcheck:
+      # The image has no shell and no curl by design, so the check runs the
+      # binary itself. /healthz never touches a dependency, which is what makes
+      # it a liveness probe rather than a readiness one.
+      test: ["CMD", "/app/kopiochi", "healthcheck"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+
+volumes:
+  postgres-data:

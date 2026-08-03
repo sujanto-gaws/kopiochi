@@ -11,9 +11,7 @@ import (
 	"context"
 
 	"github.com/go-chi/chi/v5"
-	httpSwagger "github.com/swaggo/http-swagger/v2"
 
-	_ "github.com/sujanto-gaws/kopiochi/docs" // generated swagger docs
 	"github.com/sujanto-gaws/kopiochi/internal/module"
 )
 
@@ -53,10 +51,9 @@ func Mount(r *chi.Mux, modules []*module.Module, deps Deps) {
 	r.Get("/readyz", readyzHandler(deps.Pinger, deps.Draining))
 	r.Get("/health", healthzHandler()) // deprecated alias for /healthz; drop once clients migrate
 
-	// Swagger documentation.
-	r.Get("/swagger/*", httpSwagger.Handler(
-		httpSwagger.URL("/swagger/doc.json"),
-	))
+	// Swagger documentation. Only a real UI when built with -tags swagger;
+	// otherwise a problem document explaining why. See swagger_enabled.go.
+	mountSwagger(r)
 
 	// Versioned API. v1 is passed directly into each module — there is no
 	// shadow copy of this router lying around for a module to mount onto by

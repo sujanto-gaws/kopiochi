@@ -1,0 +1,43 @@
+# Keep the build context small and, more importantly, keep secrets out of it.
+#
+# Everything here would otherwise be uploaded to the daemon and be readable in
+# an intermediate layer even if the final stage never copies it. `COPY . .` in
+# the builder stage means an excluded file is genuinely absent, not merely
+# unused.
+
+# Secrets and keys — the reason this file exists.
+keys/
+*.pem
+*.key
+.env
+.env.*
+!.env.example
+
+# Build artifacts: rebuilt inside the image anyway, and a stale host binary
+# copied in would be silently wrong.
+bin/
+dist/
+*.exe
+*.test
+*.out
+coverage.*
+
+# Version control and CI.
+.git/
+.github/
+.githooks/
+.gitattributes
+
+# Editors and local tooling.
+.vscode/
+.idea/
+.qwen/
+.claude/
+
+# Documentation and examples — not needed to build or run the server.
+docs/architectures/
+*.md
+!README.md
+
+# Local test scratch.
+testdata/

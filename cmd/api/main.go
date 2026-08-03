@@ -55,6 +55,7 @@ func main() {
 
 	serveCmd.Flags().StringP("config", "c", "config/default.yaml", "Path to config file")
 	rootCmd.AddCommand(serveCmd)
+	rootCmd.AddCommand(newHealthcheckCmd())
 
 	if err := rootCmd.Execute(); err != nil {
 		log.Error().Err(err).Msg("cli execution failed")

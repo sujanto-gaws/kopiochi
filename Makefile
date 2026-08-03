@@ -1,6 +1,9 @@
-.PHONY: help build run test clean docker-build docker-run generate \
+.PHONY: help build build-release run test clean docker-build docker-run generate \
         lint fmt tidy init-project install-hooks keys \
-        arch coverage-check coverage-update
+        arch coverage-check coverage-update size \
+        compose-up compose-down compose-reset compose-logs \
+        docker-compose-up docker-compose-down \
+        swagger-init swagger-docs swagger-run swagger-serve
 
 # Variables
 BINARY_NAME?=kopiochi
@@ -14,8 +17,10 @@ DB_PASSWORD?=postgres
 DB_NAME?=kopiochi
 CONFIG?=config/default.yaml
 KEYS_DIR?=keys
+SWAG_VERSION?=v1.16.4
 VERSION?=$(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 LDFLAGS=-ldflags "-X github.com/sujanto-gaws/kopiochi/internal/version.Version=$(VERSION)"
+RELEASE_LDFLAGS=-ldflags "-s -w -X github.com/sujanto-gaws/kopiochi/internal/version.Version=$(VERSION)"
 
 # Default target
 help: ## Show this help message
@@ -28,9 +33,22 @@ help: ## Show this help message
 	@echo ""
 
 # Build
-build: ## Build the application binary
+build: ## Build the application binary (development: symbols kept)
 	@echo "Building $(BINARY_NAME) $(VERSION)..."
 	$(GO) build $(LDFLAGS) -o bin/$(BINARY_NAME) ./cmd/api
+
+build-release: ## Build a stripped, trimmed release binary
+	@echo "Building $(BINARY_NAME) $(VERSION) (release)..."
+	@# -s -w drop the symbol table and DWARF info; -trimpath removes the build
+	@# machine's absolute paths from the binary. Panic stack traces survive
+	@# all three — only debugger metadata and build-host layout go.
+	@#
+	@# Kept separate from `build` on purpose: a stripped binary is harder to
+	@# attach a debugger to, and that is the wrong default for local work.
+	$(GO) build -trimpath $(RELEASE_LDFLAGS) -o bin/$(BINARY_NAME) ./cmd/api
+
+size: build-release ## Report the release binary size
+	@ls -lh bin/$(BINARY_NAME) | awk '{print "release binary: " $$5}'
 
 # Run
 run: ## Run the application server
@@ -142,19 +160,25 @@ generate-with-module: ## Generate with custom module path (usage: make generate-
 	$(GO) run ./cmd/generator -domain $(DOMAIN) -fields "$(FIELDS)" -module $(MODULE)
 
 # Swagger/OpenAPI
-swagger-init: ## Initialize swagger annotations
-	@echo "Initializing swagger..."
-	swag init -g cmd/api/main.go -o docs --parseDependency --parseInternal
+swagger-init: swagger-docs ## Deprecated alias for swagger-docs
 
-swagger-docs: ## Generate swagger documentation
+swagger-docs: ## Generate the swagger spec into docs/ (not committed)
 	@echo "Generating swagger docs..."
+	@command -v swag >/dev/null 2>&1 || { \
+		echo "swag not installed. Run:"; \
+		echo "  go install github.com/swaggo/swag/cmd/swag@$(SWAG_VERSION)"; \
+		exit 1; \
+	}
 	swag init -g cmd/api/main.go -o docs --parseDependency --parseInternal
-	@echo "Swagger docs generated in docs/"
+	@echo "Generated docs/docs.go, docs/swagger.json, docs/swagger.yaml (all gitignored)."
 
-swagger-serve: ## Serve swagger UI locally (requires python3)
-	@echo "Serving swagger UI at http://localhost:8080/swagger/index.html"
-	@echo "Make sure to run 'make swagger-docs' first"
-	@echo "Start the server with: make run"
+swagger-run: swagger-docs ## Generate the spec and run the server with the UI mounted
+	@# The UI is behind a build tag as of Phase 5.3: it links swaggo/swag, the
+	@# embedded Swagger UI distribution and four go-openapi packages, none of
+	@# which a production server needs. Leaving it out halves the binary.
+	$(GO) run -tags swagger ./cmd/api serve --config $(CONFIG)
+
+swagger-serve: swagger-run ## Deprecated alias for swagger-run
 
 # Database Migrations (Goose)
 migrate-up: ## Run all pending migrations
@@ -191,23 +215,32 @@ docker-build: ## Build Docker image
 	@echo "Building Docker image..."
 	docker build -t $(DOCKER_IMAGE) .
 
-docker-run: ## Run Docker container
-	@echo "Running Docker container..."
-	docker run -p 8080:8080 --env-file .env $(DOCKER_IMAGE)
-
-docker-compose-up: ## Start with docker-compose (if docker-compose.yml exists)
-	@if [ -f "docker-compose.yml" ]; then \
-		docker-compose up -d; \
-	else \
-		echo "docker-compose.yml not found"; \
+docker-run: ## Run Docker container (requires a .env — copy .env.example)
+	@if [ ! -f .env ]; then \
+		echo "Error: .env not found. Copy .env.example and set APP_DB_PASSWORD."; \
+		echo "For a full local stack including Postgres, use 'make compose-up' instead."; \
+		exit 1; \
 	fi
+	docker run --rm -p 127.0.0.1:8080:8080 --env-file .env $(DOCKER_IMAGE)
 
-docker-compose-down: ## Stop docker-compose
-	@if [ -f "docker-compose.yml" ]; then \
-		docker-compose down; \
-	else \
-		echo "docker-compose.yml not found"; \
-	fi
+compose-up: ## Start the local stack (Postgres, migrations, API)
+	@# The stack requires APP_DB_PASSWORD; compose fails with an explanation
+	@# rather than defaulting to a value Config.Validate would reject anyway.
+	docker compose up -d --build
+
+compose-down: ## Stop the local stack (keeps the database volume)
+	docker compose down
+
+compose-reset: ## Stop the local stack and delete the database volume
+	docker compose down -v
+
+compose-logs: ## Follow the API logs
+	docker compose logs -f api
+
+# Kept as aliases: these were the documented names, and the hyphenated
+# `docker-compose` binary they used is the deprecated v1 CLI.
+docker-compose-up: compose-up ## Deprecated alias for compose-up
+docker-compose-down: compose-down ## Deprecated alias for compose-down
 
 # Project initialization
 init-project: ## Initialize as new project (usage: make init-project PROJECT=myapi AUTHOR="John")
