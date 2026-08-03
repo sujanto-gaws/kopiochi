@@ -1,3 +1,5 @@
+// Package repository implements the user domain's persistence port over
+// bun.
 package repository
 
 import (

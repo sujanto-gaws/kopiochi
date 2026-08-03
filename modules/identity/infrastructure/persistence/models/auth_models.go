@@ -1,3 +1,7 @@
+// Package models holds the identity module's bun row structs.
+//
+// These are the storage shape, not the domain shape: repositories translate
+// between the two so the domain never depends on the ORM.
 package models
 
 import (

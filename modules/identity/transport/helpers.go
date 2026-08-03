@@ -44,7 +44,11 @@ func writeJSON(w http.ResponseWriter, status int, v interface{}) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	if v != nil {
-		json.NewEncoder(w).Encode(v)
+		// The status line and headers are already committed, so a failed
+		// encode cannot be turned into an error response. The client sees a
+		// truncated body and a mismatched Content-Length; there is nothing
+		// useful to do here beyond not pretending we checked.
+		_ = json.NewEncoder(w).Encode(v)
 	}
 }
 
@@ -56,7 +60,7 @@ type OAuth2Error struct {
 func writeOAuth2Error(w http.ResponseWriter, errCode, description string, status int) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(OAuth2Error{Error: errCode, ErrorDescription: description})
+	_ = json.NewEncoder(w).Encode(OAuth2Error{Error: errCode, ErrorDescription: description})
 }
 
 type ProblemDetails struct {
@@ -70,7 +74,7 @@ type ProblemDetails struct {
 func writeProblemDetails(w http.ResponseWriter, typ, title string, status int, detail string) {
 	w.Header().Set("Content-Type", "application/problem+json")
 	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(ProblemDetails{
+	_ = json.NewEncoder(w).Encode(ProblemDetails{
 		Type:   typ,
 		Title:  title,
 		Status: status,

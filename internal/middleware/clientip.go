@@ -1,3 +1,7 @@
+// Package middleware holds HTTP middleware shared by every entry point and
+// owned by no business module: client-IP resolution and request logging.
+//
+// Middleware that only the API server mounts lives in internal/httpx instead.
 package middleware
 
 import (

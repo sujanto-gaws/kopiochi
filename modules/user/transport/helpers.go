@@ -1,3 +1,6 @@
+// Package transport is the user module's HTTP layer: its handlers and its
+// route table, mounted behind the auth middleware supplied by the composition
+// root.
 package transport
 
 import (

@@ -1,3 +1,4 @@
+// Package repository reads the OFBiz entity tables through bun.
 package repository
 
 import (

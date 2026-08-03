@@ -89,7 +89,7 @@ func actualColumns(t *testing.T, sqlDB *sql.DB, table string) []string {
 		table,
 	)
 	require.NoError(t, err)
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var cols []string
 	for rows.Next() {

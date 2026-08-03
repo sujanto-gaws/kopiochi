@@ -1,3 +1,4 @@
+// Package mfa implements the identity domain's TOTP second-factor port.
 package mfa
 
 import (

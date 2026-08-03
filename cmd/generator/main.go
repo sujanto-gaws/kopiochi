@@ -187,13 +187,6 @@ func toSnakeCase(s string) string {
 	return result.String()
 }
 
-func pluralize(s string) string {
-	if strings.HasSuffix(s, "y") {
-		return s[:len(s)-1] + "ies"
-	}
-	return s + "s"
-}
-
 func generate(config Config) error {
 	data := TemplateData{
 		ModulePath:  config.ModulePath,
@@ -257,11 +250,16 @@ func generate(config Config) error {
 		}
 
 		if err := tmpl.Execute(file, data); err != nil {
-			file.Close()
+			_ = file.Close()
 			return fmt.Errorf("execute template %s: %w", path, err)
 		}
 
-		file.Close()
+		// Checked, not deferred-and-ignored: a failed Close means the file
+		// was not flushed to disk, and reporting "✓" for a file that was
+		// never fully written is the failure mode worth catching here.
+		if err := file.Close(); err != nil {
+			return fmt.Errorf("close file %s: %w", filePath, err)
+		}
 		fmt.Printf("  ✓ %s\n", filePath)
 	}
 
@@ -344,9 +342,10 @@ func findSetupSignature(content string) string {
 	// Find the closing parenthesis
 	parenCount := 0
 	for i := start; i < len(content); i++ {
-		if content[i] == '(' {
+		switch content[i] {
+		case '(':
 			parenCount++
-		} else if content[i] == ')' {
+		case ')':
 			parenCount--
 			if parenCount == 0 {
 				return content[start : i+1]
@@ -409,7 +408,7 @@ func readTableSchema(host string, port int, user, pass, dbName, tableName string
 	if err != nil {
 		return nil, fmt.Errorf("open database: %w", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	// Test connection
 	if err := db.Ping(); err != nil {
@@ -427,7 +426,7 @@ func readTableSchema(host string, port int, user, pass, dbName, tableName string
 	if err != nil {
 		return nil, fmt.Errorf("query columns: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var fields []Field
 	for rows.Next() {
@@ -572,28 +571,6 @@ func addImport(content, newImport string) string {
 	}
 
 	return strings.Join(lines, "\n")
-}
-
-type matchResult struct {
-	str string
-	end int
-}
-
-func findLastMatch(content, pattern string) matchResult {
-	// Simple pattern matching (not regex, just string search for common patterns)
-	// This is a simplified version - for production use, use regexp package
-	idx := strings.LastIndex(content, pattern)
-	if idx == -1 {
-		return matchResult{"", -1}
-	}
-
-	// Find the end of the line
-	endIdx := idx + len(pattern)
-	for endIdx < len(content) && content[endIdx] != '\n' {
-		endIdx++
-	}
-
-	return matchResult{content[idx:endIdx], endIdx}
 }
 
 // ==================== TEMPLATES ====================

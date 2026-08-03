@@ -48,7 +48,7 @@ func TestServe_ReturnsListenErrorInsteadOfExiting(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reserve port: %v", err)
 	}
-	defer occupied.Close()
+	defer func() { _ = occupied.Close() }()
 
 	_, portStr, err := net.SplitHostPort(occupied.Addr().String())
 	if err != nil {

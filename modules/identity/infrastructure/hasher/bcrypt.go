@@ -1,3 +1,4 @@
+// Package hasher implements the identity domain's password-hashing port.
 package hasher
 
 import "golang.org/x/crypto/bcrypt"

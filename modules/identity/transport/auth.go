@@ -1,3 +1,6 @@
+// Package transport is the identity module's HTTP layer: its handlers, its
+// route table, and the auth middleware other modules mount to require a
+// verified access token.
 package transport
 
 import (
@@ -233,9 +236,12 @@ func (h *AuthHandler) MFAVerify(w http.ResponseWriter, r *http.Request) {
 // @Router /auth/refresh [post]
 func (h *AuthHandler) Refresh(w http.ResponseWriter, r *http.Request) {
 	var req app.RefreshRequest
-	// Accept from body or cookie
+	// Accept from body or cookie. A malformed or empty body is deliberately
+	// not an error here: the token may legitimately arrive in the cookie
+	// instead, and the "missing" check below is what rejects the request when
+	// neither carries one.
 	if r.Body != nil {
-		json.NewDecoder(r.Body).Decode(&req)
+		_ = json.NewDecoder(r.Body).Decode(&req)
 	}
 	if req.RefreshToken == "" {
 		cookie, _ := r.Cookie("refresh_token")

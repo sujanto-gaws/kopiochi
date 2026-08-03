@@ -1,3 +1,8 @@
+// Package config loads and validates the process's typed configuration.
+//
+// Precedence is file, then APP_-prefixed environment variables, then flags.
+// Validate is the single place that rejects a configuration the process
+// cannot safely run under, so startup fails at boot rather than at first use.
 package config
 
 import (
