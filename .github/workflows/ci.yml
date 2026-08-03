@@ -228,6 +228,48 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+  # The repository already carries ~120 MB of committed binaries in history
+  # (Phase 5.1 purges them, once, with coordination). This job is the half that
+  # stops it happening again — and unlike the purge it can run unattended,
+  # because rejecting a pull request is reversible and rewriting history is
+  # not.
+  large-files:
+    name: No large files added
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Need the merge base to diff against, so the shallow default will
+          # not do.
+          fetch-depth: 0
+
+      - name: reject files over 1 MB
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          limit=$((1024 * 1024))
+          failed=0
+
+          # --diff-filter=d skips deletions: a deleted large file has no blob
+          # to measure and is the outcome we want anyway.
+          while IFS= read -r f; do
+            [ -f "$f" ] || continue
+            size=$(wc -c < "$f")
+            if [ "$size" -gt "$limit" ]; then
+              echo "::error file=$f::$f is $((size / 1024)) KB, over the 1 MB limit"
+              failed=1
+            fi
+          done < <(git diff --name-only --diff-filter=d "$BASE...$HEAD")
+
+          if [ "$failed" -ne 0 ]; then
+            echo "Large files belong in a release artifact or object storage, not in git."
+            echo "Every clone downloads them forever, and git cannot delta-compress binaries."
+            exit 1
+          fi
+          echo "No files over 1 MB added."
+
   size:
     name: Binary size
     runs-on: ubuntu-latest
@@ -246,7 +288,7 @@ jobs:
       # behind a build tag) is where a real budget belongs.
       - name: build and report
         run: |
-          go build -o /tmp/kopiochi ./cmd/api
+          go build -trimpath -ldflags "-s -w" -o /tmp/kopiochi ./cmd/api
           size=$(stat -c%s /tmp/kopiochi)
           echo "cmd/api binary: $size bytes ($((size / 1024 / 1024)) MB)"
           echo "### Binary size" >> "$GITHUB_STEP_SUMMARY"

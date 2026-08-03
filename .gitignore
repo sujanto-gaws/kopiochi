@@ -21,9 +21,11 @@
 *.tmp
 *.zipcoverage.out
 .coverage
+.dockerignore.local
 .env
 .env.local
 .idea/
+.qwen/
 .vscode/
 bin/
 coverage.*
