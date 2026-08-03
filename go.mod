@@ -10,7 +10,7 @@ require (
 	github.com/spf13/viper v1.21.0
 	github.com/stretchr/testify v1.11.1
 	github.com/swaggo/http-swagger/v2 v2.0.2
-	github.com/swaggo/swag v1.8.1
+	github.com/swaggo/swag v1.16.4
 	golang.org/x/crypto v0.49.0
 	golang.org/x/tools v0.47.0
 )

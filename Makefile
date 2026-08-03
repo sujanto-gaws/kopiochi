@@ -2,7 +2,8 @@
         lint fmt tidy init-project install-hooks keys \
         arch coverage-check coverage-update size \
         compose-up compose-down compose-reset compose-logs \
-        docker-compose-up docker-compose-down
+        docker-compose-up docker-compose-down \
+        swagger-init swagger-docs swagger-run swagger-serve
 
 # Variables
 BINARY_NAME?=kopiochi
@@ -16,6 +17,7 @@ DB_PASSWORD?=postgres
 DB_NAME?=kopiochi
 CONFIG?=config/default.yaml
 KEYS_DIR?=keys
+SWAG_VERSION?=v1.16.4
 VERSION?=$(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 LDFLAGS=-ldflags "-X github.com/sujanto-gaws/kopiochi/internal/version.Version=$(VERSION)"
 RELEASE_LDFLAGS=-ldflags "-s -w -X github.com/sujanto-gaws/kopiochi/internal/version.Version=$(VERSION)"
@@ -158,19 +160,25 @@ generate-with-module: ## Generate with custom module path (usage: make generate-
 	$(GO) run ./cmd/generator -domain $(DOMAIN) -fields "$(FIELDS)" -module $(MODULE)
 
 # Swagger/OpenAPI
-swagger-init: ## Initialize swagger annotations
-	@echo "Initializing swagger..."
-	swag init -g cmd/api/main.go -o docs --parseDependency --parseInternal
+swagger-init: swagger-docs ## Deprecated alias for swagger-docs
 
-swagger-docs: ## Generate swagger documentation
+swagger-docs: ## Generate the swagger spec into docs/ (not committed)
 	@echo "Generating swagger docs..."
+	@command -v swag >/dev/null 2>&1 || { \
+		echo "swag not installed. Run:"; \
+		echo "  go install github.com/swaggo/swag/cmd/swag@$(SWAG_VERSION)"; \
+		exit 1; \
+	}
 	swag init -g cmd/api/main.go -o docs --parseDependency --parseInternal
-	@echo "Swagger docs generated in docs/"
+	@echo "Generated docs/docs.go, docs/swagger.json, docs/swagger.yaml (all gitignored)."
 
-swagger-serve: ## Serve swagger UI locally (requires python3)
-	@echo "Serving swagger UI at http://localhost:8080/swagger/index.html"
-	@echo "Make sure to run 'make swagger-docs' first"
-	@echo "Start the server with: make run"
+swagger-run: swagger-docs ## Generate the spec and run the server with the UI mounted
+	@# The UI is behind a build tag as of Phase 5.3: it links swaggo/swag, the
+	@# embedded Swagger UI distribution and four go-openapi packages, none of
+	@# which a production server needs. Leaving it out halves the binary.
+	$(GO) run -tags swagger ./cmd/api serve --config $(CONFIG)
+
+swagger-serve: swagger-run ## Deprecated alias for swagger-run
 
 # Database Migrations (Goose)
 migrate-up: ## Run all pending migrations

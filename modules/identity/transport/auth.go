@@ -55,9 +55,9 @@ func NewAuthHandler(svc AuthService, refreshTTL time.Duration, authMW func(http.
 // @Param request body app.LoginRequest true "Login credentials"
 // @Success 200 {object} app.TokenResponse "Authentication successful"
 // @Success 202 {object} app.MfaRequiredResponse "MFA required"
-// @Failure 400 {object} auth.OAuth2Error "invalid_request or invalid_grant"
-// @Failure 423 {object} auth.ProblemDetails "account_locked"
-// @Failure 500 {object} auth.ProblemDetails "internal_error"
+// @Failure 400 {object} transport.OAuth2Error "invalid_request or invalid_grant"
+// @Failure 423 {object} transport.ProblemDetails "account_locked"
+// @Failure 500 {object} transport.ProblemDetails "internal_error"
 // @Router /auth/login [post]
 func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	var req app.LoginRequest
@@ -99,8 +99,8 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 // @Produce json
 // @Security BearerAuth
 // @Success 204 "Logged out successfully"
-// @Failure 401 {object} auth.ProblemDetails "unauthorized"
-// @Failure 500 {object} auth.ProblemDetails "internal_error"
+// @Failure 401 {object} transport.ProblemDetails "unauthorized"
+// @Failure 500 {object} transport.ProblemDetails "internal_error"
 // @Router /auth/logout [post]
 func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
 	claims, ok := r.Context().Value(domain.ClaimsKey).(*domain.Claims)
@@ -124,8 +124,8 @@ func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
 // @Produce json
 // @Security BearerAuth
 // @Success 200 {object} app.MfaSetupResponse "Secret and QR code URL"
-// @Failure 401 {object} auth.ProblemDetails "unauthorized"
-// @Failure 500 {object} auth.ProblemDetails "internal_error"
+// @Failure 401 {object} transport.ProblemDetails "unauthorized"
+// @Failure 500 {object} transport.ProblemDetails "internal_error"
 // @Router /auth/mfa/setup [post]
 func (h *AuthHandler) MFASetup(w http.ResponseWriter, r *http.Request) {
 	claims, ok := r.Context().Value(domain.ClaimsKey).(*domain.Claims)
@@ -151,9 +151,9 @@ func (h *AuthHandler) MFASetup(w http.ResponseWriter, r *http.Request) {
 // @Security BearerAuth
 // @Param request body app.MfaVerifySetupRequest true "TOTP code from authenticator app"
 // @Success 200 {object} app.MfaVerifySetupResponse "MFA enabled; backup codes returned"
-// @Failure 400 {object} auth.ProblemDetails "invalid_code"
-// @Failure 401 {object} auth.ProblemDetails "unauthorized"
-// @Failure 500 {object} auth.ProblemDetails "internal_error"
+// @Failure 400 {object} transport.ProblemDetails "invalid_code"
+// @Failure 401 {object} transport.ProblemDetails "unauthorized"
+// @Failure 500 {object} transport.ProblemDetails "internal_error"
 // @Router /auth/mfa/setup/verify [post]
 func (h *AuthHandler) MFAVerifySetup(w http.ResponseWriter, r *http.Request) {
 	claims, ok := r.Context().Value(domain.ClaimsKey).(*domain.Claims)
@@ -188,9 +188,9 @@ func (h *AuthHandler) MFAVerifySetup(w http.ResponseWriter, r *http.Request) {
 // @Param Authorization header string true "Bearer <mfa_token>"
 // @Param request body app.MfaVerifyRequest true "TOTP code or backup code"
 // @Success 200 {object} app.TokenResponse "Authentication successful"
-// @Failure 400 {object} auth.OAuth2Error "invalid_grant — wrong code"
-// @Failure 401 {object} auth.OAuth2Error "invalid_token — bad or expired MFA token"
-// @Failure 500 {object} auth.OAuth2Error "server_error"
+// @Failure 400 {object} transport.OAuth2Error "invalid_grant — wrong code"
+// @Failure 401 {object} transport.OAuth2Error "invalid_token — bad or expired MFA token"
+// @Failure 500 {object} transport.OAuth2Error "server_error"
 // @Router /auth/mfa/verify [post]
 func (h *AuthHandler) MFAVerify(w http.ResponseWriter, r *http.Request) {
 	authHeader := r.Header.Get("Authorization")
@@ -231,8 +231,8 @@ func (h *AuthHandler) MFAVerify(w http.ResponseWriter, r *http.Request) {
 // @Produce json
 // @Param request body app.RefreshRequest false "Refresh token (omit if using cookie)"
 // @Success 200 {object} app.TokenResponse "New tokens issued"
-// @Failure 400 {object} auth.OAuth2Error "invalid_request or invalid_grant"
-// @Failure 500 {object} auth.ProblemDetails "internal_error"
+// @Failure 400 {object} transport.OAuth2Error "invalid_request or invalid_grant"
+// @Failure 500 {object} transport.ProblemDetails "internal_error"
 // @Router /auth/refresh [post]
 func (h *AuthHandler) Refresh(w http.ResponseWriter, r *http.Request) {
 	var req app.RefreshRequest

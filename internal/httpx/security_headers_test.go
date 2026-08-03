@@ -84,6 +84,14 @@ func TestSecurityHeaders_HSTSGatedByConfig(t *testing.T) {
 // real route (via Mount, the same wiring cmd/api uses) through httptest
 // rather than asserting the header value in isolation.
 func TestSecurityHeaders_SwaggerCSPIsRelaxed(t *testing.T) {
+	// The UI is behind a build tag as of Phase 5.3, so there is nothing to
+	// render in a default build. Skipping is right here and a lie almost
+	// anywhere else: the relaxed CSP only matters when the assets it exists
+	// for are actually being served, and CI builds both variants.
+	if !swaggerEnabled {
+		t.Skip("built without -tags swagger; there is no UI to render")
+	}
+
 	r := chi.NewRouter()
 	r.Use(SecurityHeaders(SecurityHeadersConfig{}))
 	Mount(r, nil, Deps{})
