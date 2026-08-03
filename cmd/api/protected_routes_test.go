@@ -48,7 +48,7 @@ func buildAuthTestRouter(t *testing.T) (http.Handler, testsupport.Keypair) {
 	app, err := BuildApp(cfg, nil, zerolog.Nop())
 	require.NoError(t, err)
 
-	r, closeRouter, err := httpx.NewRouter(cfg.Server, cfg.Security, zerolog.Nop())
+	r, closeRouter, err := httpx.NewRouter(cfg.Server, cfg.Security, zerolog.Nop(), nil)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = closeRouter() })
 	httpx.Mount(r, app.Modules, httpx.Deps{Pinger: nil})

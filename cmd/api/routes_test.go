@@ -41,7 +41,7 @@ func TestRouteTable(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEmpty(t, app.Modules, "application must register at least one module")
 
-	r, closeRouter, err := httpx.NewRouter(cfg.Server, cfg.Security, zerolog.Nop())
+	r, closeRouter, err := httpx.NewRouter(cfg.Server, cfg.Security, zerolog.Nop(), nil)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = closeRouter() })
 	httpx.Mount(r, app.Modules, httpx.Deps{Pinger: nil})

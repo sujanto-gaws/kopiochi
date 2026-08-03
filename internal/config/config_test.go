@@ -449,3 +449,61 @@ func TestLoad_SecurityEnvOverrides(t *testing.T) {
 		t.Errorf("ttl = %v, want 3m", cfg.Security.RateLimit.TTL)
 	}
 }
+
+// TestValidate_MetricsChecksOnlyApplyWhenEnabled: the metrics block is off by
+// default, and an unset addr must not fail a config that never listens.
+func TestValidate_MetricsChecksOnlyApplyWhenEnabled(t *testing.T) {
+	cfg := validConfig()
+	cfg.Metrics = Metrics{Enabled: false, Addr: "", Path: ""}
+
+	if err := cfg.Validate(); err != nil {
+		t.Errorf("Validate() = %v, want nil when metrics are disabled", err)
+	}
+}
+
+func TestValidate_MetricsRejectsAnEmptyAddr(t *testing.T) {
+	cfg := validConfig()
+	cfg.Metrics = Metrics{Enabled: true, Addr: "", Path: "/metrics"}
+
+	err := cfg.Validate()
+	if err == nil || !strings.Contains(err.Error(), "metrics.addr") {
+		t.Errorf("Validate() = %v, want a metrics.addr error", err)
+	}
+}
+
+func TestValidate_MetricsRejectsAPathWithoutASlash(t *testing.T) {
+	cfg := validConfig()
+	cfg.Metrics = Metrics{Enabled: true, Addr: "127.0.0.1:9090", Path: "metrics"}
+
+	err := cfg.Validate()
+	if err == nil || !strings.Contains(err.Error(), "metrics.path") {
+		t.Errorf("Validate() = %v, want a metrics.path error", err)
+	}
+}
+
+// TestValidate_MetricsRefusesTheAPIsOwnAddress is the check worth having here.
+// /metrics exposes the route table, pool sizes and process memory; serving it
+// on the public listener is the one outcome a separate admin port exists to
+// prevent, and it is a plausible mistake to make in a values file.
+func TestValidate_MetricsRefusesTheAPIsOwnAddress(t *testing.T) {
+	cfg := validConfig()
+	cfg.Server.Host = "0.0.0.0"
+	cfg.Server.Port = 8080
+	cfg.Metrics = Metrics{Enabled: true, Addr: "0.0.0.0:8080", Path: "/metrics"}
+
+	err := cfg.Validate()
+	if err == nil || !strings.Contains(err.Error(), "separate") {
+		t.Errorf("Validate() = %v, want a refusal to serve /metrics on the API's own address", err)
+	}
+}
+
+func TestValidate_MetricsAcceptsASeparateAddress(t *testing.T) {
+	cfg := validConfig()
+	cfg.Server.Host = "0.0.0.0"
+	cfg.Server.Port = 8080
+	cfg.Metrics = Metrics{Enabled: true, Addr: "127.0.0.1:9090", Path: "/metrics"}
+
+	if err := cfg.Validate(); err != nil {
+		t.Errorf("Validate() = %v, want nil", err)
+	}
+}

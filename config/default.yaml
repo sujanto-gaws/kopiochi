@@ -114,3 +114,18 @@ security:
     # rather than evicting an existing bucket -- evict-oldest would let
     # a key-flooding attacker reset a throttled client's budget.
     max_keys: 100000
+
+# Prometheus metrics.
+#
+# Served on their own listener, never on the API port. /metrics exposes the
+# route table, latency distributions, database pool saturation and the
+# process's memory and file-descriptor counts -- an inventory of the service's
+# internals with no business being reachable from the internet. Config.Validate
+# rejects an addr equal to the API's own for exactly that reason.
+metrics:
+  enabled: false
+  # Loopback by default. Binding 0.0.0.0 here should be a deliberate decision
+  # paired with a network policy, not something that happens by enabling a
+  # feature.
+  addr: "127.0.0.1:9090"
+  path: "/metrics"

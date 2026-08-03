@@ -9,6 +9,7 @@ import (
 	"github.com/rs/zerolog"
 
 	"github.com/sujanto-gaws/kopiochi/internal/config"
+	"github.com/sujanto-gaws/kopiochi/internal/metrics"
 	corenet "github.com/sujanto-gaws/kopiochi/internal/middleware"
 )
 
@@ -27,7 +28,9 @@ import (
 // owns a resource -- today, the rate limiter's eviction goroutine. Callers
 // must call it on shutdown. It is safe to call even when nothing was
 // constructed.
-func NewRouter(srv config.Server, sec config.Security, log zerolog.Logger, mw ...func(http.Handler) http.Handler) (*chi.Mux, func() error, error) {
+// m may be nil, which disables instrumentation entirely — no counters, no
+// middleware, no cost.
+func NewRouter(srv config.Server, sec config.Security, log zerolog.Logger, m *metrics.Metrics, mw ...func(http.Handler) http.Handler) (*chi.Mux, func() error, error) {
 	r := chi.NewRouter()
 
 	// Errors the router itself produces get the same problem+json shape as
@@ -64,6 +67,16 @@ func NewRouter(srv config.Server, sec config.Security, log zerolog.Logger, mw ..
 	// to bind onto the request-scoped logger, and after Recovery so that the
 	// 500 a panic produces is counted and logged like any other response.
 	r.Use(corenet.RequestLogger(log))
+
+	// Ahead of CORS and the rate limiter, so a preflight and a 429 are both
+	// counted. A limiter that short-circuits below an instrumentation
+	// middleware makes rejected traffic invisible — exactly the traffic worth
+	// seeing. The cost is that a short-circuited request never reaches the
+	// mux, so it has no route pattern and is labelled "unmatched"; the status
+	// label still distinguishes it.
+	if m != nil {
+		r.Use(m.Middleware())
+	}
 
 	closers := make([]func() error, 0, 1)
 	closeAll := func() error {
