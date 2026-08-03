@@ -79,9 +79,12 @@ func serve(cfgPath string) error {
 		return fmt.Errorf("load config: %w", err)
 	}
 
-	// Phase 2 — logger.
-	log.Logger = logger.Init(cfg.Log.Level, cfg.Log.Format)
-	appLog := log.Logger
+	// Phase 2 — logger. appLog is the one every constructor below is handed;
+	// nothing in this tree reads zerolog's package global. The global is still
+	// assigned so that a dependency which does reach for it writes in our
+	// format and at our level rather than to a default stderr writer.
+	appLog := logger.Init(cfg.Log.Level, cfg.Log.Format)
+	log.Logger = appLog
 	appLog.Info().Msg("application starting")
 
 	// The base context is cancelled by the first SIGINT/SIGTERM, so
@@ -110,7 +113,7 @@ func serve(cfgPath string) error {
 	// modules, so a server that would start and serve nothing fails here.
 	app, err := BuildApp(cfg, database.Bun, appLog)
 	if err != nil {
-		return shutdownAfter(stack, cfg, fmt.Errorf("build app: %w", err))
+		return shutdownAfter(stack, cfg, appLog, fmt.Errorf("build app: %w", err))
 	}
 	for _, m := range app.Modules {
 		if m.Close != nil {
@@ -121,9 +124,9 @@ func serve(cfgPath string) error {
 	// Phase 5 — router and routes. CORS and rate limiting are constructed
 	// directly from typed config; closeRouter releases what they own (the
 	// rate limiter's eviction goroutine).
-	r, closeRouter, err := httpx.NewRouter(cfg.Server, cfg.Security)
+	r, closeRouter, err := httpx.NewRouter(cfg.Server, cfg.Security, appLog)
 	if err != nil {
-		return shutdownAfter(stack, cfg, fmt.Errorf("build router: %w", err))
+		return shutdownAfter(stack, cfg, appLog, fmt.Errorf("build router: %w", err))
 	}
 	stack.PushCloser("router", closeRouter)
 
@@ -147,7 +150,7 @@ func serve(cfgPath string) error {
 		appLog.Error().Err(serveErr).Msg("server stopped with error")
 	}
 
-	return shutdownAfter(stack, cfg, serveErr)
+	return shutdownAfter(stack, cfg, appLog, serveErr)
 }
 
 // shutdownAfter tears the stack down and folds the teardown outcome into
@@ -156,7 +159,7 @@ func serve(cfgPath string) error {
 // The shutdown context is deliberately built from context.Background() and
 // not from the (already-cancelled) signal context: the drain needs its full
 // budget precisely in the case where the process is being asked to stop.
-func shutdownAfter(stack *lifecycle.Stack, cfg *config.Config, cause error) error {
+func shutdownAfter(stack *lifecycle.Stack, cfg *config.Config, log zerolog.Logger, cause error) error {
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), cfg.Server.ShutdownTimeout)
 	defer cancel()
 

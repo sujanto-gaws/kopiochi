@@ -1,10 +1,14 @@
 package middleware
 
 import (
+	"bytes"
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
+	"strings"
 	"testing"
+
+	"github.com/rs/zerolog"
 )
 
 // TestRealIP_IgnoresForwardedHeadersWithoutTrustedProxies is the direct
@@ -90,17 +94,36 @@ func TestRealIP_WalksMultipleTrustedHopsToFindRealClient(t *testing.T) {
 }
 
 func TestParseTrustedProxies_SkipsInvalidEntries(t *testing.T) {
-	got := ParseTrustedProxies([]string{"10.0.0.0/8", "not-a-cidr", "192.168.1.0/24"})
+	got := ParseTrustedProxies([]string{"10.0.0.0/8", "not-a-cidr", "192.168.1.0/24"}, zerolog.Nop())
 	if len(got) != 2 {
 		t.Fatalf("len(ParseTrustedProxies(...)) = %d, want 2 (invalid entry skipped)", len(got))
 	}
 }
 
-func TestParseTrustedProxies_EmptyMeansTrustNothing(t *testing.T) {
-	if got := ParseTrustedProxies(nil); len(got) != 0 {
-		t.Fatalf("ParseTrustedProxies(nil) = %v, want empty", got)
+// TestParseTrustedProxies_WarnsAboutSkippedEntries: a dropped entry silently
+// narrows who may set X-Forwarded-For, so the real client IP starts resolving
+// to the proxy's address and every rate limit and audit line is wrong. That is
+// a security-relevant config change and must not pass unremarked — this is the
+// assertion the package-global logger made impossible to write.
+func TestParseTrustedProxies_WarnsAboutSkippedEntries(t *testing.T) {
+	var buf bytes.Buffer
+
+	ParseTrustedProxies([]string{"10.0.0.0/8", "192.168.1.0/99"}, zerolog.New(&buf))
+
+	out := buf.String()
+	if !strings.Contains(out, "192.168.1.0/99") {
+		t.Errorf("the skipped CIDR is not named in the log: %s", out)
 	}
-	if got := ParseTrustedProxies([]string{}); len(got) != 0 {
+	if !strings.Contains(out, `"level":"warn"`) {
+		t.Errorf("skipping a trusted-proxy entry was not logged at warn level: %s", out)
+	}
+}
+
+func TestParseTrustedProxies_EmptyMeansTrustNothing(t *testing.T) {
+	if got := ParseTrustedProxies(nil, zerolog.Nop()); len(got) != 0 {
+		t.Fatalf("ParseTrustedProxies(nil, zerolog.Nop()) = %v, want empty", got)
+	}
+	if got := ParseTrustedProxies([]string{}, zerolog.Nop()); len(got) != 0 {
 		t.Fatalf("ParseTrustedProxies([]) = %v, want empty", got)
 	}
 }

@@ -99,7 +99,7 @@ func buildE2ERouter(t *testing.T, bunDB *bun.DB) (http.Handler, *token.JWTServic
 	app, err := BuildApp(cfg, bunDB, zerolog.Nop())
 	require.NoError(t, err)
 
-	r, closeRouter, err := httpx.NewRouter(cfg.Server, cfg.Security)
+	r, closeRouter, err := httpx.NewRouter(cfg.Server, cfg.Security, zerolog.Nop())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = closeRouter() })
 	httpx.Mount(r, app.Modules, httpx.Deps{Pinger: nil})
