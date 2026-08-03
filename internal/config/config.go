@@ -56,6 +56,25 @@ type DB struct {
 	SSLMode  string        `mapstructure:"sslmode"`
 	MaxConns int32         `mapstructure:"max_conns"`
 	MinConns int32         `mapstructure:"min_conns"`
+	// ConnMaxLifetime and ConnMaxIdleTime were hardcoded in internal/db
+	// while MaxConns/MinConns were configurable — an arbitrary split that
+	// made the two settings most likely to need tuning under load the two
+	// that required a rebuild. Both now apply to the pgx pool and to the
+	// sql.DB wrapper on top of it.
+	ConnMaxLifetime time.Duration `mapstructure:"conn_max_lifetime"`
+	ConnMaxIdleTime time.Duration `mapstructure:"conn_max_idle_time"`
+	// HealthCheckPeriod is how often the pool checks idle connections for
+	// liveness, so a connection severed by a firewall or failover is
+	// discovered by the pool rather than by a request.
+	HealthCheckPeriod time.Duration `mapstructure:"health_check_period"`
+	// ConnectTimeout bounds a single dial. Without it, a network partition
+	// makes every connection attempt hang instead of failing fast — at
+	// startup and, worse, on the request path afterwards.
+	ConnectTimeout time.Duration `mapstructure:"connect_timeout"`
+	// StartupTimeout bounds the whole open-and-ping sequence at boot. It is
+	// separate from ConnectTimeout because it covers pool construction plus
+	// the verification ping, not one dial.
+	StartupTimeout time.Duration `mapstructure:"startup_timeout"`
 }
 
 type Log struct {
@@ -175,6 +194,13 @@ func Load(cfgPath string) (*Config, error) {
 	v.SetDefault("db.sslmode", "disable")
 	v.SetDefault("db.max_conns", 10)
 	v.SetDefault("db.min_conns", 2)
+	// The two lifetimes carry forward the values internal/db used to
+	// hardcode, so this change is configurability, not a behaviour change.
+	v.SetDefault("db.conn_max_lifetime", "1h")
+	v.SetDefault("db.conn_max_idle_time", "30m")
+	v.SetDefault("db.health_check_period", "1m")
+	v.SetDefault("db.connect_timeout", "5s")
+	v.SetDefault("db.startup_timeout", "15s")
 	v.SetDefault("log.level", "info")
 	v.SetDefault("log.format", "json")
 	v.SetDefault("auth.private_key_path", "keys/private.pem")
@@ -301,6 +327,35 @@ func (c *Config) Validate() error {
 	}
 	if c.DB.MinConns > c.DB.MaxConns {
 		errs = append(errs, errors.New("db.min_conns must not exceed db.max_conns"))
+	}
+	if c.DB.MaxConns <= 0 {
+		errs = append(errs, errors.New("db.max_conns must be positive"))
+	}
+	if c.DB.ConnMaxLifetime <= 0 {
+		errs = append(errs, errors.New("db.conn_max_lifetime must be positive"))
+	}
+	if c.DB.ConnMaxIdleTime <= 0 {
+		errs = append(errs, errors.New("db.conn_max_idle_time must be positive"))
+	}
+	// An idle connection kept longer than its total lifetime is a
+	// contradiction: the lifetime cap fires first and the idle setting can
+	// never take effect, which reads as a tuning knob that silently does
+	// nothing.
+	if c.DB.ConnMaxIdleTime > c.DB.ConnMaxLifetime {
+		errs = append(errs, fmt.Errorf(
+			"db.conn_max_idle_time (%s) must not exceed db.conn_max_lifetime (%s)",
+			c.DB.ConnMaxIdleTime, c.DB.ConnMaxLifetime))
+	}
+	if c.DB.ConnectTimeout <= 0 {
+		errs = append(errs, errors.New("db.connect_timeout must be positive"))
+	}
+	// The startup budget covers pool construction plus a verification ping,
+	// each of which can spend a full dial; a budget below one dial would
+	// abort boot before a single connection attempt could finish.
+	if c.DB.StartupTimeout < c.DB.ConnectTimeout {
+		errs = append(errs, fmt.Errorf(
+			"db.startup_timeout (%s) must be >= db.connect_timeout (%s)",
+			c.DB.StartupTimeout, c.DB.ConnectTimeout))
 	}
 	if isPlaceholderSecret(c.DB.Password.Reveal()) {
 		errs = append(errs, errors.New("db.password is empty or a known placeholder; set APP_DB_PASSWORD to a real credential"))

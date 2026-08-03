@@ -33,6 +33,23 @@ db:
   sslmode: "disable"
   max_conns: 10
   min_conns: 2
+  # Connection lifetimes. These were hardcoded in internal/db until Phase
+  # 3.8; the values here are the ones it used, so this is configurability
+  # rather than a behaviour change. conn_max_idle_time must not exceed
+  # conn_max_lifetime, or the idle setting can never take effect
+  # (Config.Validate rejects that).
+  conn_max_lifetime: "1h"
+  conn_max_idle_time: "30m"
+  # How often the pool checks idle connections for liveness, so a
+  # connection severed by a firewall or a failover is discovered by the
+  # pool rather than by a request.
+  health_check_period: "1m"
+  # Bounds a single dial. Without it a network partition makes every
+  # connection attempt hang instead of failing fast.
+  connect_timeout: "5s"
+  # Bounds the whole open-and-ping sequence at boot. Must be >=
+  # connect_timeout, which it has to accommodate at least once.
+  startup_timeout: "15s"
 
 log:
   level: "info"

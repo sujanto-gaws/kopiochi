@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 
@@ -48,21 +49,20 @@ func main() {
 			log.Logger = logger.Init(cfg.Log.Level, cfg.Log.Format)
 			log.Info().Msg("application starting")
 
-			// Initialize database
-			dsn := db.BuildDSN(cfg.DB.Host, cfg.DB.Port, cfg.DB.User, cfg.DB.Password.Reveal(), cfg.DB.Name, cfg.DB.SSLMode)
-			bunDB, pool, err := db.NewDB(db.Config{
-				DSN:      dsn,
-				MaxConns: cfg.DB.MaxConns,
-				MinConns: cfg.DB.MinConns,
-			})
+			// Initialize database. The startup budget is bounded so an
+			// unreachable database fails boot fast instead of hanging on
+			// context.Background() the way this used to.
+			dbCtx, cancelDB := context.WithTimeout(cmd.Context(), cfg.DB.StartupTimeout)
+			defer cancelDB()
+
+			database, err := db.Open(dbCtx, cfg.DB)
 			if err != nil {
 				return fmt.Errorf("init database: %w", err)
 			}
-			defer pool.Close()
 			log.Info().Msg("database connected & bun ORM initialized")
 
 			// Dependency Injection — all module wiring lives in container.go
-			app, err := BuildApp(cfg, bunDB, log.Logger)
+			app, err := BuildApp(cfg, database.Bun, log.Logger)
 			if err != nil {
 				return fmt.Errorf("build app: %w", err)
 			}
@@ -83,17 +83,20 @@ func main() {
 			// fail-closed auth middleware (see modules/identity/module.go) — main
 			// no longer derives protected-route middleware from the jwt-auth
 			// plugin, and there is no second router in scope for a module to
-			// mount onto by mistake. /readyz pings pool directly (it satisfies
-			// httpx.Pinger) so orchestrators stop routing traffic the moment the
-			// database becomes unreachable.
-			httpx.Mount(r, app.Modules, httpx.Deps{Pinger: pool})
+			// mount onto by mistake. /readyz pings the pool directly (it
+			// satisfies httpx.Pinger) so orchestrators stop routing traffic the
+			// moment the database becomes unreachable.
+			httpx.Mount(r, app.Modules, httpx.Deps{Pinger: database.Pool})
 
-			// Start server with graceful shutdown
+			// Start server with graceful shutdown. Shutdown funcs run in
+			// registration order, and these are registered in construction
+			// order, so the database — constructed first, needed by everything
+			// — is released last.
 			server.Run(
 				cfg.Server,
 				r,
 				server.WithShutdownFunc(closeRouter),
-				server.WithShutdownFunc(server.NewPoolShutdownFunc(pool)),
+				server.WithShutdownFunc(database.Close),
 			)
 			return nil
 		},

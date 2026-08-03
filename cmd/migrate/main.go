@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 
@@ -35,8 +36,10 @@ func main() {
 
 			logger.Init(cfg.Log.Level, cfg.Log.Format)
 
-			dsn := db.BuildDSN(cfg.DB.Host, cfg.DB.Port, cfg.DB.User, cfg.DB.Password.Reveal(), cfg.DB.Name, cfg.DB.SSLMode)
-			database, err := db.OpenDB(dsn)
+			dbCtx, cancel := context.WithTimeout(cmd.Context(), cfg.DB.StartupTimeout)
+			defer cancel()
+
+			database, err := db.OpenSQL(dbCtx, cfg.DB)
 			if err != nil {
 				return fmt.Errorf("open database: %w", err)
 			}
@@ -64,8 +67,10 @@ func main() {
 
 			logger.Init(cfg.Log.Level, cfg.Log.Format)
 
-			dsn := db.BuildDSN(cfg.DB.Host, cfg.DB.Port, cfg.DB.User, cfg.DB.Password.Reveal(), cfg.DB.Name, cfg.DB.SSLMode)
-			database, err := db.OpenDB(dsn)
+			dbCtx, cancel := context.WithTimeout(cmd.Context(), cfg.DB.StartupTimeout)
+			defer cancel()
+
+			database, err := db.OpenSQL(dbCtx, cfg.DB)
 			if err != nil {
 				return fmt.Errorf("open database: %w", err)
 			}
@@ -93,8 +98,10 @@ func main() {
 
 			logger.Init(cfg.Log.Level, cfg.Log.Format)
 
-			dsn := db.BuildDSN(cfg.DB.Host, cfg.DB.Port, cfg.DB.User, cfg.DB.Password.Reveal(), cfg.DB.Name, cfg.DB.SSLMode)
-			database, err := db.OpenDB(dsn)
+			dbCtx, cancel := context.WithTimeout(cmd.Context(), cfg.DB.StartupTimeout)
+			defer cancel()
+
+			database, err := db.OpenSQL(dbCtx, cfg.DB)
 			if err != nil {
 				return fmt.Errorf("open database: %w", err)
 			}
@@ -121,8 +128,10 @@ func main() {
 
 			logger.Init(cfg.Log.Level, cfg.Log.Format)
 
-			dsn := db.BuildDSN(cfg.DB.Host, cfg.DB.Port, cfg.DB.User, cfg.DB.Password.Reveal(), cfg.DB.Name, cfg.DB.SSLMode)
-			database, err := db.OpenDB(dsn)
+			dbCtx, cancel := context.WithTimeout(cmd.Context(), cfg.DB.StartupTimeout)
+			defer cancel()
+
+			database, err := db.OpenSQL(dbCtx, cfg.DB)
 			if err != nil {
 				return fmt.Errorf("open database: %w", err)
 			}

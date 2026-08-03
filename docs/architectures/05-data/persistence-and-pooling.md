@@ -41,10 +41,28 @@ func BuildDSN(host string, port int, user, pass, name, ssl string) string {
 }
 ```
 
-Any password containing `@`, `:`, `/`, `?`, `#`, or `%` produces a malformed or —
-worse — a *misparsed* URL. A password of `p@ss` makes `pgxpool.ParseConfig` read
-the host as `ss`, yielding a confusing connection error that looks like a network
-problem.
+Any password containing `/`, `?`, `#`, or `%` produces a URL that
+`pgxpool.ParseConfig` rejects outright, with an error naming the *host*:
+
+```
+pw="pa/ss"  ->  failed to parse as URL (invalid port ":pa" after host)
+pw="pa?ss"  ->  failed to parse as URL (invalid port ":pa" after host)
+pw="pa#ss"  ->  failed to parse as URL (invalid port ":pa" after host)
+pw="pa%ss"  ->  failed to parse as URL (invalid URL escape "%ss")
+```
+
+Because the error points at the host and port, it reads as a network or
+configuration fault and sends you looking in the wrong place entirely.
+
+> **Correction.** This paragraph previously claimed the character set was
+> `@ : / ? # %`, and that a password of `p@ss` "makes `pgxpool.ParseConfig` read
+> the host as `ss`". Measured against the real implementation, that is wrong on
+> both counts: `p@ss` and `pa:ss` both parse correctly, because pgx splits
+> userinfo on the *last* `@` and a `:` inside userinfo is unambiguous. The four
+> characters listed above are the ones that actually break, and they break by
+> failing to parse rather than by misparsing. The defect is real and the fix is
+> unchanged; only the example was wrong. See `internal/db/dsn_test.go`, which
+> covers all six characters.
 
 This becomes an operational blocker the moment a generated password is used,
 which is precisely what
