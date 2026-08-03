@@ -1,646 +1,104 @@
-# Adding Custom Plugins to Kopiochi
+# Adding Custom Plugins to Kopiochi — removed
 
-This guide shows how to create and integrate your own plugins without modifying the plugin core system.
+> ## ⛔ There is no plugin system to add plugins to.
+>
+> `internal/plugin/`, `internal/plugins/` and `internal/extension/` were
+> deleted in Phase 3 of the
+> [remediation plan](docs/architectures/07-roadmap/remediation-plan.md)
+> (commit `de7e242`). Every path this guide told you to create files in, and
+> every interface it told you to implement, is gone.
+>
+> Kept as a tombstone so links from older commits, issues and forks land
+> somewhere that explains what happened.
+> [PLUGIN_GUIDE.md](PLUGIN_GUIDE.md) has the full reasoning.
 
-## 📂 Project Structure
+## What to do instead
 
-```
-internal/
-├── plugin/              # 🔒 Plugin CORE (don't modify)
-│   ├── plugin.go        #   - Core interfaces
-│   ├── registry.go      #   - Plugin registry
-│   ├── middleware.go    #   - Middleware chain builder
-│   └── initializer.go   #   - Config-driven initialization
-│
-├── plugins/             # 🔧 Built-in plugins (use as examples)
-│   ├── register.go      #   - Built-in plugin registration
-│   ├── adapters.go      #   - Type adapters
-│   ├── auth/
-│   │   └── jwt.go       #   - JWT authentication
-│   └── middleware/
-│       ├── ratelimit.go #   - Rate limiting
-│       └── cors.go      #   - CORS handling
-│
-└── myplugins/           # ✅ YOUR custom plugins (create this)
-    ├── compression.go
-    ├── apilogger.go
-    └── customauth.go
-```
+Whatever you were going to build is one of two things.
 
-**Key Principle:** The `plugin/` package is the CORE - users should only interact with its interfaces, never modify it.
+### A business capability → write a module
 
----
-
-## 🚀 Quick Start: Add Your First Plugin
-
-### Step 1: Create Plugin Directory
-
-```bash
-mkdir -p internal/myplugins
-```
-
-### Step 2: Implement Your Plugin
-
-Create `internal/myplugins/compression.go`:
+Anything that owns data, routes, or domain rules. Create
+`modules/<name>/module.go` with a constructor:
 
 ```go
-package myplugins
+package yours
 
-import (
-    "compress/gzip"
-    "net/http"
-)
-
-// CompressionPlugin compresses HTTP responses
-type CompressionPlugin struct {
-    initialized bool
-    level       int
+// Config is your module's own typed settings. No map[string]interface{},
+// so a YAML type error fails startup instead of silently becoming a default.
+type Config struct {
+    SomeSetting time.Duration `mapstructure:"some_setting"`
 }
 
-// Name returns the plugin identifier
-func (p *CompressionPlugin) Name() string {
-    return "compression"
-}
-
-// Initialize sets up the plugin with configuration
-func (p *CompressionPlugin) Initialize(cfg map[string]interface{}) error {
-    if level, ok := cfg["level"].(float64); ok {
-        p.level = int(level)
-    } else {
-        p.level = gzip.DefaultCompression
+func (c Config) Validate() error {
+    if c.SomeSetting <= 0 {
+        return errors.New("yours: some_setting must be positive")
     }
-    p.initialized = true
     return nil
 }
 
-// Close performs cleanup
-func (p *CompressionPlugin) Close() error {
-    p.initialized = false
-    return nil
-}
-
-// Middleware returns the HTTP middleware
-func (p *CompressionPlugin) Middleware() func(http.Handler) http.Handler {
-    return func(next http.Handler) http.Handler {
-        return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-            if !p.initialized {
-                next.ServeHTTP(w, r)
-                return
-            }
-
-            // Only compress if client accepts gzip
-            if !acceptsGzip(r) {
-                next.ServeHTTP(w, r)
-                return
-            }
-
-            // Wrap response writer with gzip
-            gz := gzip.NewWriterLevel(w, p.level)
-            defer gz.Close()
-
-            w.Header().Set("Content-Encoding", "gzip")
-            
-            // Note: In production, use a proper gzip response writer
-            // that handles the content correctly
-            next.ServeHTTP(w, r)
-        })
+func New(deps module.Deps, cfg Config) (*module.Module, error) {
+    if err := cfg.Validate(); err != nil {
+        return nil, fmt.Errorf("yours: invalid config: %w", err)
     }
-}
 
-// Provider returns the plugin instance
-func (p *CompressionPlugin) Provider() interface{} {
-    return p
-}
+    repo := repository.New(deps.DB)   // deps.DB is a typed bun.IDB
+    svc := application.NewService(repo)
 
-func acceptsGzip(r *http.Request) bool {
-    ae := r.Header.Get("Accept-Encoding")
-    return ae == "gzip" || ae == "*"
-}
-
-// NewCompressionPlugin creates a new instance
-func NewCompressionPlugin() *CompressionPlugin {
-    return &CompressionPlugin{}
+    return &module.Module{
+        Name:   "yours",
+        Routes: transport.New(svc).Routes,  // mounted under /api/v1
+    }, nil
 }
 ```
 
-### Step 3: Register Your Plugin
+Then build it in `cmd/api/container.go`'s `BuildApp` and append it to `mods`.
+That is the entire registration mechanism: a function call in a file you can
+read top to bottom.
 
-Update `internal/plugins/register.go` to include your plugin:
+The layout inside a module mirrors `modules/identity` and `modules/user`:
+
+```
+modules/yours/
+├── module.go          # New(deps, cfg) — the only thing the host sees
+├── domain/            # entities + repository interfaces; no bun, no chi
+├── application/       # use cases over those interfaces
+├── infrastructure/    # bun models, repositories, external clients
+└── transport/         # HTTP handlers + Routes(chi.Router)
+```
+
+**Return an error rather than degrading.** `user.New` refuses to construct
+without an auth middleware, because a module that mounts its routes
+unprotected looks identical from the outside — same route table, no warning.
+
+**Four rules are enforced mechanically.** `tools/archtest` and `.golangci.yml`
+fail the build, not the review:
+
+| Rule | Meaning |
+|---|---|
+| R1 | `domain` may import the standard library and `internal/platform` only — not bun, chi, viper, zerolog or pgx. `application` may not import the ORM, the router, or its own `infrastructure` |
+| R2 | Modules must not import each other. Declare the interface you need in your own package and satisfy it in `cmd/api/container.go` |
+| R3 | `internal/**` must not import `modules/**`. Only `cmd/**` and `tools/**` know about every module |
+| R4 | No package named `utils`, `util`, `common`, `shared`, `helpers` or `misc` |
+
+Run them with `make arch`. See
+[dependency-rules.md](docs/architectures/01-modularity/dependency-rules.md).
+
+### Cross-cutting HTTP behaviour → add it to `internal/httpx`
+
+A header, a limiter, a tracer — something that applies to every request and
+owns no domain. Put it in `internal/httpx`, give it a typed config struct in
+`internal/config`, and register it in `NewRouter` behind an `if`:
 
 ```go
-package plugins
-
-import (
-    "github.com/sujanto-gaws/kopiochi/internal/plugin"
-    "github.com/sujanto-gaws/kopiochi/internal/plugins/auth"
-    "github.com/sujanto-gaws/kopiochi/internal/plugins/middleware"
-    "github.com/sujanto-gaws/kopiochi/internal/myplugins"  // ← Add import
-)
-
-// RegisterBuiltinPlugins registers all plugins
-func RegisterBuiltinPlugins(registry *plugin.Registry) {
-    // Authentication plugins
-    registry.Register("fido2-auth", func() plugin.Plugin {
-        return &authPluginAdapter{auth.NewFIDO2Plugin()}
-    })
-
-    // Middleware plugins
-    registry.Register("ratelimit", func() plugin.Plugin {
-        return &middlewarePluginAdapter{middleware.NewRateLimiterPlugin()}
-    })
-    registry.Register("cors", func() plugin.Plugin {
-        return &middlewarePluginAdapter{middleware.NewCORSPlugin()}
-    })
-
-    // 🎉 Add your custom plugins here
-    registry.Register("compression", func() plugin.Plugin {
-        return &middlewarePluginAdapter{myplugins.NewCompressionPlugin()}
-    })
+if sec.YourThing.Enabled {
+    r.Use(YourThing(sec.YourThing))
 }
 ```
 
-### Step 4: Enable in Configuration
-
-Edit `config/default.yaml`:
-
-```yaml
-plugins:
-  middleware:
-    - cors
-    - compression  # ← Add your plugin
-  
-  custom:
-    compression:
-      level: 6  # Custom configuration
-```
-
-### Step 5: Build and Run
-
-```bash
-go build ./...
-go run ./cmd/api serve
-```
-
----
-
-## 📋 Plugin Interfaces
-
-### MiddlewarePlugin (Most Common)
-
-For HTTP middleware that processes requests/responses:
-
-```go
-type MyPlugin struct {
-    // Your fields
-}
-
-func (p *MyPlugin) Name() string {
-    return "myplugin"
-}
-
-func (p *MyPlugin) Initialize(cfg map[string]interface{}) error {
-    // Parse configuration
-    return nil
-}
-
-func (p *MyPlugin) Close() error {
-    // Cleanup resources
-    return nil
-}
-
-func (p *MyPlugin) Middleware() func(http.Handler) http.Handler {
-    return func(next http.Handler) http.Handler {
-        return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-            // Your logic here
-            
-            // Call next handler
-            next.ServeHTTP(w, r)
-        })
-    }
-}
-
-func (p *MyPlugin) Provider() interface{} {
-    return p
-}
-```
-
-### AuthPlugin (For Authentication)
-
-For authentication providers with user context extraction:
-
-```go
-type MyAuthPlugin struct {
-    // Your fields
-}
-
-// Implement all MiddlewarePlugin methods, plus:
-
-func (p *MyAuthPlugin) AuthMiddleware() func(http.Handler) http.Handler {
-    return func(next http.Handler) http.Handler {
-        return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-            // Validate credentials
-            
-            // Add user to context
-            ctx := context.WithValue(r.Context(), "user_id", userID)
-            r = r.WithContext(ctx)
-            
-            next.ServeHTTP(w, r)
-        })
-    }
-}
-
-func (p *MyAuthPlugin) ExtractUserID(ctx context.Context) string {
-    if id, ok := ctx.Value("user_id").(string); ok {
-        return id
-    }
-    return ""
-}
-```
-
-### CachePlugin (For Caching)
-
-For cache providers (Redis, Memcached, etc.):
-
-```go
-type MyCachePlugin struct {
-    client *redis.Client
-}
-
-func (p *MyCachePlugin) Get(ctx context.Context, key string) (interface{}, error) {
-    return p.client.Get(ctx, key).Result()
-}
-
-func (p *MyCachePlugin) Set(ctx context.Context, key string, value interface{}) error {
-    return p.client.Set(ctx, key, value, 10*time.Minute).Err()
-}
-
-func (p *MyCachePlugin) Delete(ctx context.Context, key string) error {
-    return p.client.Del(ctx, key).Err()
-}
-```
-
----
-
-## 🎨 Real-World Examples
-
-### Example 1: Request Logger Plugin
-
-```go
-package myplugins
-
-import (
-    "net/http"
-    "time"
-
-    "github.com/rs/zerolog/log"
-)
-
-type RequestLoggerPlugin struct {
-    initialized bool
-    includeBody bool
-}
-
-func (p *RequestLoggerPlugin) Name() string {
-    return "request-logger"
-}
-
-func (p *RequestLoggerPlugin) Initialize(cfg map[string]interface{}) error {
-    if includeBody, ok := cfg["include_body"].(bool); ok {
-        p.includeBody = includeBody
-    }
-    p.initialized = true
-    return nil
-}
-
-func (p *RequestLoggerPlugin) Close() error {
-    p.initialized = false
-    return nil
-}
-
-func (p *RequestLoggerPlugin) Middleware() func(http.Handler) http.Handler {
-    return func(next http.Handler) http.Handler {
-        return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-            start := time.Now()
-            
-            // Log request
-            log.Info().
-                Str("method", r.Method).
-                Str("path", r.URL.Path).
-                Str("remote_addr", r.RemoteAddr).
-                Time("started_at", start).
-                Msg("request started")
-            
-            // Call next
-            next.ServeHTTP(w, r)
-            
-            // Log duration
-            log.Info().
-                Str("method", r.Method).
-                Str("path", r.URL.Path).
-                Dur("duration_ms", time.Since(start)).
-                Msg("request completed")
-        })
-    }
-}
-
-func (p *RequestLoggerPlugin) Provider() interface{} {
-    return p
-}
-
-func NewRequestLoggerPlugin() *RequestLoggerPlugin {
-    return &RequestLoggerPlugin{}
-}
-```
-
-### Example 2: API Key Authentication
-
-```go
-package myplugins
-
-import (
-    "context"
-    "net/http"
-    "strings"
-)
-
-type APIKeyPlugin struct {
-    initialized bool
-    validKeys   map[string]bool
-    headerName  string
-}
-
-func (p *APIKeyPlugin) Name() string {
-    return "api-key-auth"
-}
-
-func (p *APIKeyPlugin) Initialize(cfg map[string]interface{}) error {
-    p.validKeys = make(map[string]bool)
-    
-    if keys, ok := cfg["keys"].([]interface{}); ok {
-        for _, key := range keys {
-            if keyStr, ok := key.(string); ok {
-                p.validKeys[keyStr] = true
-            }
-        }
-    }
-    
-    if headerName, ok := cfg["header_name"].(string); ok {
-        p.headerName = headerName
-    } else {
-        p.headerName = "X-API-Key"
-    }
-    
-    p.initialized = true
-    return nil
-}
-
-func (p *APIKeyPlugin) Close() error {
-    p.initialized = false
-    p.validKeys = nil
-    return nil
-}
-
-func (p *APIKeyPlugin) Middleware() func(http.Handler) http.Handler {
-    return p.AuthMiddleware()
-}
-
-func (p *APIKeyPlugin) AuthMiddleware() func(http.Handler) http.Handler {
-    return func(next http.Handler) http.Handler {
-        return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-            apiKey := r.Header.Get(p.headerName)
-            if apiKey == "" {
-                // Try Authorization header as fallback
-                auth := r.Header.Get("Authorization")
-                if strings.HasPrefix(auth, "Bearer ") {
-                    apiKey = strings.TrimPrefix(auth, "Bearer ")
-                }
-            }
-            
-            if apiKey == "" || !p.validKeys[apiKey] {
-                http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
-                return
-            }
-            
-            // Add API key to context
-            ctx := context.WithValue(r.Context(), "api_key", apiKey)
-            r = r.WithContext(ctx)
-            
-            next.ServeHTTP(w, r)
-        })
-    }
-}
-
-func (p *APIKeyPlugin) ExtractUserID(ctx context.Context) string {
-    if key, ok := ctx.Value("api_key").(string); ok {
-        return key
-    }
-    return ""
-}
-
-func (p *APIKeyPlugin) Provider() interface{} {
-    return p
-}
-
-func NewAPIKeyPlugin() *APIKeyPlugin {
-    return &APIKeyPlugin{}
-}
-```
-
----
-
-## 🔧 Advanced: Plugin with Database Access
-
-If your plugin needs database access:
-
-```go
-package myplugins
-
-import (
-    "database/sql"
-    "net/http"
-)
-
-type AuditLoggerPlugin struct {
-    initialized bool
-    db          *sql.DB
-    tableName   string
-}
-
-func (p *AuditLoggerPlugin) Initialize(cfg map[string]interface{}) error {
-    // Get database connection from config
-    if db, ok := cfg["db"].(*sql.DB); ok {
-        p.db = db
-    } else {
-        return fmt.Errorf("audit-logger: db connection required")
-    }
-    
-    if table, ok := cfg["table"].(string); ok {
-        p.tableName = table
-    } else {
-        p.tableName = "audit_logs"
-    }
-    
-    p.initialized = true
-    return nil
-}
-
-func (p *AuditLoggerPlugin) Middleware() func(http.Handler) http.Handler {
-    return func(next http.Handler) http.Handler {
-        return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-            // Log to database
-            _, err := p.db.Exec(
-                fmt.Sprintf("INSERT INTO %s (method, path, timestamp) VALUES (?, ?, NOW())", p.tableName),
-                r.Method,
-                r.URL.Path,
-            )
-            if err != nil {
-                log.Error().Err(err).Msg("failed to log audit trail")
-            }
-            
-            next.ServeHTTP(w, r)
-        })
-    }
-}
-```
-
-Register it with database connection:
-
-```go
-// In main.go
-pluginRegistry := plugin.NewRegistry()
-
-// Pass database connection to plugin
-plugins.RegisterBuiltinPlugins(pluginRegistry)
-
-// Or manually register custom plugin with DB
-pluginRegistry.Register("audit-logger", func() plugin.Plugin {
-    return &middlewarePluginAdapter{
-        myplugins.NewAuditLoggerPlugin(db.DB),  // Pass your DB connection
-    }
-})
-```
-
----
-
-## ✅ Best Practices
-
-### Do's
-
-✅ **Keep plugins focused** - One responsibility per plugin  
-✅ **Validate configuration** - Return errors in `Initialize()`  
-✅ **Handle uninitialized state** - Gracefully skip if not initialized  
-✅ **Use context** - Pass request-scoped data via context  
-✅ **Document configuration** - Show example YAML in comments  
-✅ **Write tests** - Test plugin logic in isolation  
-
-### Don'ts
-
-❌ **Don't modify `internal/plugin/`** - It's the core system  
-❌ **Don't create global state** - Use plugin instances  
-❌ **Don't block indefinitely** - Use timeouts in middleware  
-❌ **Don't panic on errors** - Return errors or log them  
-❌ **Don't forget cleanup** - Implement `Close()` properly  
-
----
-
-## 📦 Organizing Multiple Custom Plugins
-
-For large projects, organize like this:
-
-```
-internal/
-├── myplugins/
-│   ├── middleware/
-│   │   ├── compression.go
-│   │   ├── requestlogger.go
-│   │   └── ratelimit_custom.go
-│   ├── auth/
-│   │   ├── apikey.go
-│   │   └── oauth2.go
-│   └── cache/
-│       └── redis.go
-```
-
-Update `internal/plugins/register.go`:
-
-```go
-package plugins
-
-import (
-    "github.com/sujanto-gaws/kopiochi/internal/plugin"
-    "github.com/sujanto-gaws/kopiochi/internal/myplugins/auth"
-    "github.com/sujanto-gaws/kopiochi/internal/myplugins/middleware"
-)
-
-func RegisterBuiltinPlugins(registry *plugin.Registry) {
-    // Built-in plugins
-    registry.Register("fido2-auth", ...)
-    
-    // Custom middleware
-    registry.Register("compression", func() plugin.Plugin {
-        return &middlewarePluginAdapter{middleware.NewCompressionPlugin()}
-    })
-    
-    // Custom auth
-    registry.Register("api-key", func() plugin.Plugin {
-        return &authPluginAdapter{auth.NewAPIKeyPlugin()}
-    })
-}
-```
-
----
-
-## 🔍 Debugging Plugins
-
-### List All Registered Plugins
-
-```go
-// In main.go or handlers
-registered := pluginRegistry.List()
-log.Info().Strs("plugins", registered).Msg("all registered plugins")
-```
-
-### Check If Plugin Is Initialized
-
-```go
-if pluginRegistry.IsInitialized("compression") {
-    log.Info().Msg("compression plugin is active")
-}
-```
-
-### Get Plugin Instance
-
-```go
-// Get as middleware plugin
-mwPlugin := pluginRegistry.GetMiddleware("compression")
-if mwPlugin != nil {
-    // Use the middleware
-}
-
-// Get as auth plugin
-authPlugin := pluginRegistry.GetAuth("fido2-auth")
-if authPlugin != nil {
-    userID := authPlugin.ExtractUserID(ctx)
-}
-```
-
-> **There is no `jwt-auth` plugin.** It was deleted along with its config block
-> and `APP_JWT_SECRET`; the API's own authentication comes from the `identity`
-> module's RS256 token service, wired as a constructor dependency rather than
-> resolved from the registry. Use the registry for optional auth *plugins* only.
-> See [PLUGIN_GUIDE.md](PLUGIN_GUIDE.md) and
-> [docs/architectures/04-security/token-architecture.md](docs/architectures/04-security/token-architecture.md).
-
----
-
-## 📝 Summary
-
-1. **Create your plugin** in `internal/myplugins/` (or any custom package)
-2. **Implement the interface** (`Name()`, `Initialize()`, `Close()`, `Middleware()`)
-3. **Register it** in `internal/plugins/register.go`
-4. **Enable it** in `config/default.yaml`
-5. **Build and run!**
-
-The plugin core (`internal/plugin/`) remains untouched - you only interact with its interfaces.
-
-For questions, see [PLUGIN_GUIDE.md](../PLUGIN_GUIDE.md) or open an issue.
+That is how CORS and rate limiting work now. If your middleware owns a
+resource — a goroutine, a ticker, a connection — return a `Close` and add it
+to the router's closer list, so the lifecycle stack releases it in order. The
+rate limiter's eviction sweep is the worked example.
+
+Do not build a registry. The last two are what Phase 3 removed.

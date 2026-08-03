@@ -274,17 +274,29 @@ details in [`../04-security/middleware-hardening.md`](../04-security/middleware-
    `internal/{domain,application,infrastructure}/auth/**` — `5f6edfe`, `6d0c1b7`.
 3. ✅ Wire it in `cmd/api/container.go`; verify routes respond — `ef76759`,
    `4fdc609`.
-4. ⏳ Convert CORS and rate limiting to direct construction in `internal/httpx`.
-5. ⏳ Delete `internal/extension/` (including `internal/extension/identity/`),
+4. ✅ Convert CORS and rate limiting to direct construction in `internal/httpx`
+   — `de7e242`. `internal/httpx.CORS` and `internal/httpx.NewRateLimiter` take
+   typed `config.CORS`/`config.RateLimit`, and `internal/httpx.NewRouter`
+   applies each behind an `if`.
+5. ✅ Delete `internal/extension/` (including `internal/extension/identity/`),
    `internal/plugin/`, `internal/plugins/`, `internal/plugins/adapters.go`, and
-   `examples/extension-demo/`.
-6. ⏳ Drop `go-webauthn`, `go-tpm`, `otp`, and `barcode` from `go.mod` if the
-   corresponding features are not being reimplemented immediately.
+   `examples/extension-demo/` — `de7e242`, **4,023 lines**.
+6. ✅ Drop `go-webauthn`, `go-tpm` and `cbor` from `go.mod` — `52464f6`, with
+   their transitive `msgp`/`fwd`/`float16`. **`otp` is kept** (TOTP is live in
+   `modules/identity/infrastructure/mfa`) and **`barcode` therefore cannot be
+   dropped**: `go mod why` reaches it only through `pquerna/otp/totp`.
 
-Steps 1–3 were additive and independently shippable, and have landed. Step 5 is
-the one that removes the duplicate frameworks and the 1,076-LOC dead identity
-copy, and must not be skipped — leaving them in place recreates the exact
-situation this document exists to resolve.
+All six steps have landed. Steps 4–6 shipped as one commit for 4 and 5,
+because `internal/plugin/initializer.go` took a `*config.Plugins` — removing
+the plugin config surface and removing the frameworks could not be separated
+without leaving the tree unbuildable in between.
+
+The config surface went with them: `plugins.middleware`, `plugins.auth`,
+`plugins.cache` and `plugins.custom` are replaced by `security.cors` and
+`security.rate_limit`. `.env.example` previously advertised `APP_RATELIMIT_*`
+and `APP_CORS_*`, which mapped to no Viper key at all and were silently
+ignored; the real `APP_SECURITY_*` names replace them, covered by
+`TestLoad_SecurityEnvOverrides`.
 
 ---
 

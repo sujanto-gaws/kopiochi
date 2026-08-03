@@ -1,7 +1,34 @@
 # Dependency Rules
 
-**Status:** Proposed — see [ADR-005](../adr/005%20-%20Module%20Boundaries%20and%20Dependency%20Direction.md)
+**Status:** Implemented — Phase 3.2 (`1b46d87`)
 **Date:** 2026-08-02
+**Last verified:** 2026-08-03, after Phase 3.2 — see
+[ADR-005](../adr/005%20-%20Module%20Boundaries%20and%20Dependency%20Direction.md)
+
+Both enforcement mechanisms below now exist and run in CI:
+
+- **`.golangci.yml`** carries the `depguard` rules for R1 (domain and
+  application purity) and R3 (`internal/**` must not import `modules/**`).
+- **`tools/archtest`** carries five tests over the real import graph: R2, R3,
+  R1 for both layers, and R4.
+- **`.github/workflows/ci.yml`** — the repository's first CI — runs both.
+
+They overlap on purpose. depguard matches on file globs, so it only polices
+boundaries known when the config was written; archtest walks the graph and
+therefore covers modules that do not exist yet. Each caught something the
+other missed during Phase 3: depguard found `internal/db/schema_test.go`
+importing two modules' persistence models (a real R3 violation, since moved to
+`tools/schemacheck/`), and archtest expresses the generic "module A must not
+import module B" that no glob can.
+
+Two properties were verified rather than assumed. The tests **do** fail on
+injected violations — a cross-module import plus a `domain -> bun` import
+produce three failures, and reverting restores green. And **`go test` caching
+silently masks violations**: the cache keys on `tools/archtest`'s own files
+while the tests read the whole repository, so a violation introduced anywhere
+else returns `ok (cached)`. Measured on one tree: `ok (cached)` without
+`-count=1`, three failures with it. CI, `make arch` and the package doc all
+pass `-count=1`.
 
 Rules are worthless without enforcement. This document states the rules **and**
 the check that fails the build when they are broken.
@@ -22,12 +49,17 @@ the check that fails the build when they are broken.
 > unaffected: they were written as the target, not as a description of the
 > violation.
 
-### No mechanical enforcement anywhere
+### No mechanical enforcement anywhere — ✅ resolved in Phase 3.2
 
-Nothing in the repository checks layering. There is no `.golangci.yml`, no
-`depguard` configuration, no architecture test, and no CI to run one. Every rule
-below is currently upheld — or not — by review discipline alone, which is the
-one control this document exists to replace.
+> Nothing in the repository checks layering. There is no `.golangci.yml`, no
+> `depguard` configuration, no architecture test, and no CI to run one. Every
+> rule below is currently upheld — or not — by review discipline alone, which is
+> the one control this document exists to replace.
+
+That was true until `1b46d87`. All four now exist; see the header above. The
+paragraph is kept because it states the problem the rest of this document
+solves, and because the first violation the new rules found had been sitting in
+the tree unnoticed — which is precisely what review discipline alone gets you.
 
 ---
 

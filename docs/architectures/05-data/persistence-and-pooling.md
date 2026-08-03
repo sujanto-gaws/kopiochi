@@ -1,10 +1,24 @@
 # Persistence & Connection Pooling
 
-**Status:** Proposed
+**Status:** Partially implemented — Phase 3.8 (`6e0d284`)
 **Date:** 2026-08-02
-**Last verified:** 2026-08-02 — Problems 1–6 are all still live (Phase 3.8 has
-not run). The one item resolved since this was written is the health endpoint;
-see the note at the end.
+**Last verified:** 2026-08-03, after Phase 3.8.
+
+| Problem | Status |
+|---|---|
+| 1. DSN does not escape credentials | ✅ `BuildDSN` uses `net/url` + `net.JoinHostPort`, and sets `application_name`. **The example in Problem 1 was wrong** — see the correction there |
+| 2. `sql.DB` wrapper unconfigured | ✅ all four limits set from config; the `MaxIdleConns: 2` churn is gone |
+| 3. `sql.DB` never closed | ✅ `db.Open` returns a `*db.DB` owning bun, pool and wrapper, with one `Close` that releases them in reverse order, registered on the lifecycle stack |
+| 4. Pool sizing hardcoded | ✅ `conn_max_lifetime`, `conn_max_idle_time`, `health_check_period` and `connect_timeout` are all config now, with the previously hardcoded values as defaults |
+| 5. Startup contexts have no deadline | ✅ `Open` takes a `ctx`; `cmd/api` and all four `migrate` subcommands bound it with `db.startup_timeout` |
+| 6. `OpenDB` uses an unregistered driver | ✅ still relies on the `stdlib` import, but the dependency is now explicit in a comment naming both uses |
+
+**Still outstanding, and never part of 3.8:** the transaction helper
+(`InTx`) and the Postgres error translation layer under "Repository patterns"
+below. Both are Phase 5.8.
+
+New tests: `internal/db/dsn_test.go` covers escaping (six special characters),
+IPv6 bracketing, and the query parameters.
 
 ---
 
