@@ -39,6 +39,15 @@ type JWTService struct {
 	issuer     string
 	audience   string
 	leeway     time.Duration
+
+	// signingKid is the thumbprint of publicKey, stamped into the "kid"
+	// header of every token this service issues.
+	signingKid string
+	// verificationKeys is every key this service will accept, by kid. During
+	// a rotation it holds both the new signing key and the previous one, so
+	// tokens issued before the switch keep verifying until they expire.
+	// Without that overlap, rotating a key logs out every active session.
+	verificationKeys map[string]*rsa.PublicKey
 }
 
 // NewJWTService builds a JWTService that signs with privateKey and verifies
@@ -57,12 +66,15 @@ func NewJWTService(privateKeyPath, publicKeyPath, issuer, audience string, leewa
 	if leeway <= 0 {
 		leeway = defaultLeeway
 	}
+	signingKid := Kid(pub)
 	return &JWTService{
-		privateKey: priv,
-		publicKey:  pub,
-		issuer:     issuer,
-		audience:   audience,
-		leeway:     leeway,
+		privateKey:       priv,
+		publicKey:        pub,
+		issuer:           issuer,
+		audience:         audience,
+		leeway:           leeway,
+		signingKid:       signingKid,
+		verificationKeys: map[string]*rsa.PublicKey{signingKid: pub},
 	}, nil
 }
 
@@ -114,8 +126,18 @@ func (s *JWTService) IssueMFAToken(user domain.User) (string, error) {
 	return s.sign(claims)
 }
 
+// sign issues a token, stamping the signing key's thumbprint into the "kid"
+// header.
+//
+// Without kid a verifier holding two keys must try each in turn, which works
+// but makes a signature failure ambiguous: it cannot tell "wrong key" from
+// "forged token". With it, key selection is exact and a mismatch is
+// unambiguous.
 func (s *JWTService) sign(claims jwt.MapClaims) (string, error) {
 	token := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
+	if s.signingKid != "" {
+		token.Header["kid"] = s.signingKid
+	}
 	return token.SignedString(s.privateKey)
 }
 
@@ -139,7 +161,7 @@ func (s *JWTService) Validate(tokenStr string, want domain.Class) (*domain.Claim
 		if token.Method != jwt.SigningMethodRS256 {
 			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
 		}
-		return s.publicKey, nil
+		return s.keyFor(token)
 	},
 		jwt.WithValidMethods([]string{rs256Alg}),
 		jwt.WithIssuer(s.issuer),
@@ -227,4 +249,66 @@ func getInt64(c jwt.MapClaims, key string) int64 {
 		return int64(f)
 	}
 	return 0
+}
+
+// keyFor selects the verification key for a token.
+//
+// A token carrying a kid we do not know is rejected outright rather than
+// falling back to trying every key. Falling back would quietly undo a
+// rotation: after the old key is retired, tokens signed with it would keep
+// verifying against whatever else happened to be loaded, if it matched — and
+// more practically, it turns key selection into an oracle an attacker can
+// probe.
+//
+// A token with *no* kid is accepted against the signing key. That path exists
+// only for tokens minted before kid was introduced, and it disappears
+// naturally once they expire.
+func (s *JWTService) keyFor(token *jwt.Token) (any, error) {
+	raw, ok := token.Header["kid"]
+	if !ok {
+		return s.publicKey, nil
+	}
+
+	kid, ok := raw.(string)
+	if !ok {
+		return nil, errors.New("token: kid header is not a string")
+	}
+
+	key, ok := s.verificationKeys[kid]
+	if !ok {
+		return nil, fmt.Errorf("token: unknown key id %q", kid)
+	}
+	return key, nil
+}
+
+// SigningKid is the thumbprint of the key this service signs with. Exposed so
+// an operator can confirm which key is live without decoding a token.
+func (s *JWTService) SigningKid() string { return s.signingKid }
+
+// WithPreviousKey adds a retired public key to the verification set.
+//
+// This is what makes key rotation survivable. Swapping the signing key without
+// keeping the old one for verification invalidates every token already issued:
+// every active session is logged out at once, and every client refreshing at
+// that moment fails. Keeping the previous key until the longest-lived token it
+// signed has expired makes the switch invisible.
+//
+// The retired key can only verify; the service signs with one key and one key
+// only.
+func (s *JWTService) WithPreviousKey(path string) error {
+	pub, err := loadRSAPublicKey(path)
+	if err != nil {
+		return fmt.Errorf("load previous public key: %w", err)
+	}
+
+	kid := Kid(pub)
+	if kid == s.signingKid {
+		// Almost certainly a copy-paste of the active key path. Accepting it
+		// silently would make the config look like a rotation was configured
+		// when nothing was.
+		return errors.New("previous key is the same as the signing key")
+	}
+
+	s.verificationKeys[kid] = pub
+	return nil
 }

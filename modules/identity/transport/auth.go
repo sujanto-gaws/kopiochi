@@ -36,13 +36,16 @@ type AuthHandler struct {
 	// (returns an error) rather than constructing a handler that would silently
 	// serve unprotected routes.
 	authMW func(http.Handler) http.Handler
+	// keys serves the JWKS endpoint. nil simply omits the route — a
+	// deployment that verifies tokens only in-process needs no key set.
+	keys KeySetProvider
 }
 
 // NewAuthHandler creates a new auth handler. authMW enforces a valid access
 // token on the protected routes mounted by Routes; callers must supply a
 // non-nil middleware.
-func NewAuthHandler(svc AuthService, refreshTTL time.Duration, authMW func(http.Handler) http.Handler) *AuthHandler {
-	return &AuthHandler{svc: svc, refreshTTL: refreshTTL, authMW: authMW}
+func NewAuthHandler(svc AuthService, refreshTTL time.Duration, authMW func(http.Handler) http.Handler, keys KeySetProvider) *AuthHandler {
+	return &AuthHandler{svc: svc, refreshTTL: refreshTTL, authMW: authMW, keys: keys}
 }
 
 // Login handles POST /auth/login
@@ -294,4 +297,18 @@ func (h *AuthHandler) Routes(r chi.Router) {
 			r.Post("/mfa/setup/verify", h.MFAVerifySetup)
 		})
 	})
+
+	// Public key set, for anyone verifying tokens this service issued.
+	// Unauthenticated: needing a credential to fetch public keys would defeat
+	// the purpose.
+	//
+	// It sits under the version prefix rather than at the conventional
+	// /.well-known/jwks.json because a module mounts inside /api/v1 and has no
+	// way to register at the root. Moving it would mean giving modules a
+	// root-mount escape hatch, which is exactly the shadowing hazard
+	// routing-and-versioning.md removed. Discoverability is a documentation
+	// problem; a second mounting mechanism is a correctness one.
+	if h.keys != nil {
+		r.Get("/.well-known/jwks.json", JWKSHandler(h.keys))
+	}
 }

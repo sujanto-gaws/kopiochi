@@ -24,15 +24,18 @@ import (
 // Config carries this module's settings, decoded from the host's config via
 // mapstructure (see internal/config).
 type Config struct {
-	PrivateKeyPath    string        `mapstructure:"private_key_path"`
-	PublicKeyPath     string        `mapstructure:"public_key_path"`
-	Issuer            string        `mapstructure:"issuer"`
-	ClientID          string        `mapstructure:"client_id"`
-	AccessTokenTTL    time.Duration `mapstructure:"access_token_ttl"`
-	RefreshTokenTTL   time.Duration `mapstructure:"refresh_token_ttl"`
-	MFATemporaryTTL   time.Duration `mapstructure:"mfa_temporary_ttl"`
-	MaxFailedAttempts int           `mapstructure:"max_failed_attempts"`
-	LockDuration      time.Duration `mapstructure:"lock_duration"`
+	PrivateKeyPath string `mapstructure:"private_key_path"`
+	PublicKeyPath  string `mapstructure:"public_key_path"`
+	// PreviousPublicKeyPath keeps a retired signing key in the verification
+	// set during a rotation. Optional; empty means no rotation in progress.
+	PreviousPublicKeyPath string        `mapstructure:"previous_public_key_path"`
+	Issuer                string        `mapstructure:"issuer"`
+	ClientID              string        `mapstructure:"client_id"`
+	AccessTokenTTL        time.Duration `mapstructure:"access_token_ttl"`
+	RefreshTokenTTL       time.Duration `mapstructure:"refresh_token_ttl"`
+	MFATemporaryTTL       time.Duration `mapstructure:"mfa_temporary_ttl"`
+	MaxFailedAttempts     int           `mapstructure:"max_failed_attempts"`
+	LockDuration          time.Duration `mapstructure:"lock_duration"`
 	// TokenLeeway is the clock-skew allowance applied when validating a
 	// token's exp (and iat/nbf, if present). Kept small and non-zero: see
 	// docs/architectures/04-security/token-architecture.md.
@@ -93,6 +96,13 @@ func New(deps module.Deps, cfg Config) (*module.Module, error) {
 	// service mints carries aud=cfg.ClientID, and Validate requires it on
 	// every token it verifies (see token-architecture.md, "aud").
 	jwtSvc, err := token.NewJWTService(cfg.PrivateKeyPath, cfg.PublicKeyPath, cfg.Issuer, cfg.ClientID, cfg.TokenLeeway)
+	if err == nil && cfg.PreviousPublicKeyPath != "" {
+		// Fail rather than warn: a rotation configured with an unreadable
+		// previous key would start, look healthy, and reject every token
+		// issued before the switch — logging out every active session with
+		// nothing in the logs pointing at the cause.
+		err = jwtSvc.WithPreviousKey(cfg.PreviousPublicKeyPath)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("identity: init jwt service: %w", err)
 	}
@@ -126,7 +136,7 @@ func New(deps module.Deps, cfg Config) (*module.Module, error) {
 	// guaranteed non-nil here — construction above already fails (and returns
 	// early) if the token service cannot be built.
 	authMW := transport.AuthRequired(jwtSvc)
-	authHandler := transport.NewAuthHandler(authSvc, cfg.RefreshTokenTTL, authMW)
+	authHandler := transport.NewAuthHandler(authSvc, cfg.RefreshTokenTTL, authMW, jwtSvc)
 
 	return &module.Module{
 		Name:   "identity",
