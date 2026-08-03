@@ -1,11 +1,27 @@
 # Application Lifecycle & Shutdown
 
-**Status:** Proposed
+**Status:** Implemented — Phase 3.9 (`4bfc4d5`)
 **Date:** 2026-08-02
-**Last verified:** 2026-08-02, after Phase 2 — every problem below is still live
-(Phase 3.9 has not run). Line references updated for the current tree. The one
-change since Phase 1 is in [Timeouts](#timeouts): the `request_timeout` /
-`write_timeout` inversion is fixed, and `Config.Validate` now rejects it.
+**Last verified:** 2026-08-03, after Phase 3.9 — **all five problems below are
+fixed.** They are kept in place, described in the past tense where the text
+allows, because the reasoning is what stops them coming back. What shipped:
+
+| Problem | Resolution |
+|---|---|
+| 1. Every resource closed twice | `internal/lifecycle.Stack`; one owner per resource, no `defer x.Close()` in `main` for anything on the stack |
+| 2. `log.Fatal` bypasses shutdown | `Serve(ctx) error` returns the listen error through a channel |
+| 3. `Run` swallows the error | `serve()` returns `error` all the way to `RunE`, so the exit code reflects the failure |
+| 4. Startup order ≠ teardown order | Teardown is strict LIFO over the stack, by construction |
+| 5. Incomplete signal handling | `signal.NotifyContext` makes shutdown observable process-wide; a second signal forces `exit(130)` |
+
+Also shipped, from the same section: `/readyz` reports not-ready the moment
+`Shutdown` begins rather than after the drain, and
+`internal/infrastructure/http/server` moved to `internal/httpx/server.go`,
+deleting `internal/infrastructure/` entirely.
+
+Tests: `internal/lifecycle/stack_test.go` (5) and `internal/httpx/server_test.go`
+(4), including `TestServe_ReturnsListenErrorInsteadOfExiting` — a path that
+called `os.Exit` before and so could not be tested at all.
 
 ---
 

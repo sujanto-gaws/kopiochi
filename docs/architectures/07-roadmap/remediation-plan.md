@@ -121,7 +121,7 @@ Six new test files landed with the phase — `cors_test.go`,
 
 ---
 
-## Phase 3 — Consolidate the structure (4–5 days) — ⏳ NOT STARTED
+## Phase 3 — Consolidate the structure (4–5 days) — ✅ COMPLETE
 
 Now that the application works and is safe, remove the duplication. Doing this
 earlier risks deleting something that turns out to be load-bearing.
@@ -136,33 +136,101 @@ earlier risks deleting something that turns out to be load-bearing.
 > not from `extensions/` — and is done. Numbering is preserved so existing
 > references still resolve.
 
-| # | Task | Effort | Doc |
-|---|------|--------|-----|
-| ~~3.1~~ | ~~Split `internal/utils`~~ — **withdrawn**, no such package has ever existed | — | [deps](../01-modularity/dependency-rules.md) |
-| 3.2 | Add `depguard` rules + the module-isolation test; wire into CI | S | [deps](../01-modularity/dependency-rules.md) |
-| ~~3.3~~ | ~~Move identity into `modules/`~~ — **done in Phase 1** (`5f6edfe`, `6d0c1b7`) | — | [layout](../01-modularity/module-layout.md) |
-| ~~3.4~~ | ~~Consolidate aquaculture~~ — **withdrawn**, no aquaculture code has ever existed | — | [layout](../01-modularity/module-layout.md) |
-| 3.5 | Convert CORS and rate limiting to direct construction in `internal/httpx` | S | [extensions](../01-modularity/extension-framework.md) |
-| 3.6 | **Delete the dead frameworks:** `internal/extension/` (including `internal/extension/identity/`, 1,076 LOC, no importers), `internal/plugin/`, `internal/plugins/`, `examples/extension-demo/`. Must follow 3.5, which removes the last live consumer of `internal/plugin{,s}` | M | [extensions](../01-modularity/extension-framework.md) |
-| 3.6b | **Move, do not delete:** `internal/domain/user`, `internal/application/user`, and the matching persistence/handler code become `modules/user/`. These are **live** — `cmd/api/container.go` builds the `user` module from them — so `internal/domain/` and `internal/application/` may only be removed once nothing imports them | M | [layout](../01-modularity/module-layout.md) |
-| 3.7 | `go mod tidy`; drop `go-webauthn`, `go-tpm`, `cbor`, and `boombuler/barcode`. **Keep `pquerna/otp`** — `modules/identity/infrastructure/mfa/totp.go` uses it | S | [hygiene](../06-quality/repository-hygiene.md) |
-| 3.8 | Fix `BuildDSN` with `net/url`; configure the `sql.DB` pool; add connect timeouts | S | [persistence](../05-data/persistence-and-pooling.md) |
-| 3.9 | Lifecycle stack — single ownership, LIFO teardown, `Serve` returns errors instead of `log.Fatal` | M | [lifecycle](../02-composition/lifecycle-and-shutdown.md) |
+| # | Status | Task | Effort | Doc |
+|---|--------|------|--------|-----|
+| ~~3.1~~ | — | ~~Split `internal/utils`~~ — **withdrawn**, no such package has ever existed | — | [deps](../01-modularity/dependency-rules.md) |
+| 3.2 | ✅ `1b46d87` | `depguard` rules (`.golangci.yml`) + five architecture tests (`tools/archtest`) + the repository's first CI workflow. depguard matches file globs; archtest walks the real import graph and so also covers modules that do not exist yet | S | [deps](../01-modularity/dependency-rules.md) |
+| ~~3.3~~ | ✅ | ~~Move identity into `modules/`~~ — **done in Phase 1** (`5f6edfe`, `6d0c1b7`) | — | [layout](../01-modularity/module-layout.md) |
+| ~~3.4~~ | — | ~~Consolidate aquaculture~~ — **withdrawn**, no aquaculture code has ever existed | — | [layout](../01-modularity/module-layout.md) |
+| 3.5 | ✅ `de7e242` | CORS and rate limiting constructed directly from typed `config.Security` in the new `internal/httpx.NewRouter`, which also replaces `server.NewRouter`. Roughly 1,100 LOC of registration framework becomes an `if` per middleware | S | [extensions](../01-modularity/extension-framework.md) |
+| 3.6 | ✅ `de7e242` | Deleted `internal/extension/` (incl. the 1,076-LOC parallel identity copy), `internal/plugin/`, `internal/plugins/`, `examples/extension-demo/` — **4,023 lines**. Landed in the same commit as 3.5: `internal/plugin/initializer.go` takes a `*config.Plugins`, so removing the plugin config surface and removing the frameworks could not be separated | M | [extensions](../01-modularity/extension-framework.md) |
+| 3.6b | ✅ `91340a8` | The live user stack moved to `modules/user/` with a real `user.New(deps, cfg)` constructor. `internal/domain/`, `internal/application/` and `internal/infrastructure/persistence/` are gone. Route table byte-for-byte unchanged | M | [layout](../01-modularity/module-layout.md) |
+| 3.7 | ✅ `52464f6` | Dropped `go-webauthn`, `go-webauthn/x`, `go-tpm`, `cbor`, `msgp`, `fwd`, `float16`. **`boombuler/barcode` could not be dropped** — see correction 1 below | S | [hygiene](../06-quality/repository-hygiene.md) |
+| 3.8 | ✅ `6e0d284` | `BuildDSN` via `net/url`; all four `sql.DB` limits set from config; `conn_max_lifetime`/`conn_max_idle_time` moved from hardcoded to config; new `health_check_period`, `connect_timeout`, `startup_timeout`; both startup contexts bounded | S | [persistence](../05-data/persistence-and-pooling.md) |
+| 3.9 | ✅ `4bfc4d5` | `internal/lifecycle.Stack` (LIFO, single ownership), `Serve(ctx) error` with no `log.Fatal`, second-signal force-exit, `/readyz` fails as soon as draining starts. `internal/infrastructure/` deleted | M | [lifecycle](../02-composition/lifecycle-and-shutdown.md) |
 
-**Exit criteria:** all business code lives under `modules/`; the import linter
-passes; `go build ./...` and the full test suite still pass after every deletion;
-module count and binary size both measurably down.
+**Exit criteria — all met:**
+
+- ✅ **All business code lives under `modules/`.** `internal/` is now flat and
+  holds only shared kernel: `config`, `db`, `httpx`, `lifecycle`, `logger`,
+  `middleware`, `module`, `platform`, `testutil`, `version`.
+- ✅ **The import linter passes.** `golangci-lint run ./...` exits 0, and
+  `go test -count=1 ./tools/archtest/...` passes all five rules.
+- ✅ **`go build ./...`, `go vet ./...`, `gofmt -l .` and the full suite pass**
+  after every deletion — checked at each of the six commits, not only at the end.
+- ✅ **Module count and binary size measurably down**, against `origin/main`
+  (`b8464e1`):
+
+  | | before | after | delta |
+  |---|---|---|---|
+  | `cmd/api` binary | 39,005,184 B | 37,322,752 B | **−1,682,432 B (−4.3%)** |
+  | packages | 38 | 32 | **−6** |
+
+  Net source change across the phase: **2,757 insertions, 4,442 deletions**.
+
+### Corrections found while executing this phase
+
+Three claims in these documents did not survive contact with the code. All are
+corrected in place; they are recorded here because the plan is meant to be
+trustworthy, not merely finished.
+
+1. **3.7 asked for `boombuler/barcode` to be dropped while keeping
+   `pquerna/otp`.** Those are mutually exclusive: `go mod why` shows barcode is
+   reached only through `pquerna/otp/totp`, which
+   `modules/identity/infrastructure/mfa` uses. barcode stays, as an indirect
+   dependency of a direct one.
+
+2. **`persistence-and-pooling.md` gave the wrong example for the DSN bug.** It
+   claimed a password of `p@ss` makes `pgxpool.ParseConfig` read the host as
+   `ss`, and listed `@` and `:` among the breaking characters. Measured, both
+   parse correctly — pgx splits userinfo on the *last* `@`. The characters that
+   actually break are `/ ? # %`, and they cause an outright parse failure whose
+   error names the host, not a misparse. The defect and the fix are unchanged;
+   only the example was wrong. `internal/db/dsn_test.go` covers all six.
+
+3. **`internal/db/schema_test.go` violated R3** by importing both modules'
+   persistence models — the shared kernel depending on business modules. It was
+   caught by depguard on its first run, which is exactly what 3.2 exists for.
+   The test legitimately needs to see every module at once, so it moved to
+   `tools/schemacheck/`.
+
+### Two things verified rather than assumed
+
+- **The architecture tests can fail.** Injecting a cross-module import and a
+  `domain -> bun` import produces three failures; reverting them restores green.
+  A rule that cannot fail is documentation wearing a test's clothes.
+- **`go test` caching silently masks architecture violations.** The cache keys
+  on `tools/archtest`'s own files, but the tests read the entire repository, so
+  a violation introduced anywhere else returns `ok (cached)`. Measured on one
+  tree: `ok (cached)` without `-count=1`, three failures with it. CI, the
+  Makefile `arch` target and the package doc all carry `-count=1` and say why.
 
 > ⚠️ **3.6 as previously written was dangerous.** Its delete list included
-> `internal/domain/` and `internal/application/`, which hold the live
-> profile-user stack that `cmd/api/container.go` depends on. Deleting them breaks
-> the build. The task has been split: 3.6 deletes only what has no importer, and
-> 3.6b *moves* the live code. Verify each path with
-> `grep -rn "<import path>" --include=*.go .` before removing it.
->
-> 3.6 is the step most likely to be deferred and must not be. Leaving the old
-> frameworks in place recreates the original problem.
+> `internal/domain/` and `internal/application/`, which held the live
+> profile-user stack that `cmd/api/container.go` depended on. Deleting them
+> would have broken the build. The task was split: 3.6 deleted only what had no
+> importer, and 3.6b *moved* the live code. Every path was checked with
+> `grep -rn "<import path>" --include=*.go .` before removal.
 
+### Carried forward, not done here
+
+- **The OFBiz compatibility layer** (`internal/domain/ofbizuser`,
+  `internal/infrastructure/persistence/ofbiz`) appeared on no list in this phase
+  and has **no importer anywhere in the tree**. 3.6's "delete what nothing
+  imports" rule would have reached it, but its own package doc describes a
+  coherent bounded context — an Apache OFBiz `UserLogin` compatibility layer —
+  not a duplicate framework. It was **moved** to `modules/ofbiz/`, which
+  satisfies the exit criterion without discarding an integration someone may
+  own. Deleting it is a decision for whoever owns that integration.
+- **35 pre-existing lint findings** (18 `errcheck`, 14 `staticcheck`, 3
+  `unused`, all outside the Phase 3 diff). `.golangci.yml` therefore enables
+  **only** `depguard`, so CI is green from its first run rather than trained to
+  be ignored. Restoring `default: standard` belongs to Phase 4.4, along with
+  `-race`, `govulncheck`, `gitleaks` and the coverage floors.
+- **`Migrations fs.FS` is still unset on every module.** Both `identity.New` and
+  `user.New` leave it nil; migrations still live in the top-level `migrations/`
+  directory and the goose runner has no `embed.FS` support. This was never a
+  Phase 3 task and remains open.
 ---
 
 ## Phase 4 — Build the safety net (3–4 days) — ⏳ NOT STARTED
@@ -224,7 +292,7 @@ Phase 0 ──▶ Phase 1 ──▶ Phase 3 ──▶ Phase 5
 |---|---|---|
 | **M1 — It works** | A real endpoint serves a real request against a real schema | Phase 1 |
 | **M2 — It's safe** | No credential leak, no auth bypass, handles concurrency | Phase 2 — **reached**, with the caveat below |
-| **M3 — It's coherent** | One layout, one framework, enforced boundaries | Phase 3 |
+| **M3 — It's coherent** | One layout, one framework, enforced boundaries | Phase 3 — **reached** |
 | **M4 — It's defended** | CI catches regressions; failures are observable | Phase 4 |
 | **M5 — It's clean** | Small repo, small binary, rotatable keys | Phase 5 |
 
@@ -265,9 +333,17 @@ Three caveats on "done" that the ticks do not capture:
   did ship inside Phase 2 before being caught by review (`d130519`). Read M2 as
   "the known unsafe behaviours are fixed and tested", not as "concurrency is
   verified".
-- **Milestones M1 and M2 are reached, M3–M5 are not.** Nothing in Phases 3–5 has
-  started, and there is still no CI, so no exit criterion is enforced
-  automatically — including Phase 2's own.
+- **Milestones M1, M2 and M3 are reached; M4 and M5 are not.** Phase 3 landed
+  one layout, one module contract and mechanically enforced boundaries.
+- **CI now exists** (`.github/workflows/ci.yml`, Phase 3.2), so exit criteria
+  are enforced automatically for the first time — but only partially. It runs
+  gofmt, build, vet, the test suite, the architecture rules and `depguard`. It
+  does **not** yet run `-race`, `govulncheck`, `gitleaks`, the migration
+  up/down/up check, or coverage floors, and `golangci-lint` is scoped to
+  `depguard` alone while 35 pre-existing findings remain. That is Phase 4.4.
+- **The `-race` caveat under M2 is unchanged.** CI runs on Linux and could
+  carry it, but the workflow does not enable it yet, so concurrency
+  correctness is still review-enforced rather than measured.
 
 ---
 

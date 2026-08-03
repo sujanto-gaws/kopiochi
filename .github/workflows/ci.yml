@@ -1,0 +1,86 @@
+# Continuous integration.
+#
+# Phase 3.2 needs this to exist: the depguard rules in .golangci.yml and the
+# architecture tests in tools/archtest are documentation, not enforcement,
+# until something fails the build on them.
+#
+# This is deliberately the minimum that makes those rules binding. Phase 4.4
+# extends it with -race, govulncheck, gitleaks, the migration up/down/up
+# check, and coverage floors — see
+# docs/architectures/06-quality/testing-strategy.md.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build, vet, test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: gofmt
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "These files are not gofmt'd:"
+            echo "$unformatted"
+            exit 1
+          fi
+
+      - name: go build
+        run: go build ./...
+
+      - name: go vet
+        run: go vet ./...
+
+      # Tests that need a database skip cleanly when none is reachable (see
+      # internal/testutil.ScratchPostgres). Phase 4.4 gives CI a real
+      # Postgres service so they run instead of skipping.
+      - name: go test
+        run: go test ./...
+
+      # Run explicitly as well as via ./... so a failure here is
+      # unmistakably an architecture violation rather than a normal test
+      # failure buried in the output.
+      #
+      # -count=1 is load-bearing, not habit. These tests read the whole
+      # repository through go/packages, but Go's test cache keys only on the
+      # archtest package's own files — so a violation introduced anywhere
+      # else does not invalidate it, and the run reports a cached PASS
+      # against a tree that now fails. Verified: injecting a cross-module
+      # import gives "ok (cached)" without this flag and three failures
+      # with it.
+      - name: architecture rules
+        run: go test -count=1 -v ./tools/archtest/...
+
+  lint:
+    name: golangci-lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - uses: golangci/golangci-lint-action@v6
+        with:
+          version: latest

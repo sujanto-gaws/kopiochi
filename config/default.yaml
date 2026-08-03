@@ -33,6 +33,23 @@ db:
   sslmode: "disable"
   max_conns: 10
   min_conns: 2
+  # Connection lifetimes. These were hardcoded in internal/db until Phase
+  # 3.8; the values here are the ones it used, so this is configurability
+  # rather than a behaviour change. conn_max_idle_time must not exceed
+  # conn_max_lifetime, or the idle setting can never take effect
+  # (Config.Validate rejects that).
+  conn_max_lifetime: "1h"
+  conn_max_idle_time: "30m"
+  # How often the pool checks idle connections for liveness, so a
+  # connection severed by a firewall or a failover is discovered by the
+  # pool rather than by a request.
+  health_check_period: "1m"
+  # Bounds a single dial. Without it a network partition makes every
+  # connection attempt hang instead of failing fast.
+  connect_timeout: "5s"
+  # Bounds the whole open-and-ping sequence at boot. Must be >=
+  # connect_timeout, which it has to accommodate at least once.
+  startup_timeout: "15s"
 
 log:
   level: "info"
@@ -53,47 +70,47 @@ auth:
   # docs/architectures/04-security/token-architecture.md). Keep this small.
   token_leeway: "30s"
 
-# Plugin Configuration
-plugins:
-  # Middleware plugins (applied in order)
-  middleware:
-    - cors
-    - ratelimit
+# Cross-cutting HTTP security middleware.
+#
+# These are not plugins. The plugin registry that used to assemble them
+# (plugins.middleware / plugins.custom) has been deleted; CORS and rate
+# limiting are constructed directly from the typed config below in
+# internal/httpx.NewRouter. See
+# docs/architectures/01-modularity/extension-framework.md.
+#
+# Because the fields are typed, a YAML type error (rate: "500") now fails
+# startup instead of being silently replaced by a default nobody chose.
+security:
+  cors:
+    # Off by default. A same-origin or non-browser API needs no CORS
+    # headers at all, and enabling the middleware without an allowlist
+    # still grants no origin access -- deny-by-default either way.
+    enabled: false
+    # Allowlist-only: an Origin is granted Access-Control-Allow-Origin
+    # only if it appears here. A literal "*" is accepted as an explicit,
+    # deliberate wildcard, but combining it with allow_credentials: true
+    # is rejected at config load (Config.Validate) -- the CORS spec
+    # forbids that combination and browsers ignore it, so failing loudly
+    # at boot is correct.
+    allowed_origins: []
+    allowed_methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]
+    allowed_headers: ["Accept", "Content-Type", "Content-Length", "Accept-Encoding", "X-CSRF-Token", "Authorization"]
+    allow_credentials: false
+    # Preflight cache lifetime, as a duration rather than a bare number
+    # of seconds, so a unit mistake is impossible.
+    max_age: "5m"
 
-  # Authentication plugins
-  #
-  # The legacy HS256 "jwt-auth" plugin has been removed (see
-  # docs/architectures/04-security/token-architecture.md). All token
-  # issuance/verification now goes through the RS256 identity module
-  # (modules/identity/infrastructure/token), configured above under "auth".
-  # This map is left empty/generic for other auth plugins (e.g. fido2-auth)
-  # to register into in the future.
-  auth: {}
-
-  # Cache plugins
-  cache:
-    redis:
-      enabled: false
-      provider: redis
-      config:
-        host: "localhost"
-        port: 6379
-        password: ""
-        db: 0
-  
-  # Custom plugins
-  #
-  # "cors" (internal/plugins/middleware/cors.go) is allowlist-only and
-  # deny-by-default: with no "cors" section here (the shipped default), no
-  # Origin is ever granted Access-Control-Allow-Origin. To allow specific
-  # frontends, add e.g.:
-  #
-  #   cors:
-  #     allowed_origins: ["https://app.example.com"]
-  #     allow_credentials: true
-  #
-  # A literal "*" is accepted as an explicit, deliberate wildcard, but
-  # combining it with allow_credentials: true is rejected at config load
-  # (Config.Validate) -- the CORS spec forbids that combination and
-  # browsers ignore it, so failing loudly at boot is correct.
-  custom: {}
+  rate_limit:
+    enabled: false
+    # Sustained allowance, in requests per minute, per client IP as
+    # resolved by internal/middleware.RealIP (trusted proxies only).
+    rate: 100
+    # Bucket capacity: the instantaneous allowance a key may spend
+    # before it is throttled down to `rate`.
+    burst: 100
+    # How long an idle bucket is kept before the sweep evicts it.
+    ttl: "10m"
+    # Hard cap on tracked keys. Once full, brand-new keys are rejected
+    # rather than evicting an existing bucket -- evict-oldest would let
+    # a key-flooding attacker reset a throttled client's budget.
+    max_keys: 100000

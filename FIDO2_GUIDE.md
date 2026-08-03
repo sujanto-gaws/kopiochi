@@ -1,38 +1,49 @@
-# FIDO2/WebAuthn Authentication Plugin Guide
+# FIDO2/WebAuthn Authentication — plugin deleted
 
-> ## ⛔ Status: the `fido2-auth` plugin cannot currently be initialised
+> ## ⛔ The `fido2-auth` plugin has been deleted, along with the plugin system.
 >
-> **Read this before following any instruction below.** The plugin is
-> registered in `internal/plugins/register.go`, but it cannot be initialised
-> under *any* configuration, so enabling it in `config/default.yaml` makes the
-> server fail to start:
+> It was removed in Phase 3 (`de7e242`), and its dependencies —
+> `go-webauthn/webauthn`, `go-webauthn/x`, `google/go-tpm`, `fxamacker/cbor` —
+> were dropped from `go.mod` in `52464f6`.
 >
-> `FIDO2Plugin.Initialize` (`internal/plugins/auth/fido2.go:92-100`) requires
-> `cfg["user_store"]` to be a live Go value satisfying the `UserStore`
-> interface. Plugin config reaches `Initialize` as the
-> `map[string]interface{}` that Viper decoded from YAML/env
-> (`config.PluginAuthConfig.Config`), and Viper can only ever produce strings,
-> numbers, booleans, slices and maps — never a Go interface implementation.
-> So the assertion fails every time:
+> **It was never usable.** `FIDO2Plugin.Initialize` required `cfg["user_store"]`
+> to be a live Go value satisfying a `UserStore` interface, but plugin config
+> reached `Initialize` as the `map[string]interface{}` Viper decoded from
+> YAML/env — and Viper only ever produces strings, numbers, booleans, slices
+> and maps, never a Go interface implementation. So every configuration failed:
 >
 > - omit `user_store` → `fido2-auth: user_store is required`
 > - set it in YAML → `fido2-auth: user_store must implement UserStore interface`
 >
-> `plugin.InitializeFromConfig` propagates that error and `cmd/api/main.go`
-> aborts startup with `initialize plugins: auth plugin fido2: ...`.
+> 383 lines that could not run under any configuration. That defect is the
+> clearest single argument for the module system that replaced the plugin
+> framework: a module receives its collaborators as typed struct fields, so
+> the equivalent mistake is a compile error rather than a startup failure
+> nobody hits until they try to enable the feature.
 >
-> Making this work needs a code change — a way to inject Go collaborators into
-> a plugin at composition time, rather than through Viper config. Until that
-> exists, treat this document as a **design reference for the intended
-> feature, not as working setup instructions**. The steps below have not been
-> executed end to end against the current codebase, and the wiring examples in
-> Implementation Steps 4 and 5 referenced APIs (`routes.Setup`,
-> `handlers.Health`) that were deleted in the routing restructure — those two
-> steps carry inline corrections.
->
-> The authentication that the API actually ships with is the `identity`
-> module (`modules/identity`): password login, refresh tokens and TOTP MFA
-> under `/api/v1/auth/...`. See [README.md](README.md).
+> The authentication the API actually ships with is the `identity` module
+> (`modules/identity`): password login, refresh tokens and TOTP MFA under
+> `/api/v1/auth/...`. See [README.md](README.md).
+
+## Status of passkey support
+
+Not implemented. `modules/identity/domain/passkey_credential.go` still defines
+a `PasskeyCredential` entity, but nothing issues, stores or verifies one — no
+repository, no service, no routes.
+
+Reintroducing WebAuthn means writing it as part of `modules/identity` (or as
+its own module), with the WebAuthn client passed in through the module's
+constructor rather than through a config map. The dependencies would need to
+come back into `go.mod`.
+
+The material below is retained **as a design reference for that work**. It
+describes an intended feature, not working setup instructions: no step in it
+has been executed end to end against this codebase, and several reference APIs
+(`routes.Setup`, `handlers.Health`, `internal/plugins/auth/fido2.go`,
+`plugin.InitializeFromConfig`) that no longer exist. Read it for the protocol
+flow and the data model; ignore every wiring instruction.
+
+---
 
 ## 🎯 Overview
 

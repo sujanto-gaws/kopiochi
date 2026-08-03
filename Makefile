@@ -77,7 +77,14 @@ vet: ## Run go vet
 	@echo "Running go vet..."
 	$(GO) vet ./...
 
-check: fmt vet tidy ## Run all code quality checks
+arch: ## Check the dependency rules (docs/architectures/01-modularity/dependency-rules.md)
+	@echo "Checking architecture rules..."
+	@# -count=1 is required: these tests read the whole repo through
+	@# go/packages, but the test cache keys only on the archtest package's
+	@# own files, so a violation introduced elsewhere returns a cached PASS.
+	$(GO) test -count=1 ./tools/archtest/...
+
+check: fmt vet arch tidy ## Run all code quality checks
 
 # JWT signing keys
 keys: ## Generate a fresh RSA keypair into keys/ for JWT signing (refuses to overwrite existing keys)

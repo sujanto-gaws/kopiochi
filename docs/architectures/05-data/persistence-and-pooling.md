@@ -1,10 +1,24 @@
 # Persistence & Connection Pooling
 
-**Status:** Proposed
+**Status:** Partially implemented — Phase 3.8 (`6e0d284`)
 **Date:** 2026-08-02
-**Last verified:** 2026-08-02 — Problems 1–6 are all still live (Phase 3.8 has
-not run). The one item resolved since this was written is the health endpoint;
-see the note at the end.
+**Last verified:** 2026-08-03, after Phase 3.8.
+
+| Problem | Status |
+|---|---|
+| 1. DSN does not escape credentials | ✅ `BuildDSN` uses `net/url` + `net.JoinHostPort`, and sets `application_name`. **The example in Problem 1 was wrong** — see the correction there |
+| 2. `sql.DB` wrapper unconfigured | ✅ all four limits set from config; the `MaxIdleConns: 2` churn is gone |
+| 3. `sql.DB` never closed | ✅ `db.Open` returns a `*db.DB` owning bun, pool and wrapper, with one `Close` that releases them in reverse order, registered on the lifecycle stack |
+| 4. Pool sizing hardcoded | ✅ `conn_max_lifetime`, `conn_max_idle_time`, `health_check_period` and `connect_timeout` are all config now, with the previously hardcoded values as defaults |
+| 5. Startup contexts have no deadline | ✅ `Open` takes a `ctx`; `cmd/api` and all four `migrate` subcommands bound it with `db.startup_timeout` |
+| 6. `OpenDB` uses an unregistered driver | ✅ still relies on the `stdlib` import, but the dependency is now explicit in a comment naming both uses |
+
+**Still outstanding, and never part of 3.8:** the transaction helper
+(`InTx`) and the Postgres error translation layer under "Repository patterns"
+below. Both are Phase 5.8.
+
+New tests: `internal/db/dsn_test.go` covers escaping (six special characters),
+IPv6 bracketing, and the query parameters.
 
 ---
 
@@ -41,10 +55,28 @@ func BuildDSN(host string, port int, user, pass, name, ssl string) string {
 }
 ```
 
-Any password containing `@`, `:`, `/`, `?`, `#`, or `%` produces a malformed or —
-worse — a *misparsed* URL. A password of `p@ss` makes `pgxpool.ParseConfig` read
-the host as `ss`, yielding a confusing connection error that looks like a network
-problem.
+Any password containing `/`, `?`, `#`, or `%` produces a URL that
+`pgxpool.ParseConfig` rejects outright, with an error naming the *host*:
+
+```
+pw="pa/ss"  ->  failed to parse as URL (invalid port ":pa" after host)
+pw="pa?ss"  ->  failed to parse as URL (invalid port ":pa" after host)
+pw="pa#ss"  ->  failed to parse as URL (invalid port ":pa" after host)
+pw="pa%ss"  ->  failed to parse as URL (invalid URL escape "%ss")
+```
+
+Because the error points at the host and port, it reads as a network or
+configuration fault and sends you looking in the wrong place entirely.
+
+> **Correction.** This paragraph previously claimed the character set was
+> `@ : / ? # %`, and that a password of `p@ss` "makes `pgxpool.ParseConfig` read
+> the host as `ss`". Measured against the real implementation, that is wrong on
+> both counts: `p@ss` and `pa:ss` both parse correctly, because pgx splits
+> userinfo on the *last* `@` and a `:` inside userinfo is unambiguous. The four
+> characters listed above are the ones that actually break, and they break by
+> failing to parse rather than by misparsing. The defect is real and the fix is
+> unchanged; only the example was wrong. See `internal/db/dsn_test.go`, which
+> covers all six characters.
 
 This becomes an operational blocker the moment a generated password is used,
 which is precisely what

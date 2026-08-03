@@ -152,23 +152,14 @@ myapi/
 │       ├── infrastructure/
 │       └── transport/
 ├── internal/
-│   ├── domain/           # Domain layer (entities, interfaces)
-│   ├── application/      # Application layer (use cases)
-│   ├── httpx/            # Route tree: /healthz, /readyz, /swagger + /api/v1
+│   ├── httpx/            # Router, server, route tree, CORS, rate limit, headers
+│   ├── lifecycle/        # Teardown stack: one owner per resource, strict LIFO
 │   ├── module/           # module.Module / module.Deps contract
-│   ├── infrastructure/   # Infrastructure layer (HTTP, DB)
-│   │   ├── http/
-│   │   │   ├── handlers/
-│   │   │   └── server/   # NewRouter, NewServer, Run, graceful shutdown
-│   │   └── persistence/
-│   │       └── repository/
-│   ├── extension/        # Extension framework
-│   ├── plugin/           # Plugin contracts, registry, initializer
-│   ├── plugins/          # Built-in plugins (auth/, middleware/) + register.go
 │   ├── config/           # Configuration loader
-│   ├── db/               # Database connection
+│   ├── db/               # DSN, pgx pool, bun
 │   ├── logger/           # Logger setup
-│   ├── middleware/       # HTTP middleware
+│   ├── middleware/       # RealIP (trusted proxies only), request logger
+│   ├── platform/         # Shared value types (secret.String)
 │   ├── testutil/         # Test helpers
 │   └── version/          # Build version string
 ├── scripts/
@@ -252,23 +243,24 @@ The generator will:
 Both methods generate the following files:
 
 ```
-internal/
-├── domain/product/
-│   ├── entity.go          # Domain entity with validation
-│   ├── repository.go      # Repository interface
-│   └── dto.go             # Request/Response DTOs
-├── application/product/
-│   └── service.go         # Business logic layer
-└── infrastructure/
-    ├── persistence/
-    │   ├── repository/
-    │   │   └── product_repository.go  # Repository implementation
-    │   └── models/
-    │       └── product_model.go       # Database model
-    └── http/
-        └── handlers/
-            └── product_handler.go     # HTTP handlers
+modules/product/
+├── module.go                        # product.New(deps, cfg) -> *module.Module
+├── domain/
+│   ├── entity.go                    # Domain entity with validation
+│   ├── repository.go                # Repository interface
+│   └── dto.go                       # Request/Response DTOs
+├── application/
+│   └── service.go                   # Business logic over domain interfaces
+├── infrastructure/persistence/
+│   ├── repository/product_repository.go   # Repository implementation
+│   └── models/product_model.go            # Bun model
+└── transport/
+    └── product_handler.go           # HTTP handlers + Routes(chi.Router)
 ```
+
+> The generator still emits the old `internal/{domain,application,infrastructure}`
+> layout, which is one of several reasons `make generate` is currently broken.
+> Those directories no longer exist — all business code lives under `modules/`.
 
 #### Auto-Wiring (broken)
 
@@ -284,7 +276,7 @@ routes and its own protection through a `Routes(chi.Router)` method, and
 `httpx.Mount` mounts each module's `Routes` under `/api/v1`.
 
 Give your handler a `Routes` method (see
-`internal/infrastructure/http/handlers/user.go` or
+`modules/user/transport/user.go` or
 `modules/identity/transport/auth.go` for working examples):
 
 ```go
@@ -320,21 +312,26 @@ where `newProductModule` returns a `*module.Module{Name: "product", Routes: prod
 `cmd/api/routes_test.go` (`TestRouteTable`) walks the real router and is the
 place to assert your new paths.
 
-### 4. Enable Plugins
+### 4. Configure security middleware
 
 Edit `config/default.yaml`:
 
 ```yaml
-plugins:
-  middleware:
-    - cors
-    - ratelimit
+# Cross-cutting HTTP middleware. Not plugins -- the plugin system was
+# deleted in Phase 3. These are typed config, constructed directly in
+# internal/httpx.NewRouter behind one `if` each. Both default to off.
+security:
+  cors:
+    enabled: false
+    allowed_origins: []        # allowlist-only; empty grants nothing
+    allow_credentials: false
+  rate_limit:
+    enabled: false
+    rate: 100                  # requests/minute per resolved client IP
+    burst: 100
 
-  # No auth plugin is enabled by default. The HS256 jwt-auth plugin was
-  # deleted; the API's authentication comes from the identity module's RS256
-  # token service, configured under the top-level `auth:` block below.
-  auth: {}
-
+# The API's own authentication comes from the identity module (RS256).
+# The HS256 jwt-auth plugin and the unusable fido2-auth plugin are gone.
 auth:
   private_key_path: "keys/private.pem"   # generate with `make keys`
   public_key_path: "keys/public.pem"
@@ -404,29 +401,37 @@ func MyCustomMiddleware(next http.Handler) http.Handler {
 }
 ```
 
-2. Add to the core stack in `internal/infrastructure/http/server/server.go`:
+2. Add it to the core stack in `internal/httpx/router.go`:
 
 ```go
-func NewRouter(cfg config.Server, mw ...func(http.Handler) http.Handler) *chi.Mux {
+func NewRouter(srv config.Server, sec config.Security, mw ...func(http.Handler) http.Handler) (*chi.Mux, func() error, error) {
     r := chi.NewRouter()
 
-    r.Use(middleware.Recoverer)
-    r.Use(middleware.RequestID)
-    r.Use(MyCustomMiddleware)  // Add here
-    // ... httpx.SecurityHeaders, zlog.RealIP, Timeout, ZerologRequestLogger
+    r.Use(chimw.Recoverer)
+    r.Use(chimw.RequestID)
+    r.Use(MyCustomMiddleware)  // add here
+    // ... SecurityHeaders, corenet.RealIP, Timeout, ZerologRequestLogger
+    // ... then CORS and RateLimit, each behind its own config flag
 
-    return r
+    return r, closeAll, nil
 }
 ```
 
+If the middleware should be optional, give it a typed config struct in
+`internal/config` and register it behind an `if`, the way CORS and rate
+limiting are. If it owns a resource -- a goroutine, a ticker, a connection --
+return a `Close` and add it to the router closer list, so the lifecycle stack
+releases it in order.
+
 `NewRouter` also accepts variadic middleware appended after the core stack, so
-a caller can pass one in instead of editing the core stack. (`cmd/api/main.go`
-currently applies the plugin middleware chain with a separate `r.Use(...)`
-after `NewRouter` returns.)
+a caller can pass one in without editing the core stack at all.
 
-### Adding New Plugins
+### Adding new plugins
 
-See [PLUGIN_GUIDE.md](PLUGIN_GUIDE.md) for detailed instructions.
+**There is no plugin system.** It was deleted in Phase 3 -- see
+[PLUGIN_GUIDE.md](PLUGIN_GUIDE.md) for what replaced it. Business
+capabilities are modules under `modules/`; cross-cutting HTTP behaviour goes
+in `internal/httpx` as above.
 
 ### Changing Database
 

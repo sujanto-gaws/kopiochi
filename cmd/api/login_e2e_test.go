@@ -26,7 +26,6 @@ import (
 	"github.com/uptrace/bun/dialect/pgdialect"
 
 	"github.com/sujanto-gaws/kopiochi/internal/httpx"
-	"github.com/sujanto-gaws/kopiochi/internal/infrastructure/http/server"
 	"github.com/sujanto-gaws/kopiochi/internal/testutil"
 	identityapp "github.com/sujanto-gaws/kopiochi/modules/identity/application"
 	domain "github.com/sujanto-gaws/kopiochi/modules/identity/domain"
@@ -100,7 +99,9 @@ func buildE2ERouter(t *testing.T, bunDB *bun.DB) (http.Handler, *token.JWTServic
 	app, err := BuildApp(cfg, bunDB, zerolog.Nop())
 	require.NoError(t, err)
 
-	r := server.NewRouter(cfg.Server)
+	r, closeRouter, err := httpx.NewRouter(cfg.Server, cfg.Security)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = closeRouter() })
 	httpx.Mount(r, app.Modules, httpx.Deps{Pinger: nil})
 
 	// A second JWTService instance, built from the same key paths/issuer, so

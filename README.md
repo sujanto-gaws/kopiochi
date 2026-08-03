@@ -345,13 +345,13 @@ make migrate-status
 
 **📖 See complete guide: [MIGRATIONS.md](MIGRATIONS.md)**
 
-## �📁 Project Structure
+## 📁 Project Structure
 
 ```
 kopiochi/
 ├── cmd/
 │   ├── api/
-│   │   ├── main.go          # Application entry point (cobra `serve`)
+│   │   ├── main.go          # Entry point (cobra `serve`) — linear startup, LIFO teardown
 │   │   └── container.go     # Composition root: BuildApp() assembles all modules
 │   ├── generator/
 │   │   └── main.go          # Code generator for CRUD operations (currently broken)
@@ -360,111 +360,164 @@ kopiochi/
 ├── config/
 │   └── default.yaml         # Default configuration
 ├── migrations/              # Database migrations (Goose)
-│   ├── 00001_create_users.sql
-│   ├── 00002_create_products.sql
-│   ├── 00003_create_auth_users.sql
-│   ├── 00004_create_auth_refresh_tokens.sql
-│   └── 00005_create_auth_mfa_backup_codes.sql
-├── modules/                 # Business modules (module.Module implementations)
-│   └── identity/            # Login, refresh, MFA, access-token middleware
-│       ├── module.go        # identity.New() → *module.Module
-│       ├── domain/
-│       ├── application/
-│       ├── infrastructure/  # hasher, mfa, token, persistence
-│       └── transport/       # HTTP handlers + Routes()
-├── internal/
-│   ├── application/         # Application layer (use cases)
-│   │   └── user/
-│   │       └── service.go
-│   ├── config/              # Configuration loading
-│   ├── db/                  # Database connection setup
-│   ├── domain/              # Domain layer (entities, interfaces)
-│   │   ├── user/
-│   │   │   ├── user.go
-│   │   │   ├── repository.go
-│   │   │   └── service.go
-│   │   └── ofbizuser/
-│   ├── httpx/               # Route tree: /healthz, /readyz, /swagger + /api/v1 mount
-│   │   ├── routes.go        # httpx.Mount(r, modules, deps)
-│   │   └── health.go
+├── modules/                 # Business capabilities. One module = one module.Module
+│   ├── identity/            # Login, refresh, MFA, access-token middleware
+│   │   ├── module.go        # identity.New() → *module.Module
+│   │   ├── domain/          # Entities and repository interfaces. No bun, no chi
+│   │   ├── application/     # Use cases over domain interfaces
+│   │   ├── infrastructure/  # hasher, mfa, token, persistence
+│   │   └── transport/       # HTTP handlers + Routes()
+│   ├── user/                # Profile CRUD; same five-part shape
+│   │   └── module.go        # user.New() — fails closed without auth middleware
+│   └── ofbiz/               # Apache OFBiz UserLogin compatibility layer (no transport)
+├── internal/                # Shared kernel. Must NOT import modules/** (enforced)
+│   ├── config/              # Viper loading, typed config, Validate()
+│   ├── db/                  # DSN, pgx pool, bun, the *sql.DB the migrator uses
+│   ├── httpx/               # Everything HTTP that is not a module
+│   │   ├── router.go        # NewRouter: core middleware + CORS/rate limit if enabled
+│   │   ├── routes.go        # Mount: /healthz, /readyz, /swagger + /api/v1
+│   │   ├── server.go        # Serve(ctx) error — no log.Fatal
+│   │   ├── health.go        # Liveness and readiness (readiness knows about draining)
+│   │   ├── cors.go          # Allowlist-only CORS
+│   │   ├── ratelimit.go     # Token bucket, per resolved client IP
+│   │   └── security_headers.go
+│   ├── lifecycle/           # Stack: one owner per resource, strict LIFO teardown
 │   ├── module/              # module.Module / module.Deps contract
-│   ├── infrastructure/      # Infrastructure layer
-│   │   ├── http/
-│   │   │   ├── handlers/    # Legacy user handler (owns its own Routes())
-│   │   │   └── server/      # NewRouter, NewServer, Run, graceful shutdown
-│   │   └── persistence/
-│   │       └── repository/
-│   ├── extension/           # Extension framework
-│   ├── plugin/              # Plugin contracts, registry, initializer
-│   ├── plugins/             # Built-in plugins (auth, middleware) + register.go
+│   ├── middleware/          # RealIP (trusted proxies only), zerolog request logger
+│   ├── platform/            # Shared value types
+│   │   └── secret/          # secret.String — redacts itself everywhere but Reveal()
 │   ├── logger/              # Logger initialization
-│   ├── middleware/          # HTTP middleware (zerolog request logger)
 │   ├── testutil/            # Test helpers (throwaway Postgres, etc.)
 │   └── version/             # Build version string
+├── tools/                   # Cross-cutting checks. May import every module
+│   ├── archtest/            # Architecture rules as tests (run with -count=1)
+│   └── schemacheck/         # Bun models vs. migrated schema drift
+├── .github/workflows/ci.yml # gofmt, build, vet, test, arch rules, golangci-lint
+├── .golangci.yml            # depguard rules for the dependency boundaries
 ├── .env.example             # Environment variables template
 ├── Dockerfile               # Docker build configuration
 ├── go.mod                   # Go module definition
 └── README.md
 ```
 
-### How routing is wired
+### How startup is wired
 
-`cmd/api/main.go` builds the router with `server.NewRouter`, calls
-`BuildApp` (`cmd/api/container.go`) to assemble the modules, then hands both to
-`httpx.Mount(r, app.Modules, httpx.Deps{Pinger: pool})`. `Mount` registers the
-operational endpoints and mounts every module's `Routes` under `/api/v1`. Each
-module declares its own auth middleware, so a module can never be mounted
-unprotected by accident.
+`cmd/api/serve()` runs seven phases in order, returning an error at any of
+them rather than exiting:
 
-## 🔌 Plugin System
+1. **Config** — `config.Load` validates before anything is allocated.
+2. **Logger.**
+3. **Database** — `db.Open(ctx, cfg.DB)`, bounded by `db.startup_timeout`, so
+   an unreachable database fails boot fast instead of hanging.
+4. **Modules** — `BuildApp` (`cmd/api/container.go`). It refuses to return an
+   application with zero modules.
+5. **Router** — `httpx.NewRouter(cfg.Server, cfg.Security)`.
+6. **Server** — `httpx.NewServer`, then `httpx.Mount(r, app.Modules, deps)`
+   registers the operational endpoints and mounts every module's `Routes`
+   under `/api/v1`. Each module declares its own auth middleware, so one can
+   never be mounted unprotected by accident.
+7. **Serve** until the first SIGINT/SIGTERM.
 
-Kopiochi includes a powerful, config-driven plugin system that allows you to easily extend functionality without code changes.
+Every resource is registered on an `internal/lifecycle.Stack` exactly once, by
+whoever created it, and released in the reverse order at the end — there are
+no `defer x.Close()` calls in `main` for anything on that stack. A second
+signal forces exit rather than leaving `SIGKILL` as the only way to abort a
+stuck drain.
+## 🧩 Modules & cross-cutting middleware
 
-### Available Plugins
+**The plugin system has been removed.** `internal/plugin/`,
+`internal/plugins/` and `internal/extension/` — two competing registration
+frameworks, ~4,000 lines between them — were deleted in Phase 3 of the
+[remediation plan](docs/architectures/07-roadmap/remediation-plan.md). What
+replaced them splits cleanly in two.
 
-| Plugin | Type | Description |
-|--------|------|-------------|
-| `fido2-auth` | Authentication | FIDO2/WebAuthn passkeys — **registered but not usable**, see [FIDO2_GUIDE.md](FIDO2_GUIDE.md) |
-| `ratelimit` | Middleware | Token-bucket rate limiting, keyed on the resolved client IP |
-| `cors` | Middleware | Cross-Origin Resource Sharing — allowlist-only, deny by default |
+### Business capabilities are modules
 
-> Note: the request-authentication used by the API's own routes comes from the
-> `identity` module, not from an auth plugin. The auth plugins above are
-> optional extras.
->
-> The `jwt-auth` plugin that used to be listed here **has been deleted**, along
-> with its `plugins.auth.jwt` config block and the `APP_JWT_SECRET` variable.
-> Tokens are RS256, issued and verified by `modules/identity`, configured under
-> `auth:` in `config/default.yaml`, and signed with the keypair from `make keys`.
+A module is a plain constructor returning a `*module.Module`. No registry, no
+`map[string]interface{}` config, no adapters:
 
-### Configuration
+```go
+// internal/module/module.go
+type Deps struct {
+    DB     bun.IDB
+    Logger zerolog.Logger
+}
 
-Enable and configure plugins in `config/default.yaml`:
+type Module struct {
+    Name       string
+    Routes     func(r chi.Router)  // mounted onto /api/v1
+    Migrations fs.FS               // not wired up yet
+    Close      func() error        // optional
+}
+```
+
+Two modules ship today:
+
+| Module | Routes | Notes |
+|--------|--------|-------|
+| `modules/identity` | `/api/v1/auth/*` | Login, refresh, logout, MFA. Owns RS256 token issuance and the auth middleware protecting its own routes |
+| `modules/user` | `/api/v1/users*` | Profile CRUD. Takes its auth middleware as a dependency rather than importing identity |
+
+`modules/ofbiz` is an Apache OFBiz `UserLogin` compatibility layer with no
+transport and no wiring — it is carried, not served.
+
+**To add a module**, write `New(deps module.Deps, cfg Config) (*module.Module, error)`
+in `modules/<name>/module.go` and build it in `cmd/api/container.go`. Two rules
+are enforced mechanically by `tools/archtest` and `.golangci.yml`, so a
+violation fails the build rather than review:
+
+- A module must not import another module. Declare the interface you need in
+  your own package and satisfy it in the composition root — the way
+  `modules/user` takes a `func(http.Handler) http.Handler` in its `Config`
+  instead of reaching into identity.
+- `internal/**` must not import `modules/**`. Only `cmd/**` and the
+  cross-cutting checks under `tools/` know about every module.
+
+Validate your `Config` and return an error rather than degrading: `user.New`
+refuses to construct without an auth middleware, because a module that mounts
+its routes unprotected looks identical from the outside.
+
+### CORS and rate limiting are not modules
+
+They are cross-cutting HTTP concerns with typed config, constructed directly in
+`internal/httpx.NewRouter` — an `if` each, rather than a registration
+framework. Both are **off by default**:
 
 ```yaml
-plugins:
-  # Middleware plugins (applied in order)
-  middleware:
-    - cors
-    - ratelimit
-  
-  # Authentication plugins. Empty by default: the only registered auth plugin
-  # is fido2-auth, and the API's own authentication is not a plugin at all.
-  auth: {}
-  
-  # Cache plugins. `config/default.yaml` ships a disabled `redis` stanza, but
-  # no cache plugin is registered in internal/plugins/register.go yet — leave
-  # it disabled.
-  cache:
-    redis:
-      enabled: false
-      provider: redis
-  
-  # Custom plugins. Empty means CORS denies every origin and the rate limiter
-  # runs on its defaults — both safe. Add a `cors:` section here to allow
-  # specific frontends; see config/default.yaml for the shape.
-  custom: {}
+security:
+  cors:
+    enabled: false
+    # Allowlist-only. An empty list grants no origin access, and "*" must be
+    # listed explicitly. Combining "*" with allow_credentials is rejected at
+    # config load.
+    allowed_origins: []
+    allow_credentials: false
+    max_age: "5m"
+
+  rate_limit:
+    enabled: false
+    rate: 100          # sustained requests per minute, per resolved client IP
+    burst: 100         # instantaneous allowance
+    ttl: "10m"         # idle bucket eviction
+    max_keys: 100000   # new keys rejected once full; existing ones unaffected
 ```
+
+Because these fields are typed, a YAML type error (`rate: "500"`) now fails
+startup instead of being silently replaced by a default nobody chose — which
+is what the plugin config map used to do.
+
+The environment overrides are `APP_SECURITY_CORS_*` and
+`APP_SECURITY_RATE_LIMIT_*`; `allowed_origins` takes a comma-separated list.
+The `APP_RATELIMIT_*` / `APP_CORS_*` variables older copies of `.env.example`
+advertised mapped to no config key at all and were silently ignored.
+
+Request authentication for the API's own routes comes from the `identity`
+module. Tokens are RS256, configured under `auth:` in `config/default.yaml`
+and signed with the keypair from `make keys`. The `jwt-auth` plugin, its
+`APP_JWT_SECRET` variable, and the `fido2-auth` plugin have all been deleted —
+the FIDO2 one could never run under any configuration, because its
+`UserStore` dependency was expected to arrive through a Viper-sourced
+`map[string]interface{}` that can only ever hold strings, numbers and bools.
 
 Server-level security settings live under `server:`:
 
@@ -474,51 +527,6 @@ server:
   trusted_proxies: []       # CIDRs whose X-Forwarded-For is honoured; empty = trust nothing
   enable_hsts: false        # only turn on where TLS is terminated in front of this process
 ```
-
-Enabling `fido2-auth` here will fail startup — see the compatibility note at the
-top of [FIDO2_GUIDE.md](FIDO2_GUIDE.md).
-
-### Creating Custom Plugins
-
-1. Create your plugin in `internal/plugins/<category>/` (`auth/` or `middleware/`)
-2. Implement the required interface:
-   - **MiddlewarePlugin**: `Name()`, `Initialize()`, `Close()`, `Middleware()`
-   - **AuthPlugin**: All middleware methods + `ExtractUserID()`
-   - **CachePlugin**: `Get()`, `Set()`, `Delete()`
-3. Register it in `internal/plugins/register.go`
-
-Example:
-```go
-// internal/plugins/middleware/myplugin.go
-package middleware
-
-type MyPlugin struct { /* ... */ }
-
-func (p *MyPlugin) Name() string { return "myplugin" }
-func (p *MyPlugin) Initialize(cfg map[string]interface{}) error { /* ... */ }
-func (p *MyPlugin) Close() error { /* ... */ }
-func (p *MyPlugin) Middleware() func(http.Handler) http.Handler {
-    return func(next http.Handler) http.Handler {
-        return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-            // Your middleware logic
-            next.ServeHTTP(w, r)
-        })
-    }
-}
-func (p *MyPlugin) Provider() interface{} { return p }
-```
-
-Then register it:
-```go
-// internal/plugins/register.go
-func RegisterBuiltinPlugins(registry *plugin.Registry) {
-    // ... existing plugins
-    registry.Register("myplugin", func() Plugin {
-        return &middlewarePluginAdapter{middleware.NewMyPlugin()}
-    })
-}
-```
-
 ## 🧪 Testing
 
 ```bash
@@ -528,9 +536,23 @@ go test ./...
 # Run tests with coverage
 go test -cover ./...
 
-# Run specific package tests
-go test ./internal/domain/user/...
+# Run a single module's tests
+go test ./modules/identity/...
+
+# Check the dependency rules (docs/architectures/01-modularity/dependency-rules.md)
+make arch
 ```
+
+Tests that need a database stand up a throwaway Postgres container, or use
+`TEST_DATABASE_URL` if it is set, and skip cleanly when neither is available
+(`internal/testutil.ScratchPostgres`). They never guess at credentials for
+whatever happens to be listening on `localhost:5432`.
+
+> **`make arch` passes `-count=1`, and so must you.** The architecture tests
+> read the whole repository through `go/packages`, but Go's test cache keys
+> only on the `tools/archtest` package's own files — so a violation introduced
+> anywhere else returns a cached `ok` against a tree that now fails. Plain
+> `go test ./tools/archtest/...` will lie to you.
 
 ## 📄 License
 

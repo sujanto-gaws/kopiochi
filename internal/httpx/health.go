@@ -31,8 +31,20 @@ func healthzHandler() http.HandlerFunc {
 // A nil pinger is treated as not-ready rather than ok: readiness with no way
 // to check a dependency isn't readiness, it's a wiring bug, and this endpoint
 // fails closed rather than rubber-stamping it.
-func readyzHandler(pinger Pinger) http.HandlerFunc {
+//
+// draining, when non-nil, reports that shutdown has begun. It is checked
+// before the ping and before anything else: once the server starts draining,
+// the process must stop advertising itself as ready immediately, so the load
+// balancer removes it while in-flight requests finish rather than after. A
+// nil draining func means "nothing to report" and is the right value for
+// tests and for any caller with no server to ask.
+func readyzHandler(pinger Pinger, draining func() bool) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		if draining != nil && draining() {
+			writeHealth(w, http.StatusServiceUnavailable, "draining")
+			return
+		}
+
 		if pinger == nil {
 			writeHealth(w, http.StatusServiceUnavailable, "unavailable")
 			return
