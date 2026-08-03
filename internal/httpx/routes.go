@@ -32,6 +32,12 @@ type Pinger interface {
 // plain []*module.Module it actually needs.
 type Deps struct {
 	Pinger Pinger // used by /readyz; nil is treated as "not ready" (fail closed)
+	// Draining, when set, makes /readyz report not-ready as soon as
+	// shutdown begins — before the drain, not after it — so an orchestrator
+	// stops sending new requests while in-flight ones finish. *Server
+	// supplies this via its Draining method. nil means "no shutdown signal
+	// to report".
+	Draining func() bool
 }
 
 // Mount wires the full route tree onto r: unversioned health/readiness/
@@ -44,7 +50,7 @@ type Deps struct {
 func Mount(r *chi.Mux, modules []*module.Module, deps Deps) {
 	// Operational endpoints: unversioned, unauthenticated.
 	r.Get("/healthz", healthzHandler())
-	r.Get("/readyz", readyzHandler(deps.Pinger))
+	r.Get("/readyz", readyzHandler(deps.Pinger, deps.Draining))
 	r.Get("/health", healthzHandler()) // deprecated alias for /healthz; drop once clients migrate
 
 	// Swagger documentation.
