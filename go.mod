@@ -11,6 +11,7 @@ require (
 	github.com/swaggo/http-swagger/v2 v2.0.2
 	github.com/swaggo/swag v1.8.1
 	golang.org/x/crypto v0.49.0
+	golang.org/x/tools v0.42.0
 )
 
 require (
@@ -39,8 +40,8 @@ require (
 	github.com/vmihailenco/msgpack/v5 v5.4.1 // indirect
 	github.com/vmihailenco/tagparser/v2 v2.0.0 // indirect
 	go.uber.org/multierr v1.11.0 // indirect
+	golang.org/x/mod v0.33.0 // indirect
 	golang.org/x/sync v0.20.0 // indirect
-	golang.org/x/tools v0.42.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
 

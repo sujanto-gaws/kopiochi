@@ -1,4 +1,15 @@
-package db
+// Package schemacheck asserts that every module's Bun models still match the
+// schema the migrations produce.
+//
+// It lives under tools/ rather than in internal/db, where it started, because
+// it must import the persistence models of *every* module at once — and
+// internal/** is the shared kernel, which may not depend on a business module
+// (R3 in docs/architectures/01-modularity/dependency-rules.md). Only cmd/**
+// and the cross-cutting checks under tools/ get to know about every module.
+//
+// depguard caught this the moment the rules were switched on; the test itself
+// is unchanged apart from its package clause.
+package schemacheck
 
 import (
 	"database/sql"

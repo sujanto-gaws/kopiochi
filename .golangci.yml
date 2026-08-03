@@ -1,0 +1,85 @@
+# golangci-lint configuration.
+#
+# The depguard rules below express the dependency rules in
+# docs/architectures/01-modularity/dependency-rules.md that can be stated as
+# "these files may not import these packages".
+#
+# depguard matches on file globs, so it can only police boundaries that are
+# known when this file is written. The generic rules — "module A must not
+# import module B", for any A and B — live in tools/archtest, which walks the
+# real import graph and therefore also covers modules added after this file
+# was last touched. The two are complementary; neither replaces the other.
+
+version: "2"
+
+# Only depguard is on. This is Phase 3.2's scope — the dependency rules —
+# and CI has to be green from the first commit or nobody will trust it.
+#
+# The standard set (errcheck, staticcheck, unused, govet, ineffassign) was
+# run against this tree and reports 35 pre-existing findings: 18 errcheck,
+# 14 staticcheck, 3 unused (all in cmd/generator). None of them are
+# architecture violations, none were introduced by Phase 3, and fixing them
+# is Phase 4.4's job along with -race, govulncheck and the coverage floors.
+# Turning them on here would mean landing a workflow that fails on its first
+# run, which trains everyone to ignore it.
+#
+# `default: standard` is the line to restore in 4.4, once those 35 are dealt
+# with.
+linters:
+  default: none
+  enable:
+    - depguard
+
+  settings:
+    depguard:
+      rules:
+        # R1 — the domain layer is the innermost ring. Standard library and
+        # internal/platform only. A domain that imports the ORM cannot be
+        # tested without standing up a database.
+        domain-purity:
+          files:
+            - "**/modules/*/domain/**"
+          deny:
+            - pkg: github.com/uptrace/bun
+              desc: domain must not depend on the ORM
+            - pkg: github.com/go-chi/chi/v5
+              desc: domain must not depend on the HTTP router
+            - pkg: github.com/spf13/viper
+              desc: domain must not depend on configuration loading
+            - pkg: github.com/rs/zerolog
+              desc: domain must not depend on the logger
+            - pkg: github.com/jackc/pgx/v5
+              desc: domain must not depend on the database driver
+
+        # R1 — application services talk to domain interfaces; the
+        # composition root chooses the implementations.
+        application-purity:
+          files:
+            - "**/modules/*/application/**"
+          deny:
+            - pkg: github.com/uptrace/bun
+              desc: application talks to domain interfaces, not the ORM
+            - pkg: github.com/go-chi/chi/v5
+              desc: application must not depend on the HTTP router
+
+        # R3 — the shared kernel is shared. The moment it knows about one
+        # business module, it stops being shared and the dependency inverts
+        # for the whole tree.
+        platform-independence:
+          files:
+            - "**/internal/**"
+          deny:
+            - pkg: github.com/sujanto-gaws/kopiochi/modules
+              desc: internal/** must not depend on a business module; only cmd/** imports both
+
+  exclusions:
+    generated: lax
+    rules:
+      # Generated swagger output is not ours to lint.
+      - path: ^docs/
+        linters:
+          - depguard
+
+formatters:
+  enable:
+    - gofmt
