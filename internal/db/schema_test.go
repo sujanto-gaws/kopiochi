@@ -11,9 +11,9 @@ import (
 	"github.com/uptrace/bun"
 	"github.com/uptrace/bun/dialect/pgdialect"
 
-	usermodels "github.com/sujanto-gaws/kopiochi/internal/infrastructure/persistence/models"
 	"github.com/sujanto-gaws/kopiochi/internal/testutil"
 	identitymodels "github.com/sujanto-gaws/kopiochi/modules/identity/infrastructure/persistence/models"
+	usermodels "github.com/sujanto-gaws/kopiochi/modules/user/infrastructure/persistence/models"
 )
 
 // TestModelsMatchMigratedSchema is task 1.1(e) from the remediation plan

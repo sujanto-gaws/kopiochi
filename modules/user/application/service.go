@@ -3,7 +3,7 @@ package user
 import (
 	"context"
 
-	"github.com/sujanto-gaws/kopiochi/internal/domain/user"
+	"github.com/sujanto-gaws/kopiochi/modules/user/domain"
 )
 
 // Service implements the user application service

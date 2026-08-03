@@ -13,14 +13,12 @@ import (
 	"github.com/rs/zerolog"
 	"github.com/uptrace/bun"
 
-	appUser "github.com/sujanto-gaws/kopiochi/internal/application/user"
 	"github.com/sujanto-gaws/kopiochi/internal/config"
-	"github.com/sujanto-gaws/kopiochi/internal/infrastructure/http/handlers"
-	"github.com/sujanto-gaws/kopiochi/internal/infrastructure/persistence/repository"
 	"github.com/sujanto-gaws/kopiochi/internal/module"
 	"github.com/sujanto-gaws/kopiochi/modules/identity"
 	"github.com/sujanto-gaws/kopiochi/modules/identity/infrastructure/token"
 	identitytransport "github.com/sujanto-gaws/kopiochi/modules/identity/transport"
+	"github.com/sujanto-gaws/kopiochi/modules/user"
 )
 
 // App is the fully wired application: every business module the composition
@@ -58,7 +56,7 @@ func BuildApp(cfg *config.Config, db bun.IDB, log zerolog.Logger) (*App, error) 
 	}
 	mods = append(mods, identityMod)
 
-	userMod, err := newUserModule(cfg, db)
+	userMod, err := newUserModule(deps, cfg)
 	if err != nil {
 		return nil, fmt.Errorf("build user module: %w", err)
 	}
@@ -77,33 +75,31 @@ func BuildApp(cfg *config.Config, db bun.IDB, log zerolog.Logger) (*App, error) 
 	return &App{Modules: mods}, nil
 }
 
-// newUserModule wraps the legacy user handler (internal/infrastructure/http/
-// handlers) as a module.Module so its routes keep serving under /api/v1
-// alongside modules that implement the module.Module contract natively.
+// newUserModule builds the user module's one cross-module dependency — the
+// authentication middleware that protects its routes — and hands it to
+// user.New.
 //
-// It builds its own token verifier from the same auth config the identity
-// module uses to mint tokens, rather than reaching into identity's internals:
-// module.Module intentionally exposes nothing but Name/Routes/Migrations/
-// Close, so cross-module auth wiring goes through shared config, not a
-// back-channel into another module's private dependency graph. The small
-// cost is that the RSA keys are parsed twice at startup; that trade-off is
-// preferable to coupling two otherwise-independent modules.
-func newUserModule(cfg *config.Config, db bun.IDB) (*module.Module, error) {
+// It derives that middleware from its own token verifier, built from the
+// same auth config the identity module uses to mint tokens, rather than
+// reaching into identity's internals: module.Module intentionally exposes
+// nothing but Name/Routes/Migrations/Close, so cross-module auth wiring goes
+// through shared config and the composition root, not a back-channel into
+// another module's private dependency graph. The small cost is that the RSA
+// keys are parsed twice at startup; that trade-off is preferable to coupling
+// two otherwise-independent modules.
+//
+// Since 3.6b the module itself owns its dependency graph (modules/user/
+// module.go); this function is only the glue that satisfies user.Config.
+func newUserModule(deps module.Deps, cfg *config.Config) (*module.Module, error) {
 	jwtSvc, err := token.NewJWTService(cfg.Auth.PrivateKeyPath, cfg.Auth.PublicKeyPath, cfg.Auth.Issuer, cfg.Auth.ClientID, cfg.Auth.TokenLeeway)
 	if err != nil {
 		return nil, fmt.Errorf("init token verifier: %w", err)
 	}
-	// authMW is derived from the same jwtSvc used above, so it is guaranteed
-	// non-nil here — construction already returned on error otherwise
-	// (fail-closed, never a module serving unprotected routes silently).
+	// authMW is derived from the same jwtSvc built above, so it is
+	// guaranteed non-nil here — construction already returned on error
+	// otherwise. user.Config.Validate rejects a nil middleware regardless,
+	// so the module fails closed rather than serving unprotected routes.
 	authMW := identitytransport.AuthRequired(jwtSvc)
 
-	userRepo := repository.NewUserRepository(db)
-	userSvc := appUser.NewService(userRepo)
-	userHandler := handlers.NewUserHandler(userSvc, authMW)
-
-	return &module.Module{
-		Name:   "user",
-		Routes: userHandler.Routes,
-	}, nil
+	return user.New(deps, user.Config{AuthMiddleware: authMW})
 }

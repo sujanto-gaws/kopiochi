@@ -8,8 +8,8 @@ import (
 
 	"github.com/uptrace/bun"
 
-	"github.com/sujanto-gaws/kopiochi/internal/domain/ofbizuser"
-	"github.com/sujanto-gaws/kopiochi/internal/infrastructure/persistence/ofbiz/models"
+	"github.com/sujanto-gaws/kopiochi/modules/ofbiz/domain"
+	"github.com/sujanto-gaws/kopiochi/modules/ofbiz/infrastructure/persistence/models"
 )
 
 // ofbizUserLoginRepository implements the ofbizuser.Repository interface

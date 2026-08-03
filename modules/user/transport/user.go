@@ -1,4 +1,4 @@
-package handlers
+package transport
 
 import (
 	"context"
@@ -8,7 +8,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/sujanto-gaws/kopiochi/internal/domain/user"
+	"github.com/sujanto-gaws/kopiochi/modules/user/domain"
 )
 
 // UserService is the set of application operations UserHandler depends on.

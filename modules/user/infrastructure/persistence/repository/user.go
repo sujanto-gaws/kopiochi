@@ -7,8 +7,8 @@ import (
 
 	"github.com/uptrace/bun"
 
-	"github.com/sujanto-gaws/kopiochi/internal/domain/user"
-	"github.com/sujanto-gaws/kopiochi/internal/infrastructure/persistence/models"
+	"github.com/sujanto-gaws/kopiochi/modules/user/domain"
+	"github.com/sujanto-gaws/kopiochi/modules/user/infrastructure/persistence/models"
 )
 
 // userRepository implements the user.Repository interface
