@@ -1,5 +1,25 @@
 # DDD CRUD Generator
 
+> ## ⚠️ This generator is broken. Do not use it.
+>
+> It writes to `internal/infrastructure/http/routes/routes.go` and injects
+> wiring into `cmd/api/main.go`. Neither exists any more: routing moved to
+> `internal/httpx` and the composition root is now `BuildApp` in
+> `cmd/api/container.go` (Phase 1.5, Phase 3).
+>
+> A run emits the seven domain files, warns that it could not update routes,
+> and adds an **unused import to `cmd/api/main.go` that breaks
+> `go build ./...`**.
+>
+> The layout it targets is also gone. It generates into
+> `internal/domain/`, `internal/application/` and `internal/infrastructure/`,
+> all three of which were deleted in Phase 3 — business code now lives in
+> `modules/<name>/`.
+>
+> Until it is repaired, add a module by hand: copy the shape of
+> `modules/user/` and build it in `BuildApp`. Everything below describes the
+> pre-Phase-3 layout and is retained only for whoever fixes the generator.
+
 Automatically generates complete CRUD operations for any domain entity following DDD architecture.
 
 ## Usage

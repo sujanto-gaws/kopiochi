@@ -2,35 +2,66 @@
 
 > **🔥 Production-Ready DDD Go API Boilerplate**
 
-A **Domain-Driven Design (DDD)** Go web API boilerplate built with modern, production-ready technologies. Start your next Go project with clean architecture, plugin system, and code generation in seconds.
+A **Domain-Driven Design (DDD)** Go web API boilerplate built with modern,
+production-ready technologies: self-contained business modules, an explicit
+compile-time composition root, and mechanically enforced dependency rules.
 
-**[📚 View Boilerplate Guide](BOILERPLATE.md)** | **[🔌 Plugin Documentation](PLUGIN_GUIDE.md)** | **[📝 Swagger API Documentation](SWAGGER.md)** | **[🗄️ Database Migrations](MIGRATIONS.md)**
+**[📚 Boilerplate Guide](BOILERPLATE.md)** | **[🖧 HTTP Server & Router](SERVER.md)** | **[📝 Swagger](SWAGGER.md)** | **[🗄️ Migrations](MIGRATIONS.md)** | **[🏛️ Architecture](docs/architectures/README.md)**
 
 ## 🏗️ Architecture
 
 This project follows **Domain-Driven Design (DDD)** principles with clear separation of concerns:
 
 ```
-internal/
-├── domain/           # Business entities, rules, and domain interfaces
-├── application/      # Use cases and application services
-└── infrastructure/   # External concerns (HTTP, persistence, etc.)
+cmd/
+├── api/              # composition root (BuildApp) + serve/healthcheck commands
+├── migrate/          # goose runner — never links into the server
+└── generator/        # CRUD scaffolding (currently broken, see below)
 
-modules/             # Self-contained business modules, each with the same
-└── identity/        # domain/application/infrastructure/transport split
+modules/              # self-contained business capabilities
+├── identity/         # login, tokens, MFA, refresh rotation
+│   ├── domain/       # entities + repository interfaces; no bun, no chi
+│   ├── application/  # use cases over those interfaces
+│   ├── infrastructure/  # bun models, repositories, JWT, bcrypt, TOTP
+│   └── transport/    # HTTP handlers + Routes(chi.Router)
+├── user/             # profile CRUD, same four-layer split
+└── ofbiz/            # Apache OFBiz entity compatibility
+
+internal/             # shared kernel — knows nothing about any module
+├── httpx/            # router, server, middleware, problem+json, health
+├── config/           # typed config, loaded and validated once at boot
+├── db/               # pool, DSN, transactions, error translation
+├── lifecycle/        # LIFO teardown stack
+├── audit/            # security event stream
+├── metrics/          # Prometheus collectors
+├── module/           # the Module contract
+└── platform/secret/  # self-redacting secret type
+
+tools/                # build-time checks: archtest, coverage, schemacheck
 ```
 
-### Layer Responsibilities
+`internal/domain/`, `internal/application/` and `internal/infrastructure/` no
+longer exist — every business capability moved into `modules/` in Phase 3, and
+`internal/` is now a flat shared kernel.
 
-| Layer | Purpose |
-|-------|---------|
-| **Domain** | Core business logic, entities, and repository interfaces |
-| **Application** | Use case orchestration and application services |
-| **Infrastructure** | HTTP handlers, database repositories, external integrations |
+### Layer responsibilities, inside a module
 
-Newer features live under `modules/<name>/` as a `module.Module`: they own
-their own routes and route protection, and the composition root
-(`BuildApp` in `cmd/api/container.go`) assembles them.
+| Layer | Purpose | May import |
+|-------|---------|-----------|
+| **domain** | Entities, invariants, repository interfaces | stdlib and `internal/platform` only |
+| **application** | Use cases over domain interfaces | its own domain |
+| **infrastructure** | bun models, repositories, external clients | domain, `internal/**` |
+| **transport** | HTTP handlers and the module's route table | application, domain |
+
+These are not conventions — they are enforced. `depguard` and the tests in
+`tools/archtest` walk the real import graph, so a domain package that imports
+the ORM fails the build rather than a review. Modules may not import each
+other, and `internal/**` may not import `modules/**`; only `cmd/**` sees both.
+See [dependency rules](docs/architectures/01-modularity/dependency-rules.md).
+
+The composition root (`BuildApp` in `cmd/api/container.go`) assembles every
+module. Adding one is a function call there — that is the whole registration
+mechanism.
 
 ## 🚀 Tech Stack
 
@@ -47,7 +78,11 @@ their own routes and route protection, and the composition root
 
 - ✅ **Domain-Driven Design** - Clean architecture with separation of concerns
 - ✅ **Dependency Injection** - Loose coupling between layers
-- ✅ **Plugin System** - Extensible middleware, auth, and cache plugins
+- ✅ **Enforced dependency rules** - depguard plus architecture tests over the real import graph; a layering violation fails the build
+- ✅ **Refresh-token reuse detection** - a replayed token revokes its whole family
+- ✅ **Key rotation** - `kid` headers and a JWKS endpoint, with an overlap window so rotating does not log everyone out
+- ✅ **Audit event stream** - security events on their own stream, never below warn level
+- ✅ **Prometheus metrics** - on a separate admin port, labelled by route pattern
 - ✅ **Swagger/OpenAPI Documentation** - Auto-generated API documentation
 - ✅ **Database Migrations** - Version-controlled schema management with Goose
 - ✅ **PostgreSQL** - Production-ready database with connection pooling
@@ -169,13 +204,17 @@ make generate DOMAIN=Product FIELDS="name:string,description:string,price:float6
 
 ```bash
 make help             # Show all commands
-make run              # Start server
-make build            # Build binary
+make run              # Start the server
+make build            # Build (development: symbols kept)
+make build-release    # Build stripped and trimmed
+make size             # Report the release binary size
 make test             # Run tests
-make test-coverage    # Run tests with coverage
-make lint             # Run linter
+make coverage-check   # Enforce the coverage floors and ratchet
+make arch             # Check the dependency rules
+make lint             # Run golangci-lint
 make fmt              # Format code
-make swagger-docs     # Generate swagger documentation
+make swagger-run      # Generate the spec and run with the UI mounted
+make compose-up       # Postgres + migrations + API
 make migrate-up       # Run database migrations
 make migrate-status   # Check migration status
 make docker-build     # Build Docker image
@@ -185,13 +224,17 @@ See [BOILERPLATE.md](BOILERPLATE.md) for complete workflow documentation.
 
 ### Running with Docker
 
-```bash
-# Build the image
-docker build -t kopiochi .
+See [Running locally](#-running-locally) for the full stack. For the image
+alone:
 
-# Run the container
-docker run -p 8080:8080 --env-file .env kopiochi
+```bash
+make docker-build
+make docker-run     # requires a .env; refuses to run without one
 ```
+
+The image is `distroless/static:nonroot` — no shell, no package manager,
+running as uid 65532 — and `.dockerignore` keeps `keys/`, `*.pem` and `.env`
+out of the build context entirely.
 
 ## 📡 API Endpoints
 
@@ -207,7 +250,7 @@ unversioned. The authoritative list is `TestRouteTable` in
 | `GET` | `/healthz` | Liveness — process is up; touches no dependency |
 | `GET` | `/readyz` | Readiness — pings the database pool; `503` when unreachable |
 | `GET` | `/health` | **Deprecated** alias for `/healthz`; will be removed |
-| `GET` | `/swagger/*` | Swagger UI and `doc.json` |
+| `GET` | `/swagger/*` | Swagger UI — **only in a `-tags swagger` build**; otherwise a problem document explaining the flag |
 
 **Auth (`modules/identity`)**
 
@@ -425,11 +468,12 @@ signal forces exit rather than leaving `SIGKILL` as the only way to abort a
 stuck drain.
 ## 🧩 Modules & cross-cutting middleware
 
-**The plugin system has been removed.** `internal/plugin/`,
-`internal/plugins/` and `internal/extension/` — two competing registration
-frameworks, ~4,000 lines between them — were deleted in Phase 3 of the
-[remediation plan](docs/architectures/07-roadmap/remediation-plan.md). What
-replaced them splits cleanly in two.
+Extensibility splits cleanly in two, with no registry on either side.
+
+> Earlier versions of this project had a plugin system — two competing
+> registration frameworks, ~4,000 lines between them, neither of which anything
+> imported. Both were deleted in Phase 3.6; see the
+> [remediation plan](docs/architectures/07-roadmap/remediation-plan.md).
 
 ### Business capabilities are modules
 
@@ -513,11 +557,9 @@ advertised mapped to no config key at all and were silently ignored.
 
 Request authentication for the API's own routes comes from the `identity`
 module. Tokens are RS256, configured under `auth:` in `config/default.yaml`
-and signed with the keypair from `make keys`. The `jwt-auth` plugin, its
-`APP_JWT_SECRET` variable, and the `fido2-auth` plugin have all been deleted —
-the FIDO2 one could never run under any configuration, because its
-`UserStore` dependency was expected to arrive through a Viper-sourced
-`map[string]interface{}` that can only ever hold strings, numbers and bools.
+and signed with the keypair from `make keys`. HS256 is not supported: the
+signing algorithm is pinned, so a token presented with any other `alg` is
+rejected before the key is even consulted.
 
 Server-level security settings live under `server:`:
 

@@ -68,8 +68,10 @@ goroutine. Push it onto the lifecycle stack; it is safe to call when nothing
 was constructed.
 
 There is no plugin middleware chain. `plugin.NewMiddlewareChainFromRegistry`
-and the registry behind it were deleted in Phase 3; CORS and rate limiting are
-constructed directly from typed config. See [PLUGIN_GUIDE.md](PLUGIN_GUIDE.md).
+and the registry behind it were deleted in Phase 3.6; CORS, rate limiting and
+metrics are constructed directly from typed config and registered behind an
+`if` each. Roughly 1,100 lines of registration machinery became three
+conditionals.
 
 ---
 
