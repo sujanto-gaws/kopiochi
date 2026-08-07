@@ -1,7 +1,7 @@
-// Package auth defines the authentication identity (table: auth_users, PK: uuid).
+// Package domain defines the authentication identity (table: auth_users, PK: uuid).
 // This is the primary login entity — it owns password hashes, MFA state, lockout, roles, and permissions.
 // It is distinct from the profile user in domain/user (table: users, PK: int64).
-package auth
+package domain
 
 import (
 	"time"

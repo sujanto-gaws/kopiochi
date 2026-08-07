@@ -7,7 +7,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/sujanto-gaws/kopiochi/internal/testsupport"
-	"github.com/sujanto-gaws/kopiochi/modules/user/domain"
+	domain "github.com/sujanto-gaws/kopiochi/modules/user/domain"
 )
 
 // Integration tests against a real Postgres. Not sqlmock: the SQL here is
@@ -20,7 +20,7 @@ import (
 // disposable docker container, then skip.
 
 // newRepo returns a repository over a migrated, empty database.
-func newRepo(t *testing.T) user.Repository {
+func newRepo(t *testing.T) domain.Repository {
 	t.Helper()
 
 	db := testsupport.MigratedDB(t)
@@ -32,7 +32,7 @@ func TestUserRepository_CreateThenGetByID(t *testing.T) {
 	repo := newRepo(t)
 	ctx := context.Background()
 
-	u := &user.User{Name: "Alice", Email: "alice@example.com"}
+	u := &domain.User{Name: "Alice", Email: "alice@example.com"}
 	require.NoError(t, repo.Create(ctx, u))
 
 	// Create must write the generated id back onto the entity, or the caller
@@ -64,7 +64,7 @@ func TestUserRepository_GetByEmail(t *testing.T) {
 	repo := newRepo(t)
 	ctx := context.Background()
 
-	u := &user.User{Name: "Alice", Email: "alice@example.com"}
+	u := &domain.User{Name: "Alice", Email: "alice@example.com"}
 	require.NoError(t, repo.Create(ctx, u))
 
 	got, err := repo.GetByEmail(ctx, "alice@example.com")
@@ -81,31 +81,44 @@ func TestUserRepository_GetByEmailMissingReturnsNilNil(t *testing.T) {
 	require.Nil(t, got)
 }
 
-// TestUserRepository_GetByEmailIsCaseSensitive records observed behaviour
-// rather than asserting a wish.
-//
-// The column is plain text and the query is `email = ?`, so lookup is
-// case-sensitive: Alice@Example.com will not find alice@example.com, and
-// nothing stops both existing as separate rows. If case-insensitive identity
-// is wanted, it needs a citext column or a functional index — a change to the
-// schema, not to this test. Writing this down is the point; discovering it
-// from a duplicate-account support ticket is the alternative.
-func TestUserRepository_GetByEmailIsCaseSensitive(t *testing.T) {
+// TestUserRepository_GetByEmailIsCaseInsensitive replaces an earlier test that
+// recorded the opposite. Lookup used to be `email = ?` over a plain text
+// column, so Alice@Example.com did not find alice@example.com and nothing
+// stopped both existing as separate rows. Migration 00007 added the functional
+// index that behaviour was waiting on, and the query now matches lower(email).
+func TestUserRepository_GetByEmailIsCaseInsensitive(t *testing.T) {
 	repo := newRepo(t)
 	ctx := context.Background()
 
-	require.NoError(t, repo.Create(ctx, &user.User{Name: "Alice", Email: "alice@example.com"}))
+	require.NoError(t, repo.Create(ctx, &domain.User{Name: "Alice", Email: "alice@example.com"}))
 
-	got, err := repo.GetByEmail(ctx, "ALICE@EXAMPLE.COM")
-	require.NoError(t, err)
-	require.Nil(t, got, "lookup is case-sensitive; see the comment on this test")
+	for _, email := range []string{"alice@example.com", "ALICE@EXAMPLE.COM", "Alice@Example.com"} {
+		got, err := repo.GetByEmail(ctx, email)
+		require.NoError(t, err)
+		require.NotNil(t, got, "GetByEmail(%q) did not find the account", email)
+		require.Equal(t, "alice@example.com", got.Email, "the stored email was rewritten")
+	}
+}
+
+// TestUserRepository_RejectsCaseVariantDuplicateEmail: GetByEmail is only
+// single-valued if the write path refuses the second row. The service's
+// "already registered?" check calls GetByEmail, so without this constraint two
+// accounts differing only by case could still race past it.
+func TestUserRepository_RejectsCaseVariantDuplicateEmail(t *testing.T) {
+	repo := newRepo(t)
+	ctx := context.Background()
+
+	require.NoError(t, repo.Create(ctx, &domain.User{Name: "Alice", Email: "alice@example.com"}))
+
+	err := repo.Create(ctx, &domain.User{Name: "Impostor", Email: "ALICE@example.com"})
+	require.Error(t, err, "a second account was created for ALICE@example.com")
 }
 
 func TestUserRepository_Update(t *testing.T) {
 	repo := newRepo(t)
 	ctx := context.Background()
 
-	u := &user.User{Name: "Alice", Email: "alice@example.com"}
+	u := &domain.User{Name: "Alice", Email: "alice@example.com"}
 	require.NoError(t, repo.Create(ctx, u))
 
 	u.Name = "Alice Smith"
@@ -121,7 +134,7 @@ func TestUserRepository_Delete(t *testing.T) {
 	repo := newRepo(t)
 	ctx := context.Background()
 
-	u := &user.User{Name: "Alice", Email: "alice@example.com"}
+	u := &domain.User{Name: "Alice", Email: "alice@example.com"}
 	require.NoError(t, repo.Create(ctx, u))
 
 	require.NoError(t, repo.Delete(ctx, u.ID))
@@ -147,9 +160,9 @@ func TestUserRepository_DuplicateEmailIsRejected(t *testing.T) {
 	repo := newRepo(t)
 	ctx := context.Background()
 
-	require.NoError(t, repo.Create(ctx, &user.User{Name: "Alice", Email: "dup@example.com"}))
+	require.NoError(t, repo.Create(ctx, &domain.User{Name: "Alice", Email: "dup@example.com"}))
 
-	err := repo.Create(ctx, &user.User{Name: "Someone Else", Email: "dup@example.com"})
+	err := repo.Create(ctx, &domain.User{Name: "Someone Else", Email: "dup@example.com"})
 	require.Error(t, err, "two users share an email address; the users.email column has no unique constraint")
 }
 
@@ -161,7 +174,7 @@ func TestUserRepository_TruncateAllLeavesAnEmptyTable(t *testing.T) {
 	repo := NewUserRepository(db)
 	ctx := context.Background()
 
-	u := &user.User{Name: "Alice", Email: "alice@example.com"}
+	u := &domain.User{Name: "Alice", Email: "alice@example.com"}
 	require.NoError(t, repo.Create(ctx, u))
 
 	testsupport.TruncateAll(t, db)

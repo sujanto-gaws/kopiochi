@@ -71,6 +71,83 @@ func TestUserRepo_SaveThenFind(t *testing.T) {
 	require.Equal(t, u.ID, byEmail.ID)
 }
 
+// TestUserRepo_FindIsCaseInsensitive: the identifier someone types at the
+// login form is not required to match the capitalisation they registered with.
+// Before migration 00007 both lookups used a plain "=", so "Alice" failed to
+// find the account "alice" owns and the correct password was rejected.
+func TestUserRepo_FindIsCaseInsensitive(t *testing.T) {
+	db := newDB(t)
+	repo := NewUserRepo(db)
+	ctx := context.Background()
+
+	u := seedUser(t, db, "alice") // email: alice@example.com
+
+	for _, username := range []string{"alice", "Alice", "ALICE", "aLiCe"} {
+		got, err := repo.FindByUsername(ctx, username)
+		require.NoError(t, err, "FindByUsername(%q) did not find the account", username)
+		require.Equal(t, u.ID, got.ID)
+	}
+
+	for _, email := range []string{"alice@example.com", "Alice@Example.com", "ALICE@EXAMPLE.COM"} {
+		got, err := repo.FindByEmail(ctx, email)
+		require.NoError(t, err, "FindByEmail(%q) did not find the account", email)
+		require.Equal(t, u.ID, got.ID)
+	}
+}
+
+// TestUserRepo_PreservesStoredCasing: matching case-insensitively must not
+// mean storing case-insensitively. What the user typed is what comes back —
+// the normalisation lives in the index and the predicate, not in the data.
+func TestUserRepo_PreservesStoredCasing(t *testing.T) {
+	db := newDB(t)
+	repo := NewUserRepo(db)
+	ctx := context.Background()
+
+	u := &domain.User{
+		ID:          uuid.New(),
+		Username:    "McDonald",
+		Email:       "McDonald@Example.com",
+		Roles:       []string{"user"},
+		Permissions: []string{},
+	}
+	require.NoError(t, repo.Save(ctx, u))
+
+	got, err := repo.FindByUsername(ctx, "mcdonald")
+	require.NoError(t, err)
+	require.Equal(t, "McDonald", got.Username, "the stored username was lowercased")
+	require.Equal(t, "McDonald@Example.com", got.Email, "the stored email was lowercased")
+}
+
+// TestUserRepo_RejectsCaseVariantDuplicates is the other half of the same
+// rule. A lookup that ignores case is only single-valued if the write path
+// refuses to create the second row — otherwise FindByUsername picks an
+// arbitrary one of two accounts, which decides whose password is checked.
+func TestUserRepo_RejectsCaseVariantDuplicates(t *testing.T) {
+	db := newDB(t)
+	repo := NewUserRepo(db)
+	ctx := context.Background()
+
+	seedUser(t, db, "alice")
+
+	err := repo.Save(ctx, &domain.User{
+		ID:          uuid.New(),
+		Username:    "ALICE",
+		Email:       "someone-else@example.com",
+		Roles:       []string{"user"},
+		Permissions: []string{},
+	})
+	require.Error(t, err, "a second account was created for username ALICE")
+
+	err = repo.Save(ctx, &domain.User{
+		ID:          uuid.New(),
+		Username:    "somebody-else",
+		Email:       "ALICE@EXAMPLE.COM",
+		Roles:       []string{"user"},
+		Permissions: []string{},
+	})
+	require.Error(t, err, "a second account was created for email ALICE@EXAMPLE.COM")
+}
+
 // TestUserRepo_FindMissingIsAnError: unlike the user module's repository,
 // these return an error for a missing row, and Login relies on that to map to
 // ErrInvalidCredentials. The two modules differ here; both are recorded so

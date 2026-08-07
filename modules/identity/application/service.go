@@ -1,4 +1,4 @@
-package auth
+package application
 
 import (
 	domain "github.com/sujanto-gaws/kopiochi/modules/identity/domain"

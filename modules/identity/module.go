@@ -12,7 +12,7 @@ import (
 
 	"github.com/sujanto-gaws/kopiochi/internal/audit"
 	"github.com/sujanto-gaws/kopiochi/internal/module"
-	application "github.com/sujanto-gaws/kopiochi/modules/identity/application"
+	"github.com/sujanto-gaws/kopiochi/modules/identity/application"
 	"github.com/sujanto-gaws/kopiochi/modules/identity/infrastructure/auditlog"
 	"github.com/sujanto-gaws/kopiochi/modules/identity/infrastructure/hasher"
 	"github.com/sujanto-gaws/kopiochi/modules/identity/infrastructure/mfa"
