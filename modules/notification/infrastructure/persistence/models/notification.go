@@ -30,7 +30,7 @@ type NotificationRow struct {
 
 	// Payload is template data only, never rendered content. jsonb, so the
 	// column can be queried without a round trip through the application.
-	Payload map[string]any `bun:"payload,notnull,type:jsonb"`
+	Payload map[string]any `bun:"payload,notnull,type:jsonb,nullzero"`
 
 	// Status is constrained by notifications_status_chk to
 	// pending|sending|sent|failed|dead; the domain owns the transitions.
