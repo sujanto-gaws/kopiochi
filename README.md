@@ -569,6 +569,64 @@ server:
   trusted_proxies: []       # CIDRs whose X-Forwarded-For is honoured; empty = trust nothing
   enable_hsts: false        # only turn on where TLS is terminated in front of this process
 ```
+## Agents Workspace Setup
+
+```
+.claude/
+├── settings.json            # spawn depth, concurrency, deny rules (project scope)
+└── agents/
+    ├── team-lead.md         # orchestrator — run as MAIN session: claude --agent team-lead
+    ├── domain-engineer.md   # domain/ + application/ layers        (Agent: research-only spawning)
+    ├── persistence-engineer.md  # migrations, bun, repositories    (Agent: research-only spawning)
+    ├── transport-engineer.md    # HTTP, middleware, routes         (Agent: research-only spawning)
+    ├── platform-engineer.md     # config, dispatcher, cmd/api      (Agent: research-only spawning)
+    ├── test-guardian.md         # goldens, fakes, conformance      (Agent: research-only spawning)
+    ├── docs-scribe.md           # documentation                    (no Agent — cannot spawn)
+    └── arch-reviewer.md         # read-only PR gate                (no Agent — cannot spawn)
+docs/
+└── plans/
+    ├── agent-implementation-plan.md    # 19 tasks, guardrails §0, dependency graph
+    ├── authn-spi-impact-analysis.md    # before/after per package, 401 resolution
+    ├── notification-module-blueprint.md # module concept + blueprint
+    └── task-status.md                  # team-lead's board (its only writable file)
+```
+
+### Setup
+
+1. Copy `.claude/` and `docs/plans/` into the repo root. If you already have
+   files in `.claude/agents/` or a `.claude/settings.json`, MERGE by hand —
+   in particular, merge the `env` and `permissions.deny` keys rather than
+   replacing your settings file.
+2. `claude --version` — nesting defaults require v2.1.219+; the settings pin
+   `CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH=2` so behavior is explicit on any
+   recent version.
+3. Commit everything: agents and plans are project-scoped and meant for
+   version control.
+4. Start the effort from the repo root:
+
+   ```
+   claude --agent team-lead
+   ```
+
+   First dispatch is A1 (probe). The lead maintains docs/plans/task-status.md;
+   read that file, not the transcript, to see where things stand.
+
+### Settings notes
+
+- `CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH=2`: workers may spawn read-only
+  research children; children cannot spawn further.
+- `CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS=8`: enough for the plan's permitted
+  parallelism (D1 + D2 alongside Phase B, plus research children) without
+  letting a runaway loop fan out to the default 20.
+- `permissions.deny`:
+  - `Bash(make generate:*)` — the generator is broken (plan guardrail 2);
+    denied mechanically, not just by instruction.
+  - `Read(./keys/**)`, `Read(./.env)`, `Read(./.env.*)` — no agent has any
+    reason to read signing keys or env secrets.
+- Nothing here sets `"agent"` as a session default on purpose: normal coding
+  sessions in the repo stay plain Claude Code; the team-lead session is
+  started explicitly when you are running the plan.
+
 ## 🐳 Running locally
 
 ```bash
