@@ -30,7 +30,7 @@
 bin/
 coverage.*
 coverage.html
-coverage/
+/coverage/
 htmlcov/
 keys/
 vendor/
