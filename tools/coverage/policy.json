@@ -1,0 +1,70 @@
+{
+  "floors": [
+    {
+      "pattern": "modules/*/domain",
+      "min": 90,
+      "why": "Pure business rules with no dependencies. Anything untested here is an invariant nobody checks."
+    },
+    {
+      "pattern": "modules/*/application",
+      "min": 80,
+      "why": "Use cases over domain interfaces. The uncovered branches are the error paths, which is where auth bypasses live."
+    },
+    {
+      "pattern": "internal/config",
+      "min": 85,
+      "why": "Validate is the only thing standing between a bad values file and a running process."
+    },
+    {
+      "pattern": "internal/authn",
+      "min": 90,
+      "why": "The authentication contract itself. Every rejection path here is a 401 that some client depends on being uniform, and an uncovered branch is an auth decision nobody tested."
+    },
+    {
+      "pattern": "internal/httpx",
+      "min": 85,
+      "why": "Every request passes through here. CORS, rate limiting, recovery and the security headers are all one uncovered branch away from being absent."
+    },
+    {
+      "pattern": "internal/middleware",
+      "min": 85,
+      "why": "Client-IP resolution decides what the rate limiter and the audit log see."
+    },
+    {
+      "pattern": "modules/*/infrastructure/...",
+      "min": 60,
+      "why": "Covered by integration tests, which need a database. This floor is only meaningful where one is reachable — see the note in the CI workflow."
+    }
+  ],
+  "exempt": [
+    "cmd/...",
+    "tools/...",
+    "docs",
+    "internal/testsupport",
+    "internal/version"
+  ],
+  "requires_database": [
+    "modules/*/infrastructure/persistence/repository",
+    "tools/schemacheck"
+  ],
+  "baseline": {
+    "internal/audit": 100,
+    "internal/authn": 100,
+    "internal/config": 86,
+    "internal/db": 31.9,
+    "internal/httpx": 93.9,
+    "internal/lifecycle": 100,
+    "internal/metrics": 94.3,
+    "internal/middleware": 86.7,
+    "internal/platform/secret": 50,
+    "modules/identity/application": 88.9,
+    "modules/identity/domain": 100,
+    "modules/identity/infrastructure/hasher": 100,
+    "modules/identity/infrastructure/mfa": 83.3,
+    "modules/identity/infrastructure/token": 87,
+    "modules/identity/transport": 15.8,
+    "modules/user": 100,
+    "modules/user/application": 84.6,
+    "modules/user/domain": 100
+  }
+}
