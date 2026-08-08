@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -15,6 +16,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
+	"github.com/sujanto-gaws/kopiochi/internal/httpx"
 	"github.com/sujanto-gaws/kopiochi/internal/testsupport"
 	app "github.com/sujanto-gaws/kopiochi/modules/identity/application"
 	"github.com/sujanto-gaws/kopiochi/modules/identity/infrastructure/token"
@@ -83,14 +85,56 @@ func TestCurrent401Shapes(t *testing.T) {
 	svc := &recordingAuthService{}
 	router := protectedRouter(t, kp, svc)
 
-	cases := []struct {
-		// name doubles as the golden file's suffix: 401_<name>.json.
-		name string
-		// authorization is the Authorization header value. The empty string
-		// means the header is not set at all, which is not the same request as
-		// one carrying an empty header.
-		authorization func(t *testing.T) string
-	}{
+	for _, tc := range rejectionCases(kp, subject) {
+		t.Run(tc.name, func(t *testing.T) {
+			svc.reset()
+
+			req := testsupport.JSONRequest(t, protectedMethod, protectedPath, nil)
+			if h := tc.authorization(t); h != "" {
+				req.Header.Set("Authorization", h)
+			}
+			rec := testsupport.Do(t, router, req)
+
+			got := unauthorizedGolden{
+				Status:          rec.Code,
+				ContentType:     rec.Header().Get("Content-Type"),
+				WWWAuthenticate: rec.Header().Get("WWW-Authenticate"),
+				Body:            rec.Body.String(),
+			}
+			compareGolden(t, filepath.Join(goldenDir, "401_"+tc.name+".json"), got)
+
+			// Not part of the recorded shape, but the one thing worth
+			// asserting here: no rejection path may reach the handler. If it
+			// does, the golden above is recording an application response
+			// rather than an authentication failure, and the capture is
+			// measuring the wrong thing.
+			if svc.calls > 0 {
+				t.Errorf("the %s request reached AuthHandler.Logout (%d service call(s)); "+
+					"it was not rejected by AuthRequired and this golden does not record a rejection",
+					tc.name, svc.calls)
+			}
+		})
+	}
+}
+
+// rejectionCase is one way a caller can fail authentication.
+type rejectionCase struct {
+	// name doubles as the golden file's suffix: 401_<name>.json.
+	name string
+	// authorization is the Authorization header value. The empty string
+	// means the header is not set at all, which is not the same request as
+	// one carrying an empty header.
+	authorization func(t *testing.T) string
+}
+
+// rejectionCases is the shared table. It is a function rather than two literals
+// so that TestCurrent401Shapes (which records) and TestCanonical401Contract
+// (which asserts) can never drift apart: a sixth rejection path added here is
+// immediately both recorded and checked.
+//
+// The slice is ordered, not a map, so a failure names the same file every run.
+func rejectionCases(kp testsupport.Keypair, subject string) []rejectionCase {
+	return []rejectionCase{
 		{
 			name:          "missing_header",
 			authorization: func(*testing.T) string { return "" },
@@ -126,8 +170,48 @@ func TestCurrent401Shapes(t *testing.T) {
 			},
 		},
 	}
+}
 
-	for _, tc := range cases {
+// TestCanonical401Contract asserts the canonical 401 by value.
+//
+// The goldens prove the five cases agree with each other. Agreement alone is
+// weak evidence: it would still hold if all five regressed together, and it
+// says nothing about *which* shape they agreed on. This test names the exact
+// bytes the contract requires — the media type, the challenge, and every RFC
+// 9457 member — so that a regression has to be a deliberate edit here rather
+// than a silently re-recorded golden.
+//
+// It is the specification the file above is deliberately not.
+func TestCanonical401Contract(t *testing.T) {
+	kp := testsupport.NewKeypair(t)
+	subject := uuid.New().String()
+
+	svc := &recordingAuthService{}
+	router := protectedRouter(t, kp, svc)
+
+	// Spelled as literals rather than as internal/httpx's constants on
+	// purpose: asserting a value against the constant that produced it proves
+	// only that the constant equals itself. These are the bytes a client sees,
+	// and changing either side alone must fail.
+	const (
+		wantContentType = "application/problem+json"
+		wantChallenge   = `Bearer realm="api"`
+		wantType        = "about:blank"
+		wantTitle       = "Unauthorized"
+		wantDetail      = "authentication required"
+	)
+
+	// reasonVocabulary is the wording the pre-A4 bodies leaked, plus the terms
+	// the verifier distinguishes internally. None may appear in a response
+	// body: which of them applies is exactly the oracle the canonical detail
+	// exists to deny an attacker.
+	reasonVocabulary := []string{
+		"missing", "invalid", "malformed", "expired",
+		"signature", "algorithm", "alg", "class", "token",
+	}
+
+	var bodies []string
+	for _, tc := range rejectionCases(kp, subject) {
 		t.Run(tc.name, func(t *testing.T) {
 			svc.reset()
 
@@ -137,25 +221,44 @@ func TestCurrent401Shapes(t *testing.T) {
 			}
 			rec := testsupport.Do(t, router, req)
 
-			got := unauthorizedGolden{
-				Status:          rec.Code,
-				ContentType:     rec.Header().Get("Content-Type"),
-				WWWAuthenticate: rec.Header().Get("WWW-Authenticate"),
-				Body:            rec.Body.String(),
-			}
-			compareGolden(t, filepath.Join(goldenDir, "401_"+tc.name+".json"), got)
+			require.Equal(t, http.StatusUnauthorized, rec.Code)
+			require.Equal(t, wantContentType, rec.Header().Get("Content-Type"))
+			require.Equal(t, wantChallenge, rec.Header().Get("WWW-Authenticate"),
+				"RFC 9110 requires a 401 to carry a challenge")
+			// Not captured by the golden struct, so asserted here rather than
+			// left to a claim in a review: WriteProblem sets it, and a
+			// problem+json body served without it is sniffable.
+			require.Equal(t, "nosniff", rec.Header().Get("X-Content-Type-Options"))
 
-			// Not part of the recorded shape, but the one thing worth
-			// asserting here: no rejection path may reach the handler. If it
-			// does, the golden above is recording an application response
-			// rather than an authentication failure, and the capture is
-			// measuring the wrong thing.
-			if svc.calls > 0 {
-				t.Errorf("the %s request reached AuthHandler.Logout (%d service call(s)); "+
-					"it was not rejected by AuthRequired and this golden does not record a rejection",
-					tc.name, svc.calls)
+			var got httpx.Problem
+			require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &got))
+			require.Equal(t, wantType, got.Type)
+			require.Equal(t, wantTitle, got.Title)
+			require.Equal(t, http.StatusUnauthorized, got.Status)
+			require.Equal(t, wantDetail, got.Detail)
+			require.Equal(t, protectedPath, got.Instance)
+			// This rig mounts no chi RequestID middleware, so the extension
+			// member is omitted. Asserting it is empty pins that the goldens
+			// are stable rather than carrying a value that changes per run.
+			require.Empty(t, got.RequestID)
+
+			lower := strings.ToLower(rec.Body.String())
+			for _, word := range reasonVocabulary {
+				require.NotContains(t, lower, word,
+					"the %s response body names why the credential failed", tc.name)
 			}
+
+			bodies = append(bodies, rec.Body.String())
 		})
+	}
+
+	// Mutual equality, asserted last and worth little on its own — the value
+	// assertions above are what give it meaning. Together they say: every
+	// rejection emits this one shape, and this one shape is the right one.
+	require.Len(t, bodies, 5, "every case must have produced a body")
+	for i, body := range bodies {
+		require.Equal(t, bodies[0], body,
+			"rejection bodies differ; case %d leaks which check failed", i)
 	}
 }
 

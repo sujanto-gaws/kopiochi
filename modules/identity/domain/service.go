@@ -5,13 +5,6 @@ import (
 	"time"
 )
 
-// claimsContextKey is an unexported type for context keys in this package.
-// Using an unexported type prevents collisions with keys from other packages.
-type claimsContextKey struct{ name string }
-
-// ClaimsKey is the context key under which JWT Claims are stored by AuthRequired middleware.
-var ClaimsKey = &claimsContextKey{"claims"}
-
 // Class identifies what a token is for. It is carried on every token as the
 // "cls" claim and MUST be checked by every caller of Validate — that is what
 // makes it structurally impossible for one token kind to be accepted where

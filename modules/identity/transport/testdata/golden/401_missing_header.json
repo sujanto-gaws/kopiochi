@@ -1,6 +1,6 @@
 {
   "status": 401,
-  "content_type": "text/plain; charset=utf-8",
-  "www_authenticate": "",
-  "body": "{\"error\":\"missing token\"}\n"
+  "content_type": "application/problem+json",
+  "www_authenticate": "Bearer realm=\"api\"",
+  "body": "{\"type\":\"about:blank\",\"title\":\"Unauthorized\",\"status\":401,\"detail\":\"authentication required\",\"instance\":\"/api/v1/auth/logout\"}\n"
 }

@@ -64,6 +64,38 @@ linters:
             - pkg: github.com/go-chi/chi/v5
               desc: application must not depend on the HTTP router
 
+        # R1 — the transport layer speaks HTTP, so it may reach into the
+        # shared kernel for the two packages that define HTTP contracts:
+        # internal/authn (who the caller is) and internal/httpx (how an error
+        # is written). Nothing else from internal/** — not the ORM wrapper,
+        # not config, not the logger. A transport package that can reach
+        # internal/db can query the database from a handler, which is the
+        # layering this ring exists to prevent.
+        #
+        # list-mode: lax is what makes "deny the tree, allow two leaves"
+        # expressible. In lax mode an import is allowed unless denied, and a
+        # deny is overridden by a *longer* matching allow prefix — so
+        # internal/authn (longer) beats internal (shorter), while internal/db
+        # matches only the deny. Under the default "original" mode a non-empty
+        # allow list would forbid every import not on it, including chi and the
+        # module's own application layer.
+        #
+        # Test files are out of scope on purpose. The rule polices the shipped
+        # artifact; test binaries legitimately use internal/testsupport for
+        # keypairs, token minting and (from task B1) the fake authn.Middleware
+        # that replaces minting a real JWT in every handler test.
+        transport-kernel-access:
+          list-mode: lax
+          files:
+            - "**/modules/*/transport/**"
+            - "!**/*_test.go"
+          allow:
+            - github.com/sujanto-gaws/kopiochi/internal/authn
+            - github.com/sujanto-gaws/kopiochi/internal/httpx
+          deny:
+            - pkg: github.com/sujanto-gaws/kopiochi/internal
+              desc: transport may use only internal/authn and internal/httpx from the shared kernel
+
         # R3 — the shared kernel is shared. The moment it knows about one
         # business module, it stops being shared and the dependency inverts
         # for the whole tree.

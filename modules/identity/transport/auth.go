@@ -13,8 +13,8 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/sujanto-gaws/kopiochi/internal/authn"
 	app "github.com/sujanto-gaws/kopiochi/modules/identity/application"
-	domain "github.com/sujanto-gaws/kopiochi/modules/identity/domain"
 )
 
 // AuthService is the set of application operations AuthHandler depends on.
@@ -102,16 +102,18 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 // @Produce json
 // @Security BearerAuth
 // @Success 204 "Logged out successfully"
-// @Failure 401 {object} transport.ProblemDetails "unauthorized"
+// @Failure 401 {object} internal_httpx.Problem "unauthorized"
 // @Failure 500 {object} transport.ProblemDetails "internal_error"
 // @Router /auth/logout [post]
 func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
-	claims, ok := r.Context().Value(domain.ClaimsKey).(*domain.Claims)
-	if !ok || claims.Subject == "" {
-		writeProblemDetails(w, "unauthorized", "Unauthorized", http.StatusUnauthorized, "")
-		return
-	}
-	if err := h.svc.Logout(r.Context(), claims.Subject); err != nil {
+	// MustFromContext, not FromContext: Routes mounts this handler only inside
+	// the group guarded by h.authMW, so an absent Principal is a wiring
+	// mistake rather than a runtime condition. The panic is caught by the
+	// global Recovery middleware and surfaces as a correlatable 500 -- which
+	// is what a mis-wired route deserves, and strictly better than treating ""
+	// as an account id and revoking nobody's tokens.
+	subject := authn.MustFromContext(r.Context()).Subject
+	if err := h.svc.Logout(r.Context(), subject); err != nil {
 		writeProblemDetails(w, "internal_error", "Logout failed", http.StatusInternalServerError, "")
 		return
 	}
@@ -127,16 +129,13 @@ func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
 // @Produce json
 // @Security BearerAuth
 // @Success 200 {object} app.MfaSetupResponse "Secret and QR code URL"
-// @Failure 401 {object} transport.ProblemDetails "unauthorized"
+// @Failure 401 {object} internal_httpx.Problem "unauthorized"
 // @Failure 500 {object} transport.ProblemDetails "internal_error"
 // @Router /auth/mfa/setup [post]
 func (h *AuthHandler) MFASetup(w http.ResponseWriter, r *http.Request) {
-	claims, ok := r.Context().Value(domain.ClaimsKey).(*domain.Claims)
-	if !ok || claims == nil {
-		writeProblemDetails(w, "unauthorized", "Unauthorized", http.StatusUnauthorized, "")
-		return
-	}
-	resp, err := h.svc.SetupMFA(r.Context(), claims.Subject)
+	// MustFromContext for the same reason as Logout: this route exists only
+	// inside the h.authMW group.
+	resp, err := h.svc.SetupMFA(r.Context(), authn.MustFromContext(r.Context()).Subject)
 	if err != nil {
 		writeProblemDetails(w, "internal_error", "MFA setup failed", http.StatusInternalServerError, "")
 		return
@@ -155,21 +154,19 @@ func (h *AuthHandler) MFASetup(w http.ResponseWriter, r *http.Request) {
 // @Param request body app.MfaVerifySetupRequest true "TOTP code from authenticator app"
 // @Success 200 {object} app.MfaVerifySetupResponse "MFA enabled; backup codes returned"
 // @Failure 400 {object} transport.ProblemDetails "invalid_code"
-// @Failure 401 {object} transport.ProblemDetails "unauthorized"
+// @Failure 401 {object} internal_httpx.Problem "unauthorized"
 // @Failure 500 {object} transport.ProblemDetails "internal_error"
 // @Router /auth/mfa/setup/verify [post]
 func (h *AuthHandler) MFAVerifySetup(w http.ResponseWriter, r *http.Request) {
-	claims, ok := r.Context().Value(domain.ClaimsKey).(*domain.Claims)
-	if !ok || claims == nil {
-		writeProblemDetails(w, "unauthorized", "Unauthorized", http.StatusUnauthorized, "")
-		return
-	}
+	// MustFromContext for the same reason as Logout: this route exists only
+	// inside the h.authMW group.
+	subject := authn.MustFromContext(r.Context()).Subject
 	var req app.MfaVerifySetupRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeProblemDetails(w, "bad_request", "Invalid request", http.StatusBadRequest, "")
 		return
 	}
-	resp, err := h.svc.VerifyMFASetup(r.Context(), claims.Subject, req.Code)
+	resp, err := h.svc.VerifyMFASetup(r.Context(), subject, req.Code)
 	if err != nil {
 		if err == app.ErrInvalidMFACode {
 			writeProblemDetails(w, "invalid_code", "Invalid TOTP code", http.StatusBadRequest, "")
