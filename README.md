@@ -51,7 +51,7 @@ longer exist — every business capability moved into `modules/` in Phase 3, and
 | **domain** | Entities, invariants, repository interfaces | stdlib and `internal/platform` only |
 | **application** | Use cases over domain interfaces | its own domain |
 | **infrastructure** | bun models, repositories, external clients | domain, `internal/**` |
-| **transport** | HTTP handlers and the module's route table | application, domain |
+| **transport** | HTTP handlers and the module's route table | application, domain, `internal/authn`, `internal/httpx` |
 
 These are not conventions — they are enforced. `depguard` and the tests in
 `tools/archtest` walk the real import graph, so a domain package that imports

@@ -76,7 +76,21 @@ transport ──▶ application ──▶ domain ◀── infrastructure
 | `domain` | stdlib, `internal/platform` | bun, chi, viper, zerolog, any sibling layer |
 | `application` | `domain`, stdlib, `internal/platform` | bun, chi, `infrastructure`, `transport` |
 | `infrastructure` | `domain`, bun, pgx, external clients | `application`, `transport` |
-| `transport` | `application`, chi, stdlib | `infrastructure`, `domain` models directly |
+| `transport` | `application`, chi, stdlib, `internal/authn`, `internal/httpx` | `infrastructure`, `domain` models directly, the rest of `internal/**` |
+
+`transport`'s two shared-kernel imports are the exception that proves the ring,
+and they are enforced by the `transport-kernel-access` depguard rule rather than
+left to review. `internal/authn` carries the authentication contract — who the
+caller is — so that a module's handlers depend on a `Principal` rather than on
+whichever context key the identity module happens to use today; before it
+existed that coupling was a real dependency edge that neither depguard nor
+`tools/archtest` could see, because a context value is not an import.
+`internal/httpx` owns the problem+json writer and the canonical 401, so that
+every module rejects a request identically instead of inventing its own error
+body. Everything else in `internal/**` stays out: a transport package that can
+import `internal/db` can query the database from a handler, which is the
+layering R1 exists to prevent. The rule exempts `_test.go` files, which
+legitimately use `internal/testsupport`.
 
 ### R2 — Module isolation
 
