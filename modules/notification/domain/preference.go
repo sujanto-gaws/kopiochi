@@ -40,10 +40,14 @@ func protected(ch Channel, cat Category) bool {
 
 // NewPreference builds a validated preference.
 //
-// It is the only constructor: infrastructure hydrating a row and the
-// application layer applying a user's update both come through here, so the
-// protected-pair rule cannot be bypassed by assembling the struct field by
-// field somewhere else.
+// It is the only validating constructor, not the only one: the fields are
+// exported — infrastructure has to hydrate a stored row into the struct — so a
+// composite literal from any importing package assembles a Preference without
+// passing through here, and the tests in this package do exactly that.
+//
+// So this is a first line of defence and not the guarantee. What actually makes
+// the protected-pair rule hold is that Allowed re-checks it when the effective
+// value is resolved, whatever the struct in front of it says. See protected.
 func NewPreference(userID uuid.UUID, ch Channel, cat Category, enabled bool, now time.Time) (Preference, error) {
 	if userID == uuid.Nil {
 		return Preference{}, fmt.Errorf("%w: user id is required", ErrInvalidPreference)

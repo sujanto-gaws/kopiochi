@@ -157,6 +157,13 @@ type Notification struct {
 	// LastError is the truncated reason the most recent attempt failed. It is
 	// for operators and is never shown to a user: it can carry SMTP server
 	// responses, webhook bodies and internal host names.
+	//
+	// An empty string means "no error", which the repository maps to SQL NULL
+	// and back — the column is nullable, and a row that has never failed and a
+	// row that failed with a blank reason are the same thing to this package.
+	// It is a string rather than a *string so that "no error" has exactly one
+	// representation here; a pointer would admit a non-nil pointer to "", which
+	// every reader of this field would then have to remember to unwrap.
 	LastError string
 
 	CreatedAt time.Time
@@ -377,11 +384,18 @@ func scaleBase(attempt int, base time.Duration) time.Duration {
 // JitterSource yields a float in [0, 1). *math/rand.Rand and *math/rand/v2.Rand
 // both satisfy it.
 //
-// It is an interface parameter rather than a package-level generator because
-// the dispatcher runs several workers concurrently: a shared mutable source in
-// this package would be a data race that only shows up under load, and a
-// per-package mutex would serialise workers on a coin flip. Passing the source
-// in also makes the schedule reproducible in a test with a two-line fake.
+// It is an interface parameter rather than a package-level generator, and not
+// for thread safety: math/rand's top-level functions are mutex-protected and
+// math/rand/v2's global is race-free by design. Only a package-level *rand.Rand
+// would race, and that is not the reason to avoid one.
+//
+// The reason is that the retry schedule has to be reproducible from its
+// arguments. A global generator makes the delay a function of whatever the
+// process happened to seed at startup, which no test can pin and no incident
+// review can replay; passing the source in makes it a two-line fake. And a
+// hidden global in the innermost ring is exactly the concealed dependency the
+// domain-purity rule exists to keep out — this package's behaviour is meant to
+// be visible in its signatures.
 type JitterSource interface {
 	Float64() float64
 }
