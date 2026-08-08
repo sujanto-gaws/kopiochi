@@ -1,8 +1,8 @@
-// Package user defines the profile/CRUD user entity (table: users, PK: int64).
+// Package domain defines the profile/CRUD user entity (table: users, PK: int64).
 // This is distinct from the authentication identity in domain/auth (table: auth_users, PK: uuid).
 // Use this package for general profile management (name, email, preferences).
 // Use domain/auth for login, tokens, MFA, and access control.
-package user
+package domain
 
 import (
 	"errors"

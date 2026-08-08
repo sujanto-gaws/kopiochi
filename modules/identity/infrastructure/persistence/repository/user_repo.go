@@ -19,11 +19,15 @@ func NewUserRepo(db bun.IDB) *UserRepo {
 	return &UserRepo{db: db}
 }
 
+// FindByEmail matches on lower(email), not the raw column: an address is the
+// same address whatever case it is typed in. The predicate is written to match
+// the idx_auth_users_email_lower expression index (migration 00007) exactly,
+// so this stays an index scan rather than degrading to a sequential one.
 func (r *UserRepo) FindByEmail(ctx context.Context, email string) (*domain.User, error) {
 	row := new(models.BunUser)
 	err := r.db.NewSelect().
 		Model(row).
-		Where("email = ?", email).
+		Where("lower(email) = lower(?)", email).
 		Scan(ctx)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -49,11 +53,16 @@ func (r *UserRepo) FindByID(ctx context.Context, id string) (*domain.User, error
 	return toDomainUser(row), nil
 }
 
+// FindByUsername is the lookup Login runs, so its case-sensitivity decided
+// whether a correct password was accepted. It matches on lower(username)
+// against idx_auth_users_username_lower (migration 00007), which is also what
+// makes "at most one row" true here — before that index the column carried no
+// uniqueness at all.
 func (r *UserRepo) FindByUsername(ctx context.Context, username string) (*domain.User, error) {
 	row := new(models.BunUser)
 	err := r.db.NewSelect().
 		Model(row).
-		Where("username = ?", username). // BunUser has no username column; email is the login identifier
+		Where("lower(username) = lower(?)", username).
 		Scan(ctx)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {

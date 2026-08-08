@@ -8,14 +8,14 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/sujanto-gaws/kopiochi/modules/user/domain"
+	domain "github.com/sujanto-gaws/kopiochi/modules/user/domain"
 )
 
 // UserService is the set of application operations UserHandler depends on.
 type UserService interface {
-	CreateUser(ctx context.Context, req *user.CreateUserRequest) (*user.UserResponse, error)
-	GetUserByID(ctx context.Context, id int64) (*user.UserResponse, error)
-	UpdateUser(ctx context.Context, id int64, req *user.UpdateUserRequest) (*user.UserResponse, error)
+	CreateUser(ctx context.Context, req *domain.CreateUserRequest) (*domain.UserResponse, error)
+	GetUserByID(ctx context.Context, id int64) (*domain.UserResponse, error)
+	UpdateUser(ctx context.Context, id int64, req *domain.UpdateUserRequest) (*domain.UserResponse, error)
 	DeleteUser(ctx context.Context, id int64) error
 }
 
@@ -40,14 +40,14 @@ func NewUserHandler(svc UserService, authMW func(http.Handler) http.Handler) *Us
 // @Tags users
 // @Accept json
 // @Produce json
-// @Param request body user.CreateUserRequest true "User creation request"
-// @Success 201 {object} user.UserResponse "User created successfully"
+// @Param request body domain.CreateUserRequest true "User creation request"
+// @Success 201 {object} domain.UserResponse "User created successfully"
 // @Failure 400 {object} map[string]string "Invalid request"
 // @Failure 500 {object} map[string]string "Internal server error"
 // @Router /users [post]
 func (h *UserHandler) CreateUser() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		var req user.CreateUserRequest
+		var req domain.CreateUserRequest
 
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			writeJSON(w, http.StatusBadRequest, errorResponse("invalid request body"))
@@ -57,7 +57,7 @@ func (h *UserHandler) CreateUser() http.HandlerFunc {
 		resp, err := h.svc.CreateUser(r.Context(), &req)
 		if err != nil {
 			switch err {
-			case user.ErrInvalidName, user.ErrInvalidEmail:
+			case domain.ErrInvalidName, domain.ErrInvalidEmail:
 				writeJSON(w, http.StatusBadRequest, errorResponse(err.Error()))
 			default:
 				writeJSON(w, http.StatusInternalServerError, errorResponse("failed to create user"))
@@ -75,7 +75,7 @@ func (h *UserHandler) CreateUser() http.HandlerFunc {
 // @Tags users
 // @Produce json
 // @Param id path int true "User ID"
-// @Success 200 {object} user.UserResponse "User found"
+// @Success 200 {object} domain.UserResponse "User found"
 // @Failure 400 {object} map[string]string "Invalid user ID"
 // @Failure 404 {object} map[string]string "User not found"
 // @Failure 500 {object} map[string]string "Internal server error"
@@ -91,7 +91,7 @@ func (h *UserHandler) GetUser() http.HandlerFunc {
 
 		resp, err := h.svc.GetUserByID(r.Context(), id)
 		if err != nil {
-			if err == user.ErrUserNotFound {
+			if err == domain.ErrUserNotFound {
 				writeJSON(w, http.StatusNotFound, errorResponse("user not found"))
 				return
 			}
@@ -110,8 +110,8 @@ func (h *UserHandler) GetUser() http.HandlerFunc {
 // @Accept json
 // @Produce json
 // @Param id path int true "User ID"
-// @Param request body user.UpdateUserRequest true "User update request"
-// @Success 200 {object} user.UserResponse "User updated successfully"
+// @Param request body domain.UpdateUserRequest true "User update request"
+// @Success 200 {object} domain.UserResponse "User updated successfully"
 // @Failure 400 {object} map[string]string "Invalid request"
 // @Failure 404 {object} map[string]string "User not found"
 // @Failure 500 {object} map[string]string "Internal server error"
@@ -125,7 +125,7 @@ func (h *UserHandler) UpdateUser() http.HandlerFunc {
 			return
 		}
 
-		var req user.UpdateUserRequest
+		var req domain.UpdateUserRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			writeJSON(w, http.StatusBadRequest, errorResponse("invalid request body"))
 			return
@@ -134,9 +134,9 @@ func (h *UserHandler) UpdateUser() http.HandlerFunc {
 		resp, err := h.svc.UpdateUser(r.Context(), id, &req)
 		if err != nil {
 			switch err {
-			case user.ErrUserNotFound:
+			case domain.ErrUserNotFound:
 				writeJSON(w, http.StatusNotFound, errorResponse("user not found"))
-			case user.ErrInvalidName, user.ErrInvalidEmail:
+			case domain.ErrInvalidName, domain.ErrInvalidEmail:
 				writeJSON(w, http.StatusBadRequest, errorResponse(err.Error()))
 			default:
 				writeJSON(w, http.StatusInternalServerError, errorResponse("failed to update user"))
@@ -168,7 +168,7 @@ func (h *UserHandler) DeleteUser() http.HandlerFunc {
 		}
 
 		if err := h.svc.DeleteUser(r.Context(), id); err != nil {
-			if err == user.ErrUserNotFound {
+			if err == domain.ErrUserNotFound {
 				writeJSON(w, http.StatusNotFound, errorResponse("user not found"))
 				return
 			}
