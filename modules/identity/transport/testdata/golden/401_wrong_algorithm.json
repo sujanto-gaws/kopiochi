@@ -1,0 +1,6 @@
+{
+  "status": 401,
+  "content_type": "text/plain; charset=utf-8",
+  "www_authenticate": "",
+  "body": "{\"error\":\"invalid token\"}\n"
+}
