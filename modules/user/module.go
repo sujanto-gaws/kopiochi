@@ -13,8 +13,8 @@ package user
 import (
 	"errors"
 	"fmt"
-	"net/http"
 
+	"github.com/sujanto-gaws/kopiochi/internal/authn"
 	"github.com/sujanto-gaws/kopiochi/internal/module"
 	application "github.com/sujanto-gaws/kopiochi/modules/user/application"
 	"github.com/sujanto-gaws/kopiochi/modules/user/infrastructure/persistence/repository"
@@ -33,13 +33,24 @@ type Config struct {
 	// required dependency, not an option: New refuses to build a module
 	// that would serve user records unauthenticated.
 	//
-	// It arrives here as a plain http middleware rather than as a token
-	// verifier, so this module never learns how authentication is
-	// implemented — module.Module deliberately exposes nothing but
+	// It arrives here as a middleware rather than as a token verifier, so
+	// this module never learns how authentication is implemented —
+	// module.Module deliberately exposes nothing but
 	// Name/Routes/Migrations/Close, and cross-module wiring goes through
 	// the composition root, not a back-channel into identity's private
 	// dependency graph.
-	AuthMiddleware func(http.Handler) http.Handler
+	//
+	// The type is authn.Middleware, which is a type *alias* for
+	// func(http.Handler) http.Handler and therefore the identical type the
+	// field carried before: every existing call site assigns to it with no
+	// conversion, and cmd/api needed no edit. What the name buys is that
+	// the requirement is now stated in the shared contract package instead
+	// of by convention, so the edge is one depguard and tools/archtest can
+	// see. A bare func type said "some middleware"; this says "the
+	// authentication middleware defined by internal/authn", and a handler
+	// downstream can rely on an authn.Principal being in the context
+	// because of it.
+	AuthMiddleware authn.Middleware
 }
 
 // Validate rejects configuration that would produce an unprotected route
