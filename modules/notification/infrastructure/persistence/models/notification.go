@@ -66,9 +66,20 @@ type NotificationRow struct {
 type NotificationPreferenceRow struct {
 	bun.BaseModel `bun:"table:notification_preferences,alias:np"`
 
-	UserID    uuid.UUID `bun:"user_id,pk,type:uuid"`
-	Channel   string    `bun:"channel,pk"`
-	Category  string    `bun:"category,pk"`
-	Enabled   bool      `bun:"enabled,notnull,default:true"`
+	UserID   uuid.UUID `bun:"user_id,pk,type:uuid"`
+	Channel  string    `bun:"channel,pk"`
+	Category string    `bun:"category,pk"`
+
+	// Enabled deliberately carries no `default:` tag, even though the column
+	// has DEFAULT true.
+	//
+	// bun substitutes the SQL DEFAULT keyword for any zero-valued field that
+	// carries a default tag (InsertQuery.marshalsToDefault). On a bool that
+	// makes false unrepresentable: an insert of Enabled=false emits DEFAULT,
+	// Postgres resolves it to true, and every attempt to switch a notification
+	// off silently stores it as on. Without the tag bun writes the value, and
+	// the column default still applies to any statement that omits the column.
+	Enabled bool `bun:"enabled,notnull"`
+
 	UpdatedAt time.Time `bun:"updated_at,notnull,default:now()"`
 }

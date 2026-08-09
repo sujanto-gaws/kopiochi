@@ -8,6 +8,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/sujanto-gaws/kopiochi/internal/authn"
 	domain "github.com/sujanto-gaws/kopiochi/modules/user/domain"
 )
 
@@ -22,7 +23,7 @@ type UserService interface {
 // UserHandler handles HTTP requests for user operations
 type UserHandler struct {
 	svc    UserService
-	authMW func(http.Handler) http.Handler
+	authMW authn.Middleware
 }
 
 // NewUserHandler creates a new user handler. authMW protects every route this
@@ -30,7 +31,14 @@ type UserHandler struct {
 // by the composition root rather than resolved by the handler itself, so a
 // missing/misconfigured verifier fails at wiring time (see cmd/api/container.go)
 // instead of the handler silently serving unprotected routes.
-func NewUserHandler(svc UserService, authMW func(http.Handler) http.Handler) *UserHandler {
+//
+// authMW is an authn.Middleware: a type alias for
+// func(http.Handler) http.Handler, so this is the same type the parameter
+// always had and no caller changed. Naming it states which middleware is
+// meant — the one that puts an authn.Principal in the request context — and
+// makes the dependency an import that depguard and tools/archtest can see,
+// rather than a convention about an anonymous func type.
+func NewUserHandler(svc UserService, authMW authn.Middleware) *UserHandler {
 	return &UserHandler{svc: svc, authMW: authMW}
 }
 
