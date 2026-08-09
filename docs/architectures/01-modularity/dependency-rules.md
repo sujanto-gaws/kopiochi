@@ -89,8 +89,15 @@ existed that coupling was a real dependency edge that neither depguard nor
 every module rejects a request identically instead of inventing its own error
 body. Everything else in `internal/**` stays out: a transport package that can
 import `internal/db` can query the database from a handler, which is the
-layering R1 exists to prevent. The rule exempts `_test.go` files, which
-legitimately use `internal/testsupport`.
+layering R1 exists to prevent.
+
+Transport `_test.go` files are exempt from that rule and governed by a sibling
+one, `transport-test-kernel-access`, which allows the same two packages plus
+`internal/testsupport` — the keypairs, token minting and `FakeAuth` a handler
+test legitimately needs — and denies the rest of `internal/**`. Two rules rather
+than one exemption, because a test that can import `internal/db` can set up its
+fixture by writing to the database behind the repository it is supposed to be
+faking.
 
 ### R2 — Module isolation
 
