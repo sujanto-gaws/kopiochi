@@ -1,6 +1,6 @@
 module github.com/sujanto-gaws/kopiochi
 
-go 1.25.0
+go 1.25.12
 
 require (
 	github.com/golang-jwt/jwt/v5 v5.3.1
@@ -58,7 +58,7 @@ require (
 	github.com/fsnotify/fsnotify v1.9.0 // indirect
 	github.com/go-chi/chi/v5 v5.2.5
 	github.com/go-viper/mapstructure/v2 v2.5.0
-	github.com/jackc/pgx/v5 v5.9.1
+	github.com/jackc/pgx/v5 v5.9.2
 	github.com/pelletier/go-toml/v2 v2.2.4 // indirect
 	github.com/pquerna/otp v1.5.0
 	github.com/rs/zerolog v1.35.0
