@@ -17,28 +17,24 @@ States: pending | dispatched | in-review | blocked | merged | escalated
 | D1  | persistence-engineer | **merged** | #22 (`fbc1639`, `cfb3f58`) | APPROVE-WITH-NOTES | 2026-08-09 |
 | D2  | domain-engineer      | **merged** | #23 (`049f4b0`, `468dbc0`) | APPROVE-WITH-NOTES | 2026-08-09 |
 | D3  | domain-engineer      | **merged** | #23 (`13ab921`) | APPROVE-WITH-NOTES | 2026-08-09 |
-| E9a | domain-engineer      | approved — **PR #25 open** | `47d1569` | APPROVE-WITH-NOTES | 2026-08-09 |
-| B1  | test-guardian        | approved — **PR #26 open** | `ea0d30f` | APPROVE-WITH-NOTES | 2026-08-09 |
-| B2  | transport-engineer   | **PARTIAL** — approved, PR #26 | `739c6df` | APPROVE-WITH-NOTES | 2026-08-09 |
-| B3  | test-guardian        | approved — PR #26 | `1a72344` | APPROVE-WITH-NOTES | 2026-08-09 |
+| E9a | domain-engineer      | **merged** | #25 (`47d1569`) | APPROVE-WITH-NOTES | 2026-08-09 |
+| B1  | test-guardian        | **merged** | #26 (`ea0d30f`) | APPROVE-WITH-NOTES | 2026-08-09 |
+| B2  | transport-engineer   | **merged — PARTIAL** | #26 (`739c6df`) | APPROVE-WITH-NOTES | 2026-08-09 |
+| B3  | test-guardian        | **merged** | #26 (`1a72344`) | APPROVE-WITH-NOTES | 2026-08-09 |
 | B2a | transport-engineer   | **BLOCKED — E16** (carry-forward of B2's unmet clause) | - | - | 2026-08-09 |
 | B4  | test-guardian        | ready — dispatch next | - | - | 2026-08-09 |
-| C1  | docs-scribe          | pending (needs Phase B) | - | - | - |
+| C1  | docs-scribe          | pending (needs B4) | - | - | - |
 | D4  | persistence-engineer | ready | - | - | 2026-08-09 |
 | D5  | platform-engineer    | **BLOCKED — E11, E13, E14** | - | - | 2026-08-09 |
 | D6  | platform-engineer    | **BLOCKED — E9b, E9c, E12** | - | - | 2026-08-09 |
-| D7  | transport-engineer   | **UNBLOCKED** — needs D6 + Phase B only | - | - | 2026-08-09 |
+| D7  | transport-engineer   | **UNBLOCKED** — needs D6 only | - | - | 2026-08-09 |
 | D8  | platform-engineer    | **BLOCKED — E15, E11** | - | - | 2026-08-09 |
 | D9a/D9b | domain / platform | pending | - | - | - |
 | D10 | platform-engineer    | pending — owns `policy.json` cleanups | - | - | 2026-08-09 |
 
-**Open PRs — I cannot merge** (`gh pr merge` and pushes to `main` are blocked by the
-sandbox classifier; branch pushes and PR creation work):
-
-| PR | Contents | Gate |
-| --- | --- | --- |
-| **#25** | E9a — `sending→pending` stall recovery | APPROVE-WITH-NOTES |
-| **#26** | Phase B: B1 + B2 (partial) + B3 | all three APPROVE-WITH-NOTES |
+**No open PRs.** Phase A, Phase B (B1–B3), T1, D1–D3 and E9a are all on `main`.
+Note: `gh pr merge` and pushes to `main` are blocked by the sandbox classifier, so a
+human merges; branch pushes and PR creation work.
 
 ## Merge log
 
@@ -48,10 +44,12 @@ sandbox classifier; branch pushes and PR creation work):
 | #16 | `f594ebc` | A1, A2, + the human's docs/roster commit |
 | #17 | `d74ec67` | A3 — `httpx.Unauthorized` |
 | #18 | `0c0a1cf` | T1 — `tools/coverage` |
-| #19 / #21 / #24 | `f6e93ff` / `19008c6` / `e6d0d93` | board |
+| #19 / #21 / #24 / #27 | `f6e93ff` / `19008c6` / `e6d0d93` / `8f3cd01` | board |
 | #20 | `a475151` | A4 — identity implements the contract |
 | #22 | `21c94bb` | D1 — notification migration + bun models |
 | #23 | `68402ec` | D2 + D3 — notification domain + application |
+| #25 | — | E9a — `sending→pending` stall recovery |
+| #26 | `5481dbd` | Phase B — B1 + B2 (partial) + B3 |
 
 ---
 
@@ -59,10 +57,31 @@ sandbox classifier; branch pushes and PR creation work):
 
 Ordered by severity, not by number.
 
-## E16 — ⚠ CONFIRMED IDOR IN MERGED PRODUCTION CODE
+## E16 — CONFIRMED IDOR, INHERITED FROM THE INTERNAL CORE
 **Raised by:** transport-engineer (B2) as a stop condition; **confirmed independently by
-arch-reviewer** at the schema level. **Predates this effort** — `git blame` puts the
-handler bodies at `68f75e22` / `14febc19`, 2026-04-02/03.
+arch-reviewer** at the schema level.
+
+**PROVENANCE — corrected 2026-08-09 on the human's input, and it matters.**
+`modules/user` is the **profile-user business module**, and it is not new code. Its own
+package doc says so: *"Before Phase 3.6b this stack was spread across
+`internal/domain/user`, `internal/application/user`,
+`internal/infrastructure/persistence/{models,repository}` and
+`internal/infrastructure/http/handlers`… **It was live the whole time** — which is why
+3.6 deleted the dead frameworks but this code was *moved*, not deleted. **Behaviour is
+unchanged**; only its address and its constructor are new."*
+So this was **kopiochi's internal-core implementation of the user abstraction**, later
+relocated into a module. Three consequences:
+1. **The defect is older than `modules/user`.** My earlier dating (`68f75e22`,
+   2026-04-02) is the authorship of the *moved* code. The gap dates to the
+   internal-core era; **modularisation neither introduced nor widened it.**
+2. **It is live application code, not a demo.** The package doc's "live the whole time"
+   forecloses the most comfortable reading. Severity stands.
+3. **This is boilerplate** (`BOILERPLATE.md`; impact-analysis §8.3 — *"Boilerplate
+   stage, no external consumers outside our control"*), and `modules/user` is the
+   reference module adopters copy — `BOILERPLATE.md:279` points at
+   `modules/user/transport/user.go` as the worked example. **An IDOR in the exemplar
+   propagates into every downstream project that follows it.** That is an amplifier,
+   not a mitigation.
 
 **The exposure.** Any caller holding **any valid access token for any account** can,
 against **any other user's row**:
@@ -74,35 +93,31 @@ against **any other user's row**:
 | `DELETE` | `/api/v1/users/{id}` | delete the record (`:169-189`) |
 | `POST` | `/api/v1/users` | unrestricted creation behind mere authentication (`:56-78`) |
 
-Ids are **`BIGSERIAL`** — sequential and trivially enumerable; `/users/1,2,3…` walks the
-whole table. `internal/metrics` templatises the path, so enumeration does not even
-surface as distinct metric series.
+Ids are **`BIGSERIAL`** — sequential and trivially enumerable. `internal/metrics`
+templatises the path, so enumeration does not surface as distinct metric series.
 
 **Nothing mitigates it — every layer checked:** route mounting adds no wrapper
 (`internal/httpx/routes.go:61-65`); the middleware is **authentication only**
 (`cmd/api/container.go:103`), and `grep -rn "RequireRole|RequirePermission|Authorize"`
 across `internal/httpx`, `internal/middleware`, `modules/user`, `cmd/api` returns
-**zero matches — no authorization layer exists anywhere in this repository**; transport
-reads the path id and calls straight through; the application service takes
-`(ctx, id int64)` with **no caller argument of any kind**, so there is no seam a check
-could even attach to; the repository has no owner predicate. Roles/permissions *are* in
-the JWT (`jwt.go:188-189`) but the middleware discards them by design
-(`middleware.go:58-67`).
+**zero matches — no authorization layer exists anywhere in this repository**; the
+application service takes `(ctx, id int64)` with **no caller argument of any kind**, so
+there is no seam a check could attach to; the repository has no owner predicate.
+Roles/permissions *are* in the JWT (`jwt.go:188-189`) but the middleware discards them
+by design (`middleware.go:58-67`).
 
 **Root cause is not a missing `if`.** `auth_users.id` is `uuid` (`migrations/00003:8`);
 `users.id` is `BIGSERIAL` (`migrations/00001:4`);
-`grep -rn "auth_user_id|AuthUserID|REFERENCES users"` → **zero matches**. The only FKs in
-the tree point at `auth_users`. The Principal carries no email (`Extra` nil by design).
-**There is no value to compare**, so remediation requires an ownership-model decision
-before any code change.
+`grep -rn "auth_user_id|AuthUserID|REFERENCES users"` → **zero matches**. The Principal
+carries no email (`Extra` nil by design). **There is no value to compare.**
 
 **B2 refused three shortcuts, all correctly** (reviewer upheld each):
 `strconv.ParseInt(Subject)` — a uuid never parses, so all three id routes 404
 permanently: "an outage that lints clean"; `Subject == chi.URLParam("id")` — always
 false, same outage, and *reads* like a real check to the next maintainer;
 `Extra["email"]` — nil, needs an identity-side change, and email is a **mutable natural
-key** with no enforced 1:1 correspondence. It also declined a bare `MustFromContext`,
-which would have been dead code making the diff *look* complete.
+key**. It also declined a bare `MustFromContext`, which would have been dead code making
+the diff *look* complete.
 
 **Decision needed — see E16-ARCH.** Track separately from Phase B: older and larger than
 this effort.
@@ -124,6 +139,17 @@ surfaces at three call sites — but only one is genuinely blocked:
   `auth_users.email`, resolvable entirely within identity.
 - **`modules/user` is the only module in the tree that does not key on the identity
   uuid.** It is the outlier, not the standard.
+
+**The split is DELIBERATE, which narrows the options.** `modules/user/domain`'s package
+doc states the design outright: *"the profile/CRUD user entity (table: users, PK: int64).
+This is distinct from the authentication identity in domain/auth (table: auth_users, PK:
+uuid). Use this package for general profile management (name, email, preferences). Use
+domain/auth for login, tokens, MFA, and access control."* So two entities is **intent,
+not accident** — and that **strengthens** option 1 below rather than contradicting it: a
+profile record keyed by the identity it profiles is the stated design, *completed*.
+The actual defect is narrower than "two ids": **it is a profile table with no link to
+the identity it profiles.** A profile that cannot say whose profile it is cannot support
+an ownership check, by construction.
 
 **Options, in the order they should be decided:**
 1. **First decide the ownership model:** does `users` remain a distinct entity, or become
@@ -239,7 +265,7 @@ into the `ClaimBatch` doc comment, which currently does not say so).
 **E9a raised the cost of getting this wrong:** a false positive now *also* burns an
 attempt and can dead-letter a healthy in-flight row. The predicate must be exact.
 
-## E9c — the domain has no port to FIND stalled rows (NEW)
+## E9c — the domain has no port to FIND stalled rows
 **Raised by arch-reviewer during E9a's gate.** E9a completed the *entity* side, but
 `NotificationRepository` (`domain/repository.go:108-155`) declares `Enqueue`,
 `ClaimBatch`, `Save`, `ListForRecipient`, `MarkRead`, `MarkAllRead` — **no method returns
@@ -258,7 +284,7 @@ longer achievable**. A set-based UPDATE that spends an attempt and dead-letters 
 exhaustion would be a second, untested copy of the state machine. D6 must do
 select-stalled → `RecoverStalled` → `Save` per row.
 
-## E17 — the conformance suite guards `detail` only; the likeliest replacement leaks elsewhere (NEW)
+## E17 — the conformance suite guards `detail` only; the likeliest replacement leaks elsewhere
 **Raised by arch-reviewer during B3's gate.** B3 is real — the reviewer broke each of its
 properties in production code and watched it fail, and it catches a principal-drop
 regression **no other test in this repository catches**. But it constrains one member of
@@ -273,8 +299,6 @@ Second, smaller: a middleware emitting `{}` for every 401 is **invariant by vacu
 **Fix (one function, no new exports):** extend `checkDetailIsInvariant` to compare the
 whole rejection response — challenge header value, `type`, `title`, `detail` — across
 cases, and treat an absent `detail` as a finding. Owner: B4, or its own task.
-**Not a reason to hold Phase B** — the suite is strictly better than what preceded it,
-which was nothing.
 
 ## E7 — `auditlog` has no tests and trips a pre-existing 60% floor
 `modules/identity/infrastructure/auditlog`: 8 functions, no test file, matches the
@@ -290,7 +314,7 @@ lower floor**.
   not to be reversible" was wrong; I had propagated it into PR #26's body and corrected
   it there.
 - **`TestCaseInsensitiveIdentifiers_RefusesCollidingData` passes today.** The T1-era
-  report of it failing is not reproducible at `e6d0d93`. Superseded.
+  report of it failing is not reproducible. Superseded.
 - **The actual failure is a stale test.** `goose.Down()` reverts only the **newest**
   migration, and **D1 made notifications the newest** — so
   `TestCaseInsensitiveIdentifiers_IsReversible` now rolls back D1's migration and then
@@ -323,12 +347,12 @@ never the working file.
 **E5** — `request_id` accepted in the canonical body; §8.2's example is illustrative.
 **E6** — `docs/plans/` tracked and on `main`.
 **E9a** — **add the `sending→pending` arrow** (human ruling), exposed only as
-`RecoverStalled(now, retryAfter, maxAttempts)` so recovery costs an attempt. Shipped in
-PR #25; `Transition` unexported to make the ruling mechanical rather than advisory.
+`RecoverStalled(now, retryAfter, maxAttempts)` so recovery costs an attempt. Merged in
+#25; `Transition` unexported to make the ruling mechanical rather than advisory.
 **Depguard/authntest question** — settled at B3's gate: under `list-mode: lax` the
 `internal/authn` allow prefix beats the `internal` deny, so `internal/authn/authntest`
 **is** permitted in transport tests. B1's reading was right; the reviewer withdrew its
-contrary note from B2. No `.golangci.yml` change needed for B3.
+contrary note from B2.
 
 ---
 
@@ -375,8 +399,7 @@ contrary note from B2. No `.golangci.yml` change needed for B3.
   non-recursive; `exempt` lists `testsupport` but not `authntest`), so it lands
   **unfloored at 100%**. B4 decides exempt vs floor. Reviewer: *"a package whose entire
   purpose is to be trustworthy has no coverage gate at all — precisely where 'distrust
-  green' matters most."* If B4's scope does not reach `policy.json`, say so and it
-  becomes its own task.
+  green' matters most."*
 - **Re-verify** `internal/authn: 100` after B2/B3.
 - Candidate owner for **E17**'s one-function fix.
 - Do **not** re-add the `internal/authn` floor/baseline — T1 landed it.
@@ -491,6 +514,10 @@ contrary note from B2. No `.golangci.yml` change needed for B3.
 - **BL29** Mutation-testing hygiene: a reviewer's patch silently failed to apply and the
   test went green, briefly looking like a real gap. **Print the patched line, not just the
   test result.**
+- **BL30** My own tooling hygiene, same class as BL29: a `python`-based board edit failed
+  (`Python was not found`) while the surrounding `git commit`/`push` still reported
+  success, so a correction appeared to land and had not. **Verify the artifact, not the
+  exit code of the pipeline around it.**
 
 ---
 
