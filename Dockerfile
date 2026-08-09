@@ -1,5 +1,13 @@
 # Build stage.
-FROM golang:1.25.0-alpine AS builder
+#
+# Pinned to a patch release, not the floating 1.25-alpine tag, for the same
+# reason the runtime stage avoids alpine:latest: two builds a week apart should
+# not silently ship different toolchains. Keep this in step with the `go`
+# directive in go.mod — CI resolves its toolchain from that file, so letting the
+# two drift means a green pipeline can still bake a vulnerable stdlib into the
+# image. 1.25.12 carries the fix for GO-2026-5856 (crypto/tls, reachable from
+# httpx.Serve).
+FROM golang:1.25.12-alpine AS builder
 
 WORKDIR /src
 
