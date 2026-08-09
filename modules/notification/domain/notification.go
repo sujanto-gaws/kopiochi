@@ -72,11 +72,13 @@ func (c Category) Valid() bool {
 
 // Status is a notification's position in the delivery state machine.
 //
-//	pending ──► sending ──┬──► sent           (terminal)
-//	   ▲                  ├──► failed ──┬──► pending   (retry)
-//	   │                  │             └──► dead      (terminal)
-//	   └──────────────────┘             │
-//	                      └──► dead ────┘     (non-retryable, terminal)
+//	pending ──► sending ──┬──► sent      (terminal)
+//	                      ├──► failed
+//	                      ├──► dead      (non-retryable, terminal)
+//	                      └──► pending   (stall recovery — RecoverStalled)
+//
+//	failed ──┬──► pending  (retry — RecordFailure)
+//	         └──► dead     (budget exhausted, terminal)
 type Status string
 
 const (
@@ -97,11 +99,20 @@ type transition struct{ from, to Status }
 // an unknown template key, or no sender registered for the channel. Routing
 // those through failed would spend the row's whole retry budget re-discovering
 // that the deployment is still misconfigured.
+//
+// sending -> pending is stall recovery. A worker that is killed between the
+// claim and the settle leaves the row in sending with nothing left to settle
+// it, and without this arrow the notification is stuck until a human edits the
+// database. It is reachable only through RecoverStalled, which spends an
+// attempt: a row that hangs the worker every time it is claimed must exhaust
+// its budget and die like any other repeated failure, and a bare status flip
+// would reset it forever.
 var allowedTransitions = map[transition]struct{}{
 	{StatusPending, StatusSending}: {},
 	{StatusSending, StatusSent}:    {},
 	{StatusSending, StatusFailed}:  {},
 	{StatusSending, StatusDead}:    {},
+	{StatusSending, StatusPending}: {},
 	{StatusFailed, StatusPending}:  {},
 	{StatusFailed, StatusDead}:     {},
 }
@@ -236,14 +247,24 @@ func NewNotification(p NewNotificationParams, now time.Time) (*Notification, err
 	}, nil
 }
 
-// Transition moves the notification to next, or returns ErrInvalidTransition
+// transitionTo moves the notification to next, or returns ErrInvalidTransition
 // and leaves it untouched.
 //
 // This is the primitive every other state change goes through. It sets no
-// timestamps and touches no other field: a caller that needs SentAt or a retry
-// schedule uses MarkSent, MarkDead or RecordFailure, which set them together
-// with the status so the two cannot drift apart.
-func (n *Notification) Transition(next Status) error {
+// timestamps and touches no other field, which is exactly why it is unexported:
+// travelling an arrow is never the whole of a state change. Every legal move
+// also owes the row something — SentAt, an attempt, a retry stamp, a reason —
+// and a caller holding the bare primitive can flip a status while paying none
+// of it. sending -> pending is the sharpest case: as a raw move it is an
+// unlimited retry, and as RecoverStalled it costs an attempt.
+//
+// So the package's whole exported surface for state changes is MarkSent,
+// MarkDead, RecordFailure and RecoverStalled, each of which sets the status and
+// the fields that go with it together, so the two cannot drift apart. The full
+// (from, to) matrix is asserted against this method in transition_test.go: the
+// table below stays the single description of the machine whether or not
+// callers can reach it directly.
+func (n *Notification) transitionTo(next Status) error {
 	if _, ok := allowedTransitions[transition{n.Status, next}]; !ok {
 		return fmt.Errorf("%w: %s -> %s", ErrInvalidTransition, n.Status, next)
 	}
@@ -255,7 +276,7 @@ func (n *Notification) Transition(next Status) error {
 // error left by an earlier attempt — the row succeeded, and a stale LastError
 // on a sent row reads like a fault that never happened.
 func (n *Notification) MarkSent(now time.Time) error {
-	if err := n.Transition(StatusSent); err != nil {
+	if err := n.transitionTo(StatusSent); err != nil {
 		return err
 	}
 	sentAt := now
@@ -270,7 +291,7 @@ func (n *Notification) MarkSent(now time.Time) error {
 // It does not increment Attempts. Attempts drives the retry schedule and this
 // row has left it; what the operator needs is reason, which is preserved.
 func (n *Notification) MarkDead(reason string) error {
-	if err := n.Transition(StatusDead); err != nil {
+	if err := n.transitionTo(StatusDead); err != nil {
 		return err
 	}
 	n.LastError = truncateReason(reason)
@@ -295,10 +316,9 @@ func (n *Notification) MarkDead(reason string) error {
 //
 // The trip through failed is deliberate: the state machine says a retry is
 // sending -> failed -> pending, and passing through the intermediate state here
-// means the same arrows are exercised whether a row is settled by this method
-// or by Transition directly.
+// means the row is never observed in a state the table does not describe.
 func (n *Notification) RecordFailure(now time.Time, retryAfter time.Duration, maxAttempts int, reason string) error {
-	if err := n.Transition(StatusFailed); err != nil {
+	if err := n.transitionTo(StatusFailed); err != nil {
 		return err
 	}
 
@@ -307,12 +327,57 @@ func (n *Notification) RecordFailure(now time.Time, retryAfter time.Duration, ma
 
 	if n.Attempts >= maxAttempts {
 		// Cannot fail: failed -> dead is in the table.
-		_ = n.Transition(StatusDead)
+		_ = n.transitionTo(StatusDead)
 		return nil
 	}
 
 	// Cannot fail: failed -> pending is in the table.
-	_ = n.Transition(StatusPending)
+	_ = n.transitionTo(StatusPending)
+	n.NextAttemptAt = now.Add(retryAfter)
+	return nil
+}
+
+// RecoverStalled settles a claimed notification that nothing ever settled: the
+// worker that took it was killed, panicked, or lost the database between the
+// claim and the outcome, leaving the row in sending with no one left to move
+// it. Only a sending notification can be stalled; anything else is refused with
+// ErrInvalidTransition and left untouched.
+//
+// It is RecordFailure for a failure with no reporter, and deliberately the same
+// shape: it increments Attempts, and then either returns the row to pending
+// with NextAttemptAt = now + retryAfter or, once the budget is spent, sends it
+// to dead. What it must not be is a bare status flip. A notification that hangs
+// or crashes the worker every time it is claimed is indistinguishable from one
+// that fails every time it is sent, and recovering it for free would retry it
+// forever — the exact failure mode RecordFailure's exhaustion check exists to
+// prevent, re-entered through a side door. Crash recovery costs an attempt, and
+// a recovered row that has spent its budget dies.
+//
+// The source is checked explicitly rather than left to the transition table,
+// because both destinations have a second in-arrow: failed -> pending and
+// failed -> dead are legal moves, so a sweep that mis-selected a failed row
+// would otherwise silently spend its budget or dead-letter it.
+//
+// It takes no reason. Unlike a failed send there is no report to record — the
+// only thing known about a stalled row is that it was claimed and never came
+// back, which is what it writes to LastError so that a row dead-lettered this
+// way says so to the operator reading it.
+func (n *Notification) RecoverStalled(now time.Time, retryAfter time.Duration, maxAttempts int) error {
+	if n.Status != StatusSending {
+		return fmt.Errorf("%w: %s -> %s: only a claimed notification can be stalled", ErrInvalidTransition, n.Status, StatusPending)
+	}
+
+	n.Attempts++
+	n.LastError = "delivery stalled: claimed but never settled"
+
+	if n.Attempts >= maxAttempts {
+		// Cannot fail: sending -> dead is in the table.
+		_ = n.transitionTo(StatusDead)
+		return nil
+	}
+
+	// Cannot fail: sending -> pending is in the table.
+	_ = n.transitionTo(StatusPending)
 	n.NextAttemptAt = now.Add(retryAfter)
 	return nil
 }
