@@ -96,6 +96,44 @@ linters:
             - pkg: github.com/sujanto-gaws/kopiochi/internal
               desc: transport may use only internal/authn and internal/httpx from the shared kernel
 
+        # R1 — the same fence, drawn around transport's test files.
+        #
+        # transport-kernel-access above excludes *_test.go, which was correct
+        # for that rule and left the test binaries with no rule at all: a
+        # transport test could import internal/db and query the database
+        # directly to set up its fixture, and nothing would say a word. A
+        # sibling list closes that without touching the rule above, because
+        # depguard evaluates every list whose file globs match — they are
+        # independent, not alternatives.
+        #
+        # The extra allowance over the production rule is internal/testsupport
+        # and nothing else. That is where the keypairs, the token minting and
+        # (task B1) FakeAuth live, so it is the one shared-kernel package a
+        # transport test has a reason to reach for. A test that finds itself
+        # wanting internal/db wants a repository fake or an integration test in
+        # infrastructure, not a wider fence.
+        #
+        # Two file globs, not one: transport test files sit directly in
+        # modules/<m>/transport/, and a `transport/**/*_test.go` pattern needs
+        # at least one intermediate directory to match — gobwas/glob's `**`
+        # would have to match the empty string and still supply the following
+        # separator, which it cannot. The one-level pattern is the one that
+        # matches every test file in the tree today; the nested one covers a
+        # future subpackage. See the note on list-mode: lax above — it is
+        # load-bearing here for the same reason.
+        transport-test-kernel-access:
+          list-mode: lax
+          files:
+            - "**/modules/*/transport/*_test.go"
+            - "**/modules/*/transport/**/*_test.go"
+          allow:
+            - github.com/sujanto-gaws/kopiochi/internal/authn
+            - github.com/sujanto-gaws/kopiochi/internal/httpx
+            - github.com/sujanto-gaws/kopiochi/internal/testsupport
+          deny:
+            - pkg: github.com/sujanto-gaws/kopiochi/internal
+              desc: transport tests may use only internal/authn, internal/httpx and internal/testsupport from the shared kernel
+
         # R3 — the shared kernel is shared. The moment it knows about one
         # business module, it stops being shared and the dependency inverts
         # for the whole tree.
