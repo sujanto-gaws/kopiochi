@@ -158,6 +158,180 @@ func TestPlatformDoesNotImportModules(t *testing.T) {
 	}
 }
 
+// authnPkg is the authentication contract: who the caller is, expressed as a
+// Principal and a Middleware, with no opinion about how the caller proved it.
+const authnPkg = internalPrefix + "authn"
+
+// authnAreas lists the only parts of the tree allowed to import authnPkg.
+//
+// Each entry names an *area*, and an area covers the package itself plus
+// everything beneath it. "modules/*" expands the star across exactly one
+// segment — the module name — so it covers modules/user and
+// modules/user/transport alike. See underArea.
+//
+// Why these four and nothing else:
+//
+//   - modules/* — the consumers. A module's transport layer depends on a
+//     Principal instead of on whichever context key identity happens to use
+//     today, which is the whole reason the contract exists.
+//   - internal/httpx — owns the canonical 401 the contract's rejection path
+//     produces. It does not import authn today (Unauthorized deliberately
+//     takes only w and r), and is listed so that the day it needs to, the
+//     fence permits it rather than being widened under time pressure.
+//   - internal/testsupport — FakeAuth returns an authn.Middleware, so it
+//     cannot be written without this import.
+//   - internal/authn/authntest — the conformance suite takes an
+//     authn.Middleware as its subject.
+//
+// Note the list does not include cmd/**. The composition root wires identity's
+// middleware into a module's config today by inference, never naming the type,
+// so it needs no entry; if that changes, widening the fence is a decision to
+// take deliberately rather than a diff to wave through.
+var authnAreas = []string{
+	modulePrefix + "*",
+	internalPrefix + "httpx",
+	internalPrefix + "testsupport",
+	authnPkg + "/authntest",
+}
+
+// TestOnlyDesignatedPackagesImportAuthn fences the authentication contract.
+//
+// internal/authn is the kernel every module's transport rests on, and a
+// contract is only replaceable while the set of things that know about it
+// stays small and named. An import from anywhere else is how the SPI stops
+// being an SPI: the infrastructure layer starts reading Principals, the
+// domain grows an opinion about bearer tokens, and swapping the identity
+// implementation for another one stops being a composition-root decision.
+//
+// Unlike the depguard rules in .golangci.yml, which match file globs and so
+// only police the layers someone thought to list, this walks the real import
+// graph and therefore covers packages that do not exist yet.
+func TestOnlyDesignatedPackagesImportAuthn(t *testing.T) {
+	pkgs := loadPackages(t, "github.com/sujanto-gaws/kopiochi/...")
+
+	var edges int
+	for _, p := range pkgs {
+		importer := normalize(p.PkgPath)
+		// "" is the synthetic test main. A package importing itself is what
+		// an external _test package looks like after normalization, and
+		// internal/authn is trivially allowed to be internal/authn.
+		if importer == "" || importer == authnPkg {
+			continue
+		}
+
+		for imp := range p.Imports {
+			if normalize(imp) != authnPkg {
+				continue
+			}
+			edges++
+			if mayImportAuthn(importer) {
+				continue
+			}
+			t.Errorf("%s imports %s: only modules/*, internal/httpx, internal/testsupport and "+
+				"internal/authn/authntest may depend on the authentication contract (R1/R3). "+
+				"Accept an authn.Middleware or an authn.Principal as a parameter and let "+
+				"cmd/api/container.go supply it, rather than importing the contract here.",
+				p.PkgPath, imp)
+		}
+	}
+
+	// No importer at all means the rule inspected nothing and would keep
+	// passing however the fence were broken — the same vacuous green the
+	// layer tests above guard against.
+	if edges == 0 {
+		t.Fatal("no package imports " + authnPkg + "; this rule proves nothing and the contract may have moved")
+	}
+}
+
+// mayImportAuthn reports whether pkgPath falls inside one of authnAreas.
+func mayImportAuthn(pkgPath string) bool {
+	for _, area := range authnAreas {
+		if underArea(area, pkgPath) {
+			return true
+		}
+	}
+	return false
+}
+
+// underArea reports whether pkgPath is area or a package beneath it, with "*"
+// matching exactly one path segment.
+//
+// Recursion is deliberate and uniform: an area is a region of the tree, and a
+// subpackage of a permitted region is part of that region — modules/user and
+// modules/user/transport are both "a module", internal/testsupport/sub is
+// still test support. The alternative, exact matching, fences on a package
+// list rather than on a boundary, so the first subpackage anyone adds gets
+// flagged for being new rather than for being wrong.
+//
+// Matching is segment-by-segment because a string prefix would let
+// internal/httpxfoo pass as internal/httpx.
+func underArea(area, pkgPath string) bool {
+	areaSegs := strings.Split(area, "/")
+	pkgSegs := strings.Split(pkgPath, "/")
+	if len(pkgSegs) < len(areaSegs) {
+		return false
+	}
+	for i, seg := range areaSegs {
+		if seg != "*" && seg != pkgSegs[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// TestMayImportAuthnSemantics pins what the fence actually permits, because
+// the rule above only fails when the tree is wrong: a matcher that quietly
+// permitted everything, or nothing beyond the exact four strings, would look
+// identical in a green run. The prefix cases are the ones worth having —
+// "internal/httpxfoo" is a real way for a string-prefix matcher to hand out
+// access to a package nobody listed.
+func TestMayImportAuthnSemantics(t *testing.T) {
+	const repo = "github.com/sujanto-gaws/kopiochi/"
+
+	cases := []struct {
+		pkg  string
+		want bool
+	}{
+		// modules/* is recursive: the module root and every layer under it.
+		{"modules/user", true},
+		{"modules/user/transport", true},
+		{"modules/identity/transport/handlers", true},
+		{"modules/identity/infrastructure/persistence/repository", true},
+		{"modules", false},
+
+		// The three named internal areas, each recursive.
+		{"internal/httpx", true},
+		{"internal/httpx/middleware", true},
+		{"internal/testsupport", true},
+		{"internal/testsupport/sub", true},
+		{"internal/authn/authntest", true},
+		{"internal/authn/authntest/fixture", true},
+
+		// Segment matching, not string prefixes.
+		{"internal/httpxfoo", false},
+		{"internal/testsupportive", false},
+		{"modulesfoo/bar", false},
+
+		// internal/authn itself is not an area; the rule skips it as a
+		// self-import rather than matching it here.
+		{"internal/authn", false},
+
+		// Everything else, including the composition root.
+		{"internal/db", false},
+		{"internal/config", false},
+		{"internal/platform/secret", false},
+		{"cmd/api", false},
+		{"tools/archtest", false},
+		{"internal", false},
+	}
+
+	for _, tc := range cases {
+		if got := mayImportAuthn(repo + tc.pkg); got != tc.want {
+			t.Errorf("mayImportAuthn(%q) = %v, want %v", tc.pkg, got, tc.want)
+		}
+	}
+}
+
 // TestDomainLayerStaysPure enforces R1 for the innermost layer: a module's
 // domain package may use the standard library and internal/platform, and
 // nothing else. The ORM, the router, the config loader and the logger are all

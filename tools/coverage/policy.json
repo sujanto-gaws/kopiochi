@@ -16,6 +16,11 @@
       "why": "Validate is the only thing standing between a bad values file and a running process."
     },
     {
+      "pattern": "internal/authn/authntest",
+      "min": 90,
+      "why": "The conformance suite every replacement middleware is trusted by. Floored rather than exempted alongside internal/testsupport, because the two fail differently: a broken fake breaks the tests that use it, loudly, while a broken suite passes everything put through it. An uncovered branch here is a conformance assertion that never runs. Listed before internal/authn because that pattern is non-recursive and the order is the file's contract, not an accident."
+    },
+    {
       "pattern": "internal/authn",
       "min": 90,
       "why": "The authentication contract itself. Every rejection path here is a 401 that some client depends on being uniform, and an uncovered branch is an auth decision nobody tested."
