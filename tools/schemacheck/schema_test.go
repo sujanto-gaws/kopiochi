@@ -20,6 +20,7 @@ import (
 
 	"github.com/sujanto-gaws/kopiochi/internal/testsupport"
 	identitymodels "github.com/sujanto-gaws/kopiochi/modules/identity/infrastructure/persistence/models"
+	notifmodels "github.com/sujanto-gaws/kopiochi/modules/notification/infrastructure/persistence/models"
 	usermodels "github.com/sujanto-gaws/kopiochi/modules/user/infrastructure/persistence/models"
 )
 
@@ -46,6 +47,8 @@ func TestModelsMatchMigratedSchema(t *testing.T) {
 		{"auth_users", identitymodels.BunUser{}},
 		{"auth_refresh_tokens", identitymodels.RefreshTokenRow{}},
 		{"auth_mfa_backup_codes", identitymodels.MfaBackupCodeRow{}},
+		{"notifications", notifmodels.NotificationRow{}},
+		{"notification_preferences", notifmodels.NotificationPreferenceRow{}},
 	}
 
 	for _, tc := range cases {
