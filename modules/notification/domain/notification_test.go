@@ -316,6 +316,132 @@ func TestRecordFailureRejectedOutsideSending(t *testing.T) {
 	}
 }
 
+// A recovered stall re-enters the claim queue on the same schedule a failure
+// would have earned, and — the whole point of the method — spends an attempt on
+// the way. A sweep that only flipped the status would reset a row that hangs
+// the worker every single time, forever.
+func TestRecoverStalledSchedulesRetry(t *testing.T) {
+	n := &Notification{Status: StatusSending, Attempts: 1, NextAttemptAt: testNow}
+
+	if err := n.RecoverStalled(testNow, 90*time.Second, 6); err != nil {
+		t.Fatalf("RecoverStalled: %v", err)
+	}
+
+	if n.Status != StatusPending {
+		t.Errorf("Status = %q, want %q — a recovered stall returns to the claim queue", n.Status, StatusPending)
+	}
+	if n.Attempts != 2 {
+		t.Errorf("Attempts = %d, want 2 — recovery consumes the retry budget", n.Attempts)
+	}
+	want := testNow.Add(90 * time.Second)
+	if !n.NextAttemptAt.Equal(want) {
+		t.Errorf("NextAttemptAt = %v, want %v", n.NextAttemptAt, want)
+	}
+	if n.LastError != "delivery stalled: claimed but never settled" {
+		t.Errorf("LastError = %q, want the stall reason", n.LastError)
+	}
+}
+
+func TestRecoverStalledDeadLettersOnExhaustion(t *testing.T) {
+	// Fifth attempt of a six-attempt budget: still recoverable.
+	n := &Notification{Status: StatusSending, Attempts: 4}
+	if err := n.RecoverStalled(testNow, time.Minute, 6); err != nil {
+		t.Fatalf("RecoverStalled: %v", err)
+	}
+	if n.Status != StatusPending {
+		t.Fatalf("Attempts 5 of 6: Status = %q, want %q", n.Status, StatusPending)
+	}
+
+	// Sixth: the budget is gone, and a row that has stalled six times is a row
+	// that takes the worker down every time it is claimed.
+	n = &Notification{Status: StatusSending, Attempts: 5}
+	if err := n.RecoverStalled(testNow, time.Minute, 6); err != nil {
+		t.Fatalf("RecoverStalled: %v", err)
+	}
+	if n.Status != StatusDead {
+		t.Fatalf("Attempts 6 of 6: Status = %q, want %q", n.Status, StatusDead)
+	}
+	if n.Attempts != 6 {
+		t.Errorf("Attempts = %d, want 6", n.Attempts)
+	}
+	if n.LastError != "delivery stalled: claimed but never settled" {
+		t.Errorf("LastError = %q — a dead row must say why it died", n.LastError)
+	}
+	// Nothing schedules a dead row, so the retry stamp must stay untouched.
+	if !n.NextAttemptAt.IsZero() {
+		t.Errorf("NextAttemptAt = %v, want unset on a dead row", n.NextAttemptAt)
+	}
+}
+
+// The same caller-supplied budget RecordFailure honours, including the values
+// below 1 that make the very first stall fatal.
+func TestRecoverStalledMaxAttemptsIsCallerSupplied(t *testing.T) {
+	for _, max := range []int{-1, 0, 1} {
+		n := &Notification{Status: StatusSending}
+		if err := n.RecoverStalled(testNow, time.Minute, max); err != nil {
+			t.Fatalf("maxAttempts=%d: %v", max, err)
+		}
+		if n.Status != StatusDead {
+			t.Errorf("maxAttempts=%d: Status = %q, want %q", max, n.Status, StatusDead)
+		}
+		if n.Attempts != 1 {
+			t.Errorf("maxAttempts=%d: Attempts = %d, want 1", max, n.Attempts)
+		}
+	}
+
+	n := &Notification{Status: StatusSending}
+	if err := n.RecoverStalled(testNow, time.Minute, 2); err != nil {
+		t.Fatalf("RecoverStalled: %v", err)
+	}
+	if n.Status != StatusPending {
+		t.Errorf("maxAttempts=2, first stall: Status = %q, want %q", n.Status, StatusPending)
+	}
+}
+
+// Only a claimed row can be stalled. This is the test that pins the explicit
+// source check in RecoverStalled: both of its destinations have a second
+// in-arrow — failed -> pending and failed -> dead are legal moves — so leaving
+// the destination transition to police the source would let a sweep that
+// mis-selects a failed row spend its budget or dead-letter it outright.
+func TestRecoverStalledRejectedOutsideSending(t *testing.T) {
+	for _, from := range []Status{StatusPending, StatusFailed, StatusSent, StatusDead} {
+		n := &Notification{Status: from, Attempts: 3, NextAttemptAt: testNow, LastError: "earlier reason"}
+
+		err := n.RecoverStalled(testNow.Add(time.Hour), time.Minute, 6)
+		if !errors.Is(err, ErrInvalidTransition) {
+			t.Errorf("from %q: err = %v, want ErrInvalidTransition", from, err)
+		}
+		if n.Status != from {
+			t.Errorf("from %q: Status = %q, want untouched", from, n.Status)
+		}
+		if n.Attempts != 3 {
+			t.Errorf("from %q: Attempts = %d, want untouched", from, n.Attempts)
+		}
+		if !n.NextAttemptAt.Equal(testNow) {
+			t.Errorf("from %q: NextAttemptAt moved on a refused transition", from)
+		}
+		if n.LastError != "earlier reason" {
+			t.Errorf("from %q: LastError = %q, want untouched", from, n.LastError)
+		}
+	}
+}
+
+// The refusal names both ends, like every other rejected move, so an operator
+// reading the log line knows what the sweep tried to do.
+func TestRecoverStalledErrorNamesBothEnds(t *testing.T) {
+	n := &Notification{Status: StatusSent}
+
+	err := n.RecoverStalled(testNow, time.Minute, 6)
+	if err == nil {
+		t.Fatal("want an error")
+	}
+	for _, want := range []string{string(StatusSent), string(StatusPending)} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q does not name %q", err, want)
+		}
+	}
+}
+
 func TestLastErrorIsTruncated(t *testing.T) {
 	long := strings.Repeat("x", maxLastErrorLen+200)
 

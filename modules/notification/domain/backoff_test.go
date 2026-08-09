@@ -255,7 +255,7 @@ func TestBackoffComposesWithRecordFailure(t *testing.T) {
 		}
 
 		now = n.NextAttemptAt
-		if err := n.Transition(StatusSending); err != nil {
+		if err := n.transitionTo(StatusSending); err != nil {
 			t.Fatalf("re-claim: %v", err)
 		}
 	}
