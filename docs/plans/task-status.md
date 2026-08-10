@@ -19,25 +19,25 @@ States: pending | dispatched | in-review | blocked | merged | escalated
 | B3  | test-guardian | **merged** | #30 (`1a72344`) | APPROVE-WITH-NOTES |
 | D4  | persistence-engineer | **merged** | #29 (`717642b`) | APPROVE-WITH-NOTES |
 | B4  | test-guardian | **merged** | #31 (`9c0ede5`) | APPROVE-WITH-NOTES |
-| **T3** | platform-engineer | **approved — open PR #33** | `7569689`, `3ed26fa` | APPROVE-WITH-NOTES |
+| **T3** | platform-engineer | **merged** | #33 | APPROVE-WITH-NOTES |
 | B2a | transport-engineer | **superseded by E16-3** (was BLOCKED — E16) | - | - |
-| T2  | test-guardian | **in-review** | #39 (`00fa2e5`) | pending |
+| T2  | test-guardian | **merged** (via #35, not my dispatch — PROCESS-4) | #35 (`36784b6`) | re-review pending on `36784b6` |
 | T4  | platform-engineer | ready — **fix the lint job** (see E8/Q2) | - | - |
-| T5  | platform-engineer | ready — **swagger cold-cache fix** (see SWAGGER) | - | - |
+| T5  | platform-engineer | **merged** | #36 | not gated by me — landed from a prior session |
 | C1  | docs-scribe | **ready** — Phase B complete | - | - |
 | D5  | platform-engineer | **BLOCKED — E11, E13, E14** | - | - |
 | D6  | platform-engineer | **BLOCKED — E9b, E9c, E12** | - | - |
 | D7  | transport-engineer | **UNBLOCKED** — needs D6 | - | - |
 | D8  | platform-engineer | **BLOCKED — E15, E11** | - | - |
 | D9a/D9b, D10 | domain / platform | pending | - | - |
-| E16-P | test-guardian | **in-review** | #37 (`1dc6aa7`) | pending |
+| E16-P | test-guardian | **merged** | #37 (`1dc6aa7`) | verdict pending — merged ahead of it (PROCESS-5) |
 | E16-1 | persistence-engineer | **BLOCKED — E20, E22** — new migration + bun model | - | - |
 | E16-2 | domain-engineer | pending — needs E16-1 merged | - | - |
 | E16-3 | transport-engineer | pending — needs E16-2 merged; **closes E16 / B2a** | - | - |
 | E16-4 | docs-scribe | pending — needs E16-3 merged; carries **E19**, BL40 | - | - |
 | E16-5 | unassigned | **UNSCOPED — E21** (`cmd/generator` reproduces the defect) | - | - |
 
-**Phase A and Phase B are complete on `main`.** Open PRs: **#33** (T3), **#37** (E16-P), **#39** (T2), **#38** (board).
+**Phase A and Phase B are complete on `main`.** No open code PRs; #33/#35/#36/#37/#38 all merged.
 `gh pr merge` and pushes to `main` are blocked by the sandbox classifier, so a human
 merges; branch pushes and PR creation work.
 
@@ -69,6 +69,31 @@ correct entry.
 **second toolchain or in CI**. A/B on one machine is not a mechanism.
 
 ---
+
+## PROCESS-4 — I dispatched a task that was already written, and it cost a duplicate PR
+At session start `git branch` reported **`test/T2-authn-layer-fence: 1 commits ahead`**. I
+read that line as an aborted attempt and dispatched T2 as if unstarted — I never opened the
+commit. It was T2, finished. It merged as **#35 (`36784b6`)** while my duplicate was being
+written, and my branch then conflicted in the one file both touched. Closed as **#39**, not
+rebased, not force-merged; the branch stays in history.
+Both versions add the same two entries and both keep the fence's `modules/*` recursion; the
+merged one spells the key as the existing `authnPkg` constant, mine as `internalPrefix + "authn"`.
+**Compounding cause:** the T2 row I trusted said "ready", and it came from the stale board of
+PROCESS-3. Two stale sources agreeing is not corroboration when they share an origin.
+**Standing correction:** a precondition check is `git log <branch>` and the **contents** of
+any branch bearing the task's id — never the board row alone, and never a branch's
+ahead-count. "Ahead by N" is a question, not an answer.
+**Not wasted:** the agent reproduced the gap empirically — an `internal/authn` import planted
+in `modules/user/domain` and `modules/user/application` left `make arch` **green** — which is
+independent confirmation that what #35 shipped was necessary rather than defensive.
+
+## PROCESS-5 — two PRs merged ahead of their gate verdict
+**#37 (E16-P)** and **#35 (T2)** are on `main` while the arch-reviewer dispatched against them
+was still running. Merges are the human's to make and pushes to `main` are human-only, so this
+is not a violation of the gate by me — but it does mean the verdicts arrive **after** the code
+ships. **Handling:** verdicts still land on the board, and a BLOCK becomes a fix-forward task
+against `main` rather than a fix on an open branch. The T2 review is being re-pointed at
+`36784b6`, since that is the version that actually shipped.
 
 ## PROCESS-3 — two working-tree hazards, both mine to prevent
 1. **I began this session on a stale checkout.** The tree sat on `ci/T5-swagger-cold-cache`,
