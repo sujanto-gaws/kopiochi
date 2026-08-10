@@ -21,7 +21,7 @@ States: pending | dispatched | in-review | blocked | merged | escalated
 | B4  | test-guardian | **merged** | #31 (`9c0ede5`) | APPROVE-WITH-NOTES |
 | **T3** | platform-engineer | **approved — open PR #33** | `7569689`, `3ed26fa` | APPROVE-WITH-NOTES |
 | B2a | transport-engineer | **superseded by E16-3** (was BLOCKED — E16) | - | - |
-| T2  | test-guardian | **dispatched** | `feat/T2-authn-layer-fence` | - |
+| T2  | test-guardian | **in-review** | #39 (`00fa2e5`) | pending |
 | T4  | platform-engineer | ready — **fix the lint job** (see E8/Q2) | - | - |
 | T5  | platform-engineer | ready — **swagger cold-cache fix** (see SWAGGER) | - | - |
 | C1  | docs-scribe | **ready** — Phase B complete | - | - |
@@ -37,7 +37,7 @@ States: pending | dispatched | in-review | blocked | merged | escalated
 | E16-4 | docs-scribe | pending — needs E16-3 merged; carries **E19**, BL40 | - | - |
 | E16-5 | unassigned | **UNSCOPED — E21** (`cmd/generator` reproduces the defect) | - | - |
 
-**Phase A and Phase B are complete on `main`.** Open PRs: **#33** (T3), **#37** (E16-P).
+**Phase A and Phase B are complete on `main`.** Open PRs: **#33** (T3), **#37** (E16-P), **#39** (T2), **#38** (board).
 `gh pr merge` and pushes to `main` are blocked by the sandbox classifier, so a human
 merges; branch pushes and PR creation work.
 
