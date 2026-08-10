@@ -1,0 +1,13 @@
+{
+  "method": "PUT",
+  "path": "/api/v1/users/2",
+  "caller_subject": "11111111-1111-4111-8111-111111111111",
+  "request_body": "{\"name\":\"Overwritten By A\",\"email\":\"attacker@example.test\"}",
+  "status": 200,
+  "content_type": "application/json",
+  "body": "{\"id\":2,\"name\":\"Overwritten By A\",\"email\":\"attacker@example.test\",\"created_at\":\"2026-01-02T03:04:05Z\",\"updated_at\":\"2026-01-02T03:04:05Z\"}\n",
+  "store_after": [
+    "id=1 name=\"Alice Example\" email=\"alice@example.test\"",
+    "id=2 name=\"Overwritten By A\" email=\"attacker@example.test\""
+  ]
+}

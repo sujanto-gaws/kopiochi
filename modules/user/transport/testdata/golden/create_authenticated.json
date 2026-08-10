@@ -1,0 +1,14 @@
+{
+  "method": "POST",
+  "path": "/api/v1/users",
+  "caller_subject": "11111111-1111-4111-8111-111111111111",
+  "request_body": "{\"name\":\"Carol Example\",\"email\":\"carol@example.test\"}",
+  "status": 201,
+  "content_type": "application/json",
+  "body": "{\"id\":3,\"name\":\"Carol Example\",\"email\":\"carol@example.test\",\"created_at\":\"2026-01-02T03:04:05Z\",\"updated_at\":\"2026-01-02T03:04:05Z\"}\n",
+  "store_after": [
+    "id=1 name=\"Alice Example\" email=\"alice@example.test\"",
+    "id=2 name=\"Bob Example\" email=\"bob@example.test\"",
+    "id=3 name=\"Carol Example\" email=\"carol@example.test\""
+  ]
+}
