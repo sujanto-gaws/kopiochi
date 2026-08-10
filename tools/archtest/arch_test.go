@@ -341,6 +341,19 @@ func TestMayImportAuthnSemantics(t *testing.T) {
 // depguard covers this too, but only for files matching its globs. This
 // applies to every modules/*/domain package that exists, including ones added
 // after the .golangci.yml globs were last thought about.
+//
+// internal/authn is on the list for a reason worth stating, because
+// TestOnlyDesignatedPackagesImportAuthn looks like it already covers it and
+// does not. That fence permits the area "modules/*", and an area is recursive
+// by design — modules/user and modules/user/transport are both "a module" —
+// so it permits modules/user/domain too. That recursion is load-bearing:
+// modules/user/module.go types its Config.AuthMiddleware as authn.Middleware
+// at the module root, so the fence cannot be narrowed to */transport. The
+// missing half belongs here instead: the fence answers "may this area know
+// the contract exists", the layer rules answer "may this layer know anything
+// beyond stdlib and internal/platform". A domain package that imports authn
+// has grown an opinion about who the caller is, which is R1's business, not
+// the fence's.
 func TestDomainLayerStaysPure(t *testing.T) {
 	forbidden := map[string]string{
 		"github.com/uptrace/bun":   "the ORM",
@@ -353,6 +366,7 @@ func TestDomainLayerStaysPure(t *testing.T) {
 		internalPrefix + "db":      "the database package",
 		internalPrefix + "httpx":   "the HTTP layer",
 		internalPrefix + "module":  "the module host contract",
+		internalPrefix + "authn":   "the authentication contract",
 	}
 
 	pkgs := loadPackages(t, modulePrefix+"...")
@@ -382,11 +396,20 @@ func TestDomainLayerStaysPure(t *testing.T) {
 // of R1: application services talk to the domain interfaces, and the
 // composition root decides which implementations satisfy them. An application
 // package that imports the ORM or the router has bypassed that inversion.
+//
+// internal/authn is denied here for the same reason it is denied in the domain
+// layer, and the same non-reason applies:
+// TestOnlyDesignatedPackagesImportAuthn's "modules/*" area is recursive and so
+// reaches modules/*/application unchallenged. Who the caller is arrives at this
+// layer as a use-case argument — an actor id, a scope already checked — decided
+// by transport, not read out of a request context by a service that then cannot
+// be called from a queue worker or a CLI.
 func TestApplicationLayerDoesNotTouchInfrastructure(t *testing.T) {
 	forbidden := map[string]string{
 		"github.com/uptrace/bun":   "the ORM",
 		"github.com/go-chi/chi/v5": "the HTTP router",
 		"github.com/jackc/pgx/v5":  "the database driver",
+		internalPrefix + "authn":   "the authentication contract",
 	}
 
 	pkgs := loadPackages(t, modulePrefix+"...")
