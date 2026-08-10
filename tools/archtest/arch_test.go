@@ -341,6 +341,16 @@ func TestMayImportAuthnSemantics(t *testing.T) {
 // depguard covers this too, but only for files matching its globs. This
 // applies to every modules/*/domain package that exists, including ones added
 // after the .golangci.yml globs were last thought about.
+//
+// internal/authn is on the list because TestOnlyDesignatedPackagesImportAuthn
+// cannot put it there. That rule permits modules/* recursively — it has to,
+// since a module types its middleware at the module root — so it says who may
+// import the contract, not which layer may. Without this entry a
+// modules/*/domain package could import authn with nothing objecting: it
+// compiles, depguard's domain-purity rule denies only bun/chi/viper/zerolog,
+// and the fence sees a permitted area. "The domain grows an opinion about
+// bearer tokens" is what that fence's doc claims to prevent; this is the half
+// of it that actually does.
 func TestDomainLayerStaysPure(t *testing.T) {
 	forbidden := map[string]string{
 		"github.com/uptrace/bun":   "the ORM",
@@ -353,6 +363,7 @@ func TestDomainLayerStaysPure(t *testing.T) {
 		internalPrefix + "db":      "the database package",
 		internalPrefix + "httpx":   "the HTTP layer",
 		internalPrefix + "module":  "the module host contract",
+		authnPkg:                   "the authentication contract",
 	}
 
 	pkgs := loadPackages(t, modulePrefix+"...")
@@ -382,11 +393,20 @@ func TestDomainLayerStaysPure(t *testing.T) {
 // of R1: application services talk to the domain interfaces, and the
 // composition root decides which implementations satisfy them. An application
 // package that imports the ORM or the router has bypassed that inversion.
+//
+// internal/authn is denied here for the same reason as in the domain rule, and
+// with an extra one specific to this layer: a use case that reads a Principal
+// is taking its caller identity from the HTTP request rather than from its own
+// arguments, which makes it untestable without a request and unusable from any
+// other entry point. Transport resolves the Principal and passes the subject
+// down as a parameter. See TestDomainLayerStaysPure for why
+// TestOnlyDesignatedPackagesImportAuthn cannot express this.
 func TestApplicationLayerDoesNotTouchInfrastructure(t *testing.T) {
 	forbidden := map[string]string{
 		"github.com/uptrace/bun":   "the ORM",
 		"github.com/go-chi/chi/v5": "the HTTP router",
 		"github.com/jackc/pgx/v5":  "the database driver",
+		authnPkg:                   "the authentication contract",
 	}
 
 	pkgs := loadPackages(t, modulePrefix+"...")
