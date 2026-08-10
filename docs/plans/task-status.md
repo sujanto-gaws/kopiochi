@@ -30,10 +30,10 @@ States: pending | dispatched | in-review | blocked | merged | escalated
 | D7  | transport-engineer | **UNBLOCKED** — needs D6 | - | - |
 | D8  | platform-engineer | **BLOCKED — E15, E11** | - | - |
 | D9a/D9b, D10 | domain / platform | pending | - | - |
-| E16-P | test-guardian | **merged** | #37 (`1dc6aa7`) | verdict pending — merged ahead of it (PROCESS-5) |
+| E16-P | test-guardian | **merged** | #37 (`1dc6aa7`) | **APPROVE-WITH-NOTES** |
 | E16-1 | persistence-engineer | **BLOCKED — E20, E22** — new migration + bun model | - | - |
 | E16-2 | domain-engineer | pending — needs E16-1 merged | - | - |
-| E16-3 | transport-engineer | pending — needs E16-2 merged; **closes E16 / B2a** | - | - |
+| E16-3 | transport-engineer | pending — needs E16-2; **closes E16 / B2a**; byte-identity on **GET, PUT and DELETE** (E23) | - | - |
 | E16-4 | docs-scribe | pending — needs E16-3 merged; carries **E19**, BL40 | - | - |
 | E16-5 | unassigned | **UNSCOPED — E21** (`cmd/generator` reproduces the defect) | - | - |
 
@@ -204,6 +204,27 @@ are sequenced, not parallel):
   survives (the D7 precedent).
 - **E16-4** docs — `BOILERPLATE.md`, `SWAGGER.md`, `README.md`, `MIGRATIONS.md` examples,
   plus **E19**'s contradiction and BL40.
+
+## E23 — the enumeration oracle is captured for GET only; PUT and DELETE are unguarded ⚠ small, must land before E16-3
+Raised by E16-P's reviewer. The probe recorded `get_not_found`, so after the fix
+`get_cross_user` can be checked byte-for-byte against it. **There is no `put_not_found` and no
+`delete_not_found`.** The obligation applies to all three vulnerable verbs: a cross-user `PUT`
+must be indistinguishable from a `PUT` against a genuinely absent id, and likewise `DELETE`.
+**`204 vs 404` enumerates the id space exactly as well as `200 vs 404` does** — and today the
+recorded cross-user answers are 200 and 204 while `modules/user/transport/user.go` maps
+`domain.ErrUserNotFound` to 404 on both routes, so the difference is real, exploitable, and
+currently unrecorded.
+**Proposed E16-P2** (test-guardian, same file, ~20 lines): add `put_not_found` and
+`delete_not_found` to `routeCases()` in `modules/user/transport/ownership_golden_test.go`,
+extend `TestIDORIsPresentToday` with the matching `require.NotEqual` pairs, and add the
+reviewer's N2 hardening — a `// E16: invert to require.Equal when the ownership check lands`
+marker on each assertion, so the refactor's checklist can grep for them instead of relying on a
+comment being read.
+**Why I am asking rather than dispatching:** it is a **new task**, and new tasks are yours. It
+is cheap, owner-consistent (that file is test-guardian's), and blocks nothing today since E16-1
+is already paused on E20/E22 — so approving it costs nothing, and declining it costs the guard
+on two of the three vulnerable verbs. **E16-3's acceptance criteria are amended on this board to
+require byte-identity on all three verbs regardless of how E23 is answered.**
 
 ## E19 — a MERGED doc contradicts the settled decision ⚠ needs a ruling before E16-1
 `docs/architectures/05-data/migration-strategy.md:249-251` states that `users` *"moves with
@@ -531,6 +552,13 @@ Every claim checked against **merged code**.
   imprecision in a comment, in the enforcement layer where comments have misled before (it was a
   fence docstring that made the B4 gap look covered). Fold into any future edit of that file.
 
+- **BL45** `modules/user/transport/helpers.go` sets `Content-Type: application/json`
+  **unconditionally before `WriteHeader`**, so `DELETE /api/v1/users/{id}` answers **204 with a
+  representation header and an empty body**. RFC 9110 says a 204 has no content. Found by
+  E16-P's goldens — the probe photographing an oddity nobody had noticed, which is what a probe
+  is for. `modules/identity/transport/helpers.go` reportedly took **live copies** of these
+  writers; check it for the same shape before anyone fixes one of them.
+
 # DEVIATIONS ACCEPTED
 - **A1 (4), A2 (1)+copy-on-write, A3 (2), A4 (2)** — adjudicated.
 - **T1 (1)** — **refused** my instruction to baseline five unmeasurable packages.
@@ -584,3 +612,46 @@ What the reviewer established, which now stands as the record for `36784b6`:
 **Not carried forward as work:** N2 (unnormalized `imp` in the layer tests — checked, no gap)
 and N5 (the new entries have no pinning test, which is true of every other entry in those maps
 and introduces no new asymmetry).
+
+---
+
+# E16-P — APPROVE-WITH-NOTES, and what the review established
+
+**The verdict applies to `main`:** the reviewer confirmed `git diff --stat 1dc6aa7 <main> -- modules/user/transport/`
+is empty, so the merged bytes are the reviewed bytes (PROCESS-5 notwithstanding).
+
+- **Nothing production changed, structurally.** All seven diff entries are `A` — zero `M`, zero
+  `D` — so "no test weakened, skipped or deleted" is proven by the shape of the diff rather than
+  by inspection. No `.golangci.yml`, no `policy.json`, no route table, no `cmd/api`.
+- **The goldens are honest recordings, not aspirations:** regenerated with `-update`, then
+  `git status --porcelain` came back empty.
+- **The `-update` absorption claim is TRUE, proven by simulation.** The reviewer patched
+  `GetUser()` to answer the not-found response for every id but 1 — a stand-in for the ownership
+  check — and ran the suite **with `-update`**. `TestCurrentUserRouteShapes` silently
+  re-recorded, as a camera should; **`TestIDORIsPresentToday` failed both subtests anyway**,
+  because it never touches `*updateGolden`. The fix cannot land unnoticed.
+- **The byte-identity obligation is genuinely checkable:** under the simulated fix `status`,
+  `content_type` and `body` all become equal between `get_cross_user` and `get_not_found`, and
+  the only remaining difference is `path` — a property of the request, not of the answer.
+- **All four deviations ACCEPTED**, the wider golden schema most emphatically: without
+  `store_after`, `delete_cross_user`'s `204 ""` is indistinguishable from a legitimate
+  self-delete, and *which row is gone* is the entire point of that case.
+- **Fixture honesty upheld**, and better than required: `TestIDORIsPresentToday`'s first subtest
+  asserts the cross-user body equals the owner's body, which is true **independent of any
+  fixture convention**. That is the honest way to state an IDOR in a codebase that cannot
+  express ownership.
+- **Arch clean on current `main`** with T2's fence merged — the transitive `testsupport → authn`
+  edge does not trip the new domain/application denials.
+- **Security:** no key material in the goldens, a consequence of choosing `testsupport.FakeAuth`
+  over minting real RS256 tokens.
+
+**Minor, recorded not actioned:** the agent cited `:65-83` for the fixture-convention comment;
+it is at `:68-83` (E1's citation discipline extends to line numbers). `get_owner` is called "the
+control" at `:145`, which oversells it — with no link between the two id spaces it traverses the
+same code as `get_cross_user` and proves nothing about ownership *today*; its value is entirely
+prospective.
+
+**Lint tooling — a real improvement in what this board can claim.** The reviewer's local
+`golangci-lint` is **v2.12.2 built with go1.25.12**, which parses the v2 config, so the tree has
+now actually been linted end to end. **BL1's two findings are therefore confirmed *complete*,
+not merely *reported*.** CI's v1.64.8 still cannot start.
