@@ -31,9 +31,9 @@ States: pending | dispatched | in-review | blocked | merged | escalated
 | D8  | platform-engineer | **BLOCKED — E15, E11** | - | - |
 | D9a/D9b, D10 | domain / platform | pending | - | - |
 | E16-P | test-guardian | **merged** | #37 (`1dc6aa7`) | **APPROVE-WITH-NOTES** |
-| E16-1 | persistence-engineer | **BLOCKED — E20, E22** — new migration + bun model | - | - |
-| E16-2 | domain-engineer | pending — needs E16-1 merged | - | - |
-| E16-3 | transport-engineer | pending — needs E16-2; **closes E16 / B2a**; byte-identity on **GET, PUT and DELETE** (E23) | - | - |
+| E16-1 | persistence-engineer | **BLOCKED — E22 only** (E20 answered) | - | - |
+| E16-2 | domain-engineer | **BLOCKED — E24** (empty DTOs) | - | - |
+| E16-3 | transport-engineer | **BLOCKED — E24**; byte-identity on GET/PUT/DELETE (E23) | - | - |
 | E16-4 | docs-scribe | pending — needs E16-3 merged; carries **E19**, BL40 | - | - |
 | E16-5 | unassigned | **UNSCOPED — E21** (`cmd/generator` reproduces the defect) | - | - |
 
@@ -236,21 +236,32 @@ Found by E16-P. **I do not edit docs and I do not adjudicate a merged doc agains
 decision.** Left standing, this becomes a legitimate review objection against E16-1.
 **Ask:** confirm the decision supersedes `:249-251`, and E16-4 rewrites that paragraph.
 
-## E20 — does the profile keep its own `name`/`email` columns? ⚠ blocks E16-1
-The overlap is exact on two columns: `auth_users.email TEXT NOT NULL` (unique on
-`lower(email)`) vs `users.email VARCHAR(255)` (unique on `lower(email)`); `auth_users.name
-TEXT` **nullable** vs `users.name VARCHAR(255) NOT NULL`.
-**E15 already rejected a second copy of a user's address** as a staleness hazard — a stale
-address means *"your password was changed"* is mailed to the address the attacker just
-replaced. Keying the profile by the identity uuid does not by itself remove the copy.
-**Evidence (E16-P, file:line in its report):** the profile's `email`/`name` have exactly
-**one** consumer — the `/api/v1/users` CRUD JSON echoing back what was posted. No handler,
-no sender, no template reads them; `GetUserByEmail` is **unreachable over HTTP** (transport's
-`UserService` interface omits it); `modules/notification` consumes no address at all.
-**Ask:** drop them (profile becomes uuid + timestamps + future profile-only fields, and the
-`users` response shape changes) or keep them (two copies of an email, permanently)?
-**I am not choosing:** it changes a public response shape and touches the same
-copy-of-identity-data question E15 was escalated on.
+## E20 — **ANSWERED 2026-08-10 (human): drop `name` and `email` from the profile.**
+Settled. The profile stops carrying a second copy of a person's identity data; `auth_users`
+owns `email` and `name`, and E15's staleness hazard is closed at the source rather than
+managed. Nothing downstream reads the profile's copies — E16-P established that their only
+consumer is the `/api/v1/users` JSON echoing back what was posted.
+
+**What the profile table becomes.** Verified against `migrations/00001_create_users.sql:3-9`,
+which is the whole table: `id`, `name`, `email`, `created_at`, `updated_at`. Remove two, rekey
+the first, and the profile is **`id uuid` (= `auth_users.id`) + `created_at` + `updated_at`**.
+
+**Three consequences that follow mechanically, and are not open questions:**
+1. `GetUserByEmail` (`application/service.go:54-55`, `domain/repository.go:11`) becomes
+   impossible and is deleted, not ported. It was already unreachable over HTTP — transport's
+   `UserService` interface never declared it.
+2. `domain.Validate`'s body was entirely name/email rules; it empties out.
+3. **`00007`'s users work must be undone by the new migration**
+   (`00007_case_insensitive_identifiers.sql:73-78`): it dropped `users_email_key` and
+   `idx_users_email` and created `idx_users_email_lower` **on `lower(email)`**. That index
+   cannot survive the column. ⚠ **Reversibility trap for E16-1:** `00007`'s own `Down`
+   (`:83-87`) runs `ALTER TABLE users ADD CONSTRAINT users_email_key UNIQUE (email)`, so if the
+   new migration's `Down` does not restore an `email` column of the right shape, rolling back
+   past `00007` **fails outright**. And a `Down` can restore the *column* but never the
+   *values* — with rows present, restoring `email VARCHAR(255) UNIQUE NOT NULL` cannot succeed.
+   **This is a second, independent reason E22 must be answered before E16-1 is dispatched.**
+   Class warning already on this board (E8): any `goose.Down()` caller breaks when a newer
+   migration lands.
 
 ## E21 — `cmd/generator` reproduces the defect into every future module ⚠ unscoped, no owner
 `cmd/generator/main.go:202-206` hardcodes `PrimaryKey = {ID, int64, id}` with nothing
@@ -262,6 +273,39 @@ IDOR shape** — and E16's severity rests on exactly that amplification.
 This is a **new task, outside every existing task's file list** ⇒ scope escalation. Natural
 owner is platform-engineer (`cmd/**`), which then serialises against the `cmd/api`
 single-writer rule. **Ask:** in scope now, after E16-3, or a recorded non-goal?
+
+## E24 — dropping the columns empties the module's write API ⚠ NEW, blocks E16-2/E16-3
+Direct consequence of E20, verified in `modules/user/domain/dto.go:8-25`:
+`CreateUserRequest` is `{Name, Email}` and `UpdateUserRequest` is `{Name, Email}` — **every
+field either one has is a column you just dropped.** They become empty structs. `UserResponse`
+becomes `{id, created_at, updated_at}`.
+
+So after E16-2/E16-3 the module offers: `POST /api/v1/users` with an empty body, `PUT
+/api/v1/users/{id}` that can change nothing, `GET` returning two timestamps, `DELETE`. **A
+`PUT` with no writable field is not a route, it is a 200 that lies.** I will not quietly ship
+that, and I will not redesign a public API surface on my own authority.
+
+**Also in play: `modules/user` is the exemplar.** `BOILERPLATE.md:279` names
+`modules/user/transport/user.go` as the worked CRUD example adopters copy (the same
+amplification that makes E16 severe, and the subject of E21). An exemplar whose entity has no
+fields teaches nothing about CRUD.
+
+**Options, decision-ready:**
+- **(a) Keep four routes, shrink the DTOs.** `POST` takes no body and creates the *caller's own*
+  profile with `id` from the Principal — not from a body, which also removes the "unrestricted
+  creation behind mere authentication" leg of E16. `PUT` is deleted or answers 405.
+  Smallest diff; leaves a CRUD exemplar with nothing to C or U.
+- **(b) Reduce the surface honestly:** `GET /api/v1/users/me` + `DELETE`, drop `POST`/`PUT`.
+  The profile becomes an existence record. Cleanest semantics; biggest route-table change; the
+  exemplar stops being a CRUD example at all.
+- **(c) Give the profile real profile-only fields now** — `display_name`, `avatar_url`,
+  `locale`, `timezone` — so the module stays a meaningful CRUD exemplar and the four routes keep
+  their meaning. Note `display_name` is *not* `name` returning by the back door: it would be
+  profile-owned presentation data, with `auth_users.name` remaining the identity's legal/display
+  name. Largest scope; needs you to name the fields, since inventing a schema is not mine.
+
+**Recommendation withheld deliberately** — (b) and (c) are opposite answers to "what is this
+module *for*", which the plan does not settle and I am not entitled to settle.
 
 ## E22 — is there deployed `users` data? ⚠ blocks E16-1's back-fill decision
 Repo-side facts are settled (E16-P): **no seed data anywhere** — no seed SQL, no
@@ -276,6 +320,22 @@ match on a **mutable natural key**, which B2 already refused for the ownership c
 disposition explicitly open; `MIGRATIONS.md` says verify with `make migrate-status` against
 every environment first. **Ask:** clean break (drop/recreate), or back-fill by `lower(email)`
 with a documented fallback for profiles that match no identity?
+
+**ADDENDUM after E20 was answered — the question narrows but does NOT dissolve.**
+With `name` and `email` dropped, a surviving `users` row carries **no information except that a
+profile exists** for that identity, and that is reconstructible from `auth_users`. So a
+back-fill would preserve almost nothing. **But E20 also made rows actively dangerous:** the new
+migration's `Down` must restore `email VARCHAR(255) UNIQUE NOT NULL` for `00007`'s own `Down` to
+run at all, and **with rows present that restore cannot succeed** — a `Down` can recreate a
+column but never its values. So:
+- **No rows anywhere ⇒ clean break**, and reversibility is honest because there is nothing to
+  lose.
+- **Rows in some environment ⇒** you are choosing between a one-way migration (documented as
+  irreversible, contradicting `CLAUDE.md`'s reversible-migrations convention) and a `Down` that
+  fabricates placeholder emails to satisfy a `NOT NULL UNIQUE` restore — which I would refuse to
+  ship without you saying so explicitly.
+**The ask is now a yes/no:** does any environment have rows in `users`? `make migrate-status`
+per environment, per `MIGRATIONS.md`. Answer that and E16-1 goes out immediately.
 
 ## E18 — CI's coverage gate is red on `main`, and there are TWO failures behind it
 1. `modules/identity/infrastructure/persistence/repository` — **57.1% vs its 60% floor**.
