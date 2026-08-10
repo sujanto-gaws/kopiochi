@@ -20,8 +20,8 @@ States: pending | dispatched | in-review | blocked | merged | escalated
 | D4  | persistence-engineer | **merged** | #29 (`717642b`) | APPROVE-WITH-NOTES |
 | B4  | test-guardian | **merged** | #31 (`9c0ede5`) | APPROVE-WITH-NOTES |
 | **T3** | platform-engineer | **approved — open PR #33** | `7569689`, `3ed26fa` | APPROVE-WITH-NOTES |
-| B2a | transport-engineer | **BLOCKED — E16** | - | - |
-| T2  | test-guardian | ready — close the layer gap | - | - |
+| B2a | transport-engineer | **superseded by E16-3** (was BLOCKED — E16) | - | - |
+| T2  | test-guardian | **in-review** | #39 (`00fa2e5`) | pending |
 | T4  | platform-engineer | ready — **fix the lint job** (see E8/Q2) | - | - |
 | T5  | platform-engineer | ready — **swagger cold-cache fix** (see SWAGGER) | - | - |
 | C1  | docs-scribe | **ready** — Phase B complete | - | - |
@@ -30,8 +30,14 @@ States: pending | dispatched | in-review | blocked | merged | escalated
 | D7  | transport-engineer | **UNBLOCKED** — needs D6 | - | - |
 | D8  | platform-engineer | **BLOCKED — E15, E11** | - | - |
 | D9a/D9b, D10 | domain / platform | pending | - | - |
+| E16-P | test-guardian | **in-review** | #37 (`1dc6aa7`) | pending |
+| E16-1 | persistence-engineer | **BLOCKED — E20, E22** — new migration + bun model | - | - |
+| E16-2 | domain-engineer | pending — needs E16-1 merged | - | - |
+| E16-3 | transport-engineer | pending — needs E16-2 merged; **closes E16 / B2a** | - | - |
+| E16-4 | docs-scribe | pending — needs E16-3 merged; carries **E19**, BL40 | - | - |
+| E16-5 | unassigned | **UNSCOPED — E21** (`cmd/generator` reproduces the defect) | - | - |
 
-**Phase A and Phase B are complete on `main`.** Open PR: **#33** (T3).
+**Phase A and Phase B are complete on `main`.** Open PRs: **#33** (T3), **#37** (E16-P), **#39** (T2), **#38** (board).
 `gh pr merge` and pushes to `main` are blocked by the sandbox classifier, so a human
 merges; branch pushes and PR creation work.
 
@@ -64,7 +70,21 @@ correct entry.
 
 ---
 
-# ESCALATIONS — OPEN (13)
+## PROCESS-3 — two working-tree hazards, both mine to prevent
+1. **I began this session on a stale checkout.** The tree sat on `ci/T5-swagger-cold-cache`,
+   whose board is 496 lines and predates `5d319c3`; reading the working file gave me a
+   **superseded board**, including entries this board has since retracted.
+   **Standing correction:** read `git show origin/main:docs/plans/task-status.md` before
+   trusting the board — E1's rule, now applied to my own file.
+2. **A running agent checked its branch out in the shared working tree**, moving me off my
+   branch mid-edit; my board edit landed as an uncommitted change on *its* branch (reverted
+   before it could be committed). **Standing correction:** board edits happen in a dedicated
+   worktree, and dispatches tell agents to work in their own worktree — `cmd/api`'s
+   single-writer rule is useless if two agents share one checkout.
+
+---
+
+# ESCALATIONS — OPEN (16)
 
 Ordered by severity.
 
@@ -91,7 +111,7 @@ compare.** B2 refused three shortcuts, all upheld: `strconv.ParseInt(Subject)` (
 parses — "an outage that lints clean"), `Subject == chi.URLParam("id")` (always false, and
 *reads* like a real check), `Extra["email"]` (nil, and a mutable natural key).
 
-## E16-ARCH — one root problem; two of three instances dissolve
+## E16-ARCH — **DECIDED 2026-08-10 (human): option 1** — `users` becomes a profile keyed by the identity uuid
 - **Notification already keys on the identity uuid natively** ⇒ **D7 IS NOT BLOCKED**.
 - **D8/E15 needs no mapping** — only `auth_users.email` for an identity uuid.
 - **`modules/user` is the only module that does not key on the identity uuid.**
@@ -105,6 +125,97 @@ identity uuid — it *completes* the stated design.
 uuid? (2) if distinct → standardise its PK on the identity uuid (preferred; `p.Subject == id`
 becomes a *real* check) or add `auth_user_id uuid UNIQUE` (tactical, two keys forever).
 (3) unblock D7 now. (4) unblock D8/E15 now. (5) close the IDOR — **only this must wait.**
+
+**THE DECISION, as given (2026-08-10):** *"E16 — a profile keyed by the identity uuid."*
+Option 1. `users` stops being a separate entity and becomes the profile **of** an identity,
+keyed by `auth_users.id`. This is now a settled decision: I do not reinterpret it, agents do
+not reopen it, and anything that contradicts it gets escalated rather than resolved locally.
+
+**What the decision closes.** `p.Subject == id` becomes a *real* check, because for the first
+time there is a value to compare — the exact gap E16 named. Steps (3) and (4) above were
+never blocked on it: D7 and D8/E15 remain independent.
+
+**What it does not decide** — three questions it exposes, all escalated below and all
+answerable only by the human: **E19** (a merged doc says the opposite), **E20** (does the
+profile keep its own `name`/`email`?), **E22** (is there deployed `users` data to back-fill?).
+
+**One question it does NOT reopen — settled by existing binding policy, verified.** The
+reshape lands as a **new migration**; `00001_create_users.sql` is not edited.
+ADR-010 §"Applied migrations are immutable" (*"a mistake is corrected by a new migration,
+never by editing an existing one"*, and the ADR declares itself binding) and
+`MIGRATIONS.md:343-347` both say so, and E16-P verified the practice matches the policy:
+`git log --diff-filter=MRD -- migrations/` returns **empty output** — no migration file in
+this repo has ever been modified, renamed or deleted. The `users` constraint change of
+`00007` is the counter-precedent: it added a file rather than editing `00001`.
+
+**Decomposition** (E16-P → E16-1 → E16-2 → E16-3 → E16-4, each merged before the next; a
+uuid PK cannot be split across PRs without breaking `go build ./...` in between, so these
+are sequenced, not parallel):
+- **E16-P** *(merged/in-review, #37)* — goldens recording the defect: cross-user
+  GET/PUT/DELETE currently return **200 / 200 / 204**, with B's row overwritten and then
+  deleted. `get_cross_user` (200 + body) vs `get_not_found` (404 + `{"error":…}`) quantifies
+  the enumeration oracle the fix must close.
+- **E16-1** persistence — new migration + `UserDBModel`; `autoincrement` is invalid for a
+  uuid PK. Must land with the model in one commit or `tools/schemacheck` fails.
+- **E16-2** domain — `ID int64` → `uuid.UUID` through `domain/{user,dto,repository}.go` and
+  `application/service.go`, including deleting the `id <= 0` guard, which has no uuid analogue.
+- **E16-3** transport — `strconv.ParseInt` ×3 → uuid parse, `@Param id path int` ×3, and the
+  ownership check itself. **The cross-user response must be byte-identical to the
+  genuinely-not-found response**, or the 404 is a 403 with extra steps and the oracle
+  survives (the D7 precedent).
+- **E16-4** docs — `BOILERPLATE.md`, `SWAGGER.md`, `README.md`, `MIGRATIONS.md` examples,
+  plus **E19**'s contradiction and BL40.
+
+## E19 — a MERGED doc contradicts the settled decision ⚠ needs a ruling before E16-1
+`docs/architectures/05-data/migration-strategy.md:249-251` states that `users` *"moves with
+the profile-user module **rather than being reshaped**"* — the opposite of the decision. The
+same file already knows the problem (`:220-221`: the `BIGSERIAL`/uuid mismatch means *"any
+table backing them must use uuid to match"*) and warns at `:240` that the `users`/`products`
+migrations cannot be edited in place if any environment has applied them.
+Found by E16-P. **I do not edit docs and I do not adjudicate a merged doc against a
+decision.** Left standing, this becomes a legitimate review objection against E16-1.
+**Ask:** confirm the decision supersedes `:249-251`, and E16-4 rewrites that paragraph.
+
+## E20 — does the profile keep its own `name`/`email` columns? ⚠ blocks E16-1
+The overlap is exact on two columns: `auth_users.email TEXT NOT NULL` (unique on
+`lower(email)`) vs `users.email VARCHAR(255)` (unique on `lower(email)`); `auth_users.name
+TEXT` **nullable** vs `users.name VARCHAR(255) NOT NULL`.
+**E15 already rejected a second copy of a user's address** as a staleness hazard — a stale
+address means *"your password was changed"* is mailed to the address the attacker just
+replaced. Keying the profile by the identity uuid does not by itself remove the copy.
+**Evidence (E16-P, file:line in its report):** the profile's `email`/`name` have exactly
+**one** consumer — the `/api/v1/users` CRUD JSON echoing back what was posted. No handler,
+no sender, no template reads them; `GetUserByEmail` is **unreachable over HTTP** (transport's
+`UserService` interface omits it); `modules/notification` consumes no address at all.
+**Ask:** drop them (profile becomes uuid + timestamps + future profile-only fields, and the
+`users` response shape changes) or keep them (two copies of an email, permanently)?
+**I am not choosing:** it changes a public response shape and touches the same
+copy-of-identity-data question E15 was escalated on.
+
+## E21 — `cmd/generator` reproduces the defect into every future module ⚠ unscoped, no owner
+`cmd/generator/main.go:202-206` hardcodes `PrimaryKey = {ID, int64, id}` with nothing
+overriding it; `:714` `if id <= 0`; `:910` `bun:"id,pk,autoincrement"`; `:979/1051/1094`
+`@Param id path int`; `:988/1061/1103` `strconv.ParseInt`. `BOILERPLATE.md:279` points
+adopters at `modules/user/transport/user.go` as the worked example.
+**Fixing `modules/user` without the generator means the next generated module ships the same
+IDOR shape** — and E16's severity rests on exactly that amplification.
+This is a **new task, outside every existing task's file list** ⇒ scope escalation. Natural
+owner is platform-engineer (`cmd/**`), which then serialises against the `cmd/api`
+single-writer rule. **Ask:** in scope now, after E16-3, or a recorded non-goal?
+
+## E22 — is there deployed `users` data? ⚠ blocks E16-1's back-fill decision
+Repo-side facts are settled (E16-P): **no seed data anywhere** — no seed SQL, no
+`docker-entrypoint-initdb.d`, no Makefile seed target; every integration test calls
+`TruncateAll` at **setup**, and `internal/testsupport/db.go:145-169` discovers tables
+dynamically, so a reshaped `users` is truncated with no helper edit. A clean break therefore
+costs **nothing** in dev/test.
+A back-fill is also *possible* if rows exist: `email` is joinable both ways —
+`idx_users_email_lower` and `idx_auth_users_email_lower`, compatible types — though it would
+match on a **mutable natural key**, which B2 already refused for the ownership check.
+**Only you know whether a deployed environment holds rows.** ADR-010:113-117 leaves the
+disposition explicitly open; `MIGRATIONS.md` says verify with `make migrate-status` against
+every environment first. **Ask:** clean break (drop/recreate), or back-fill by `lower(email)`
+with a documented fallback for profiles that match no identity?
 
 ## E18 — CI's coverage gate is red on `main`, and there are TWO failures behind it
 1. `modules/identity/infrastructure/persistence/repository` — **57.1% vs its 60% floor**.
@@ -345,6 +456,24 @@ Every claim checked against **merged code**.
   undetected. The image is now coupled to `go.mod` by an unenforced comment.
 
 ---
+
+- **BL38** `modules/user/domain/service.go` is **dead** — nothing implements or references it,
+  and its signatures are incompatible with `application.Service`. Cheapest handling is
+  deletion during E16-2 rather than porting it to uuid (found by E16-P).
+- **BL39** `modules/*/transport` has **no coverage entry of any kind** — no floor, no
+  baseline, not exempt, not in `requires_database`. `matchPattern` (`tools/coverage/main.go:292-322`)
+  is **exact-arity** without a trailing `/...`, so `modules/*/domain` can never match a
+  4-segment path, and both check branches are `ok`-guarded — a package with no entry reports
+  any figure, **including 0%, and passes**. `modules/user/transport` measures 100% and
+  contributes nothing either way. Extends BL19; a `modules/*/transport` floor *is* expressible
+  today, it simply is not written. Do it after E16-3, not before — the refactor will move the number.
+- **BL40** `internal/metrics`' docs and tests are premised on **enumerable numeric user ids**
+  (`SERVER.md:279-281`: "a crawler walking `/api/v1/users/1 … /9999999`"). A uuid path defuses
+  the worked example. Docs work, folded into E16-4.
+- **BL41** Two stale strings found in passing by E16-P, deliberately not fixed:
+  `modules/identity/infrastructure/persistence/models/auth_models.go:14` says it "maps to the
+  `users` table" while its tag says `auth_users`; `scripts/init.sh:171-172` still removes
+  `internal/domain/user`, a path deleted in 3.6b.
 
 # DEVIATIONS ACCEPTED
 - **A1 (4), A2 (1)+copy-on-write, A3 (2), A4 (2)** — adjudicated.
