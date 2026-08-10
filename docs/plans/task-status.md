@@ -21,7 +21,7 @@ States: pending | dispatched | in-review | blocked | merged | escalated
 | B4  | test-guardian | **merged** | #31 (`9c0ede5`) | APPROVE-WITH-NOTES |
 | **T3** | platform-engineer | **merged** | #33 | APPROVE-WITH-NOTES |
 | B2a | transport-engineer | **superseded by E16-3** (was BLOCKED — E16) | - | - |
-| T2  | test-guardian | **merged** (via #35, not my dispatch — PROCESS-4) | #35 (`36784b6`) | re-review pending on `36784b6` |
+| T2  | test-guardian | **merged** (via #35 — PROCESS-4) | #35 (`36784b6`) | **APPROVE** (verdict transferred, see below) |
 | T4  | platform-engineer | ready — **fix the lint job** (see E8/Q2) | - | - |
 | T5  | platform-engineer | **merged** | #36 | not gated by me — landed from a prior session |
 | C1  | docs-scribe | **ready** — Phase B complete | - | - |
@@ -69,6 +69,20 @@ correct entry.
 **second toolchain or in CI**. A/B on one machine is not a mechanism.
 
 ---
+
+## GATE-INTEGRITY — AMENDED: isolating `GOCACHE` alone is NOT enough for `make lint`
+Raised by T2's reviewer, with the tool's own diagnosis as evidence. Its first `make lint` from
+an isolated worktree **with `GOCACHE` already isolated** printed **`0 issues`** — a false green
+that would have let it report BL1 as fixed. golangci-lint keeps its **own** cache, keyed
+independently, and said so:
+`[runner/path_relativity] Getting relative path (basepath): Rel: can't make …\internal\db\schema_test.go relative to …\scratchpad\wt-t2`
+Three such warnings, naming exactly the files whose findings vanished. Setting
+**`GOLANGCI_LINT_CACHE`** alongside `GOCACHE` restored the two errcheck findings.
+**Status: provisional.** Per PROCESS-2 I am not recording a mechanism from one machine — it
+needs a CI or second-toolchain reproduction — but it is stronger than an A/B inference because
+the tool printed its own reason. **Adopted in dispatches now** (isolate both; it costs nothing
+and the failure mode is silent under-reporting). Every earlier "lint clean from a worktree" on
+this board, including reviewers', is suspect to the extent it isolated only `GOCACHE`.
 
 ## PROCESS-4 — I dispatched a task that was already written, and it cost a duplicate PR
 At session start `git branch` reported **`test/T2-authn-layer-fence: 1 commits ahead`**. I
@@ -500,6 +514,23 @@ Every claim checked against **merged code**.
   `users` table" while its tag says `auth_users`; `scripts/init.sh:171-172` still removes
   `internal/domain/user`, a path deleted in 3.6b.
 
+- **BL42** The domain rule is **documented as an allowlist and implemented as a denylist**.
+  `tools/archtest/arch_test.go:335-339` says the domain layer may use "the standard library and
+  `internal/platform`, and nothing else", but the mechanism is a fixed forbidden map — a domain
+  package importing an unlisted third-party module passes today. Pre-existing; T2 closed the
+  specific `internal/authn` hole correctly. Fixing the general shape (invert to an allowlist, or
+  reword the docstring to promise only what it enforces) is a decision, not a chore.
+- **BL43** **depguard now lags the arch test by one `make arch`.** `.golangci.yml`'s
+  `domain-purity` and `application-purity` still deny only bun, chi, viper, zerolog and pgx —
+  not `internal/authn` — so an author gets editor-time feedback for the ORM but not for the
+  authentication contract. T2 was right not to touch it (not in its file list). The
+  file-glob vs import-graph split is deliberate per the config's own header, so aligning them is
+  a judgement call.
+- **BL44** The shipped T2 docstring (`36784b6`) says depguard's domain-purity "denies only
+  bun/chi/viper/zerolog"; the reviewer enumerated **five** — pgx is also denied. Harmless
+  imprecision in a comment, in the enforcement layer where comments have misled before (it was a
+  fence docstring that made the B4 gap look covered). Fold into any future edit of that file.
+
 # DEVIATIONS ACCEPTED
 - **A1 (4), A2 (1)+copy-on-write, A3 (2), A4 (2)** — adjudicated.
 - **T1 (1)** — **refused** my instruction to baseline five unmeasurable packages.
@@ -521,3 +552,35 @@ Every claim checked against **merged code**.
   image. Also: `go 1.25.12` is pinned in the **`go` directive** rather than a `toolchain` line,
   deliberately — the directive is a hard **security floor** that fails closed under
   `GOTOOLCHAIN=local`, whereas `toolchain` is advisory and silently overridable.
+
+---
+
+# T2 — the verdict transferred, and why that is sound
+
+The review was dispatched against **#39** (`00fa2e5`), which I then closed as a duplicate of
+what shipped in **#35** (`36784b6`). The **APPROVE** transfers, and this is the evidence rather
+than an assumption: `tools/archtest/arch_test.go:163` declares
+`const authnPkg = internalPrefix + "authn"`, so the two versions add **the same map key with the
+same value to the same two maps**. Diffing both files with comments stripped leaves exactly two
+differing lines — `authnPkg:` versus `internalPrefix + "authn":` — i.e. two spellings of one
+constant expression. Nothing else differs outside comments.
+
+What the reviewer established, which now stands as the record for `36784b6`:
+- **The gap was real, reproduced against the base tree**, not inferred: probes in
+  `modules/user/domain` and `modules/user/application` left `make arch` **green** at `6fc7592`.
+- **The rule bites, and the prefix match is exactly right** — it also catches
+  `internal/authn/authntest` (the mandatory `/` means a future `internal/authnz` is *not*
+  swept in). Verified by execution, and BL35's doubled output accounted for.
+- **No legitimate importer is newly denied** — all six `internal/authn` importers enumerated via
+  `go list` over test-inclusive imports; none is a domain or application package.
+- **The fence was not narrowed:** `authnAreas`, `underArea` and `TestMayImportAuthnSemantics`
+  byte-identical to base, and `modules/user/module.go:17,53` confirms the module-root
+  `authn.Middleware` that makes the `modules/*` recursion load-bearing.
+- **Docstring deviation ACCEPTED** on the reviewed branch, with the reasoning that a bare map
+  entry would read as duplication of the fence and invite deletion — the fence's own docstring
+  is what made the B4 gap look covered. **Caveat I am recording rather than papering over:** the
+  shipped commit carries *different* docstring text, which the reviewer never read. See BL44.
+
+**Not carried forward as work:** N2 (unnormalized `imp` in the layer tests — checked, no gap)
+and N5 (the new entries have no pinning test, which is true of every other entry in those maps
+and introduces no new asymmetry).
