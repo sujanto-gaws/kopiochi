@@ -199,6 +199,23 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      # `swag init --parseDependency` reads dependency source straight out of
+      # the module cache, so it wants a graph that is already on disk rather
+      # than one being fetched underneath it. setup-go's cache is keyed on
+      # go.sum, which means every dependency bump is a guaranteed miss: #33
+      # (a toolchain bump plus a pgx patch) failed here with "pkg .../cmd/api
+      # cannot find all dependencies, <nil>" on the cold run and passed on the
+      # re-run once the cache was warm, having changed nothing.
+      #
+      # This step makes the parse a pure offline read regardless of cache
+      # state. Verified locally only in the mechanical sense — against an
+      # empty GOMODCACHE, `go list -deps ./cmd/api` fails under GOPROXY=off
+      # before this command and succeeds after it. The cold-cache failure
+      # itself did not reproduce off-CI, so treat this as removing a known
+      # source of nondeterminism rather than as a confirmed root-cause fix.
+      - name: download modules
+        run: go mod download
+
       - name: install swag
         # Pinned to the version go.mod carries: a generator newer than the
         # library emits fields the library's Spec struct does not have, and the
