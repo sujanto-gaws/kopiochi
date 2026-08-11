@@ -22,7 +22,7 @@ States: pending | dispatched | in-review | blocked | merged | escalated
 | **T3** | platform-engineer | **merged** | #33 | APPROVE-WITH-NOTES |
 | B2a | transport-engineer | **superseded by E16-3** (was BLOCKED — E16) | - | - |
 | T2  | test-guardian | **merged** (via #35 — PROCESS-4) | #35 (`36784b6`) | **APPROVE** (verdict transferred, see below) |
-| T4  | platform-engineer | **dispatched** 2026-08-11 | `ci/T4-golangci-lint-v2` | - |
+| T4  | platform-engineer | **in-review** | **#42** (`ci/T4-golangci-lint-v2`) | gate dispatched 2026-08-11 |
 | T5  | platform-engineer | **merged** | #36 | not gated by me — landed from a prior session |
 | C1  | docs-scribe | **dispatched** 2026-08-11 | `feat/C1-authn-contract-docs` | - |
 | D5  | platform-engineer | **BLOCKED — E11, E13, E14** | - | - |
@@ -58,7 +58,18 @@ Nothing below is mine to decide. Everything else on this board is blocked behind
 plus one archtest rule; it is the cheapest unblock on this board and it releases the entire
 notification back half. If you answer one thing today, answer E11.
 
-## PROCESS-6 — a stray edit to a source-of-truth doc, in the shared tree
+## PROCESS-6 — RESOLVED, and PROCESS-3 recurred a third time
+The stray edit is **gone** — T4 reports `authn-spi-impact-analysis.md` was already clean when
+it arrived, and the shared tree is now clean on `main`. Nobody needs to act.
+**But the shared tree moved branches again, mid-session, and not by me or by T4.** Its reflog:
+`checkout: moving from feat/T2-authn-layer-fence to main`, then `pull --tags origin main`.
+T4's only shared-repo commands were read-only (`fetch`, `status`, `branch`, `log`,
+`worktree list`, `worktree add`), none of which move a worktree HEAD. **T2's commit
+`00fa2e5` is verified safe on its branch** (checked by me, not taken from the report).
+Whatever is doing this, per-task worktrees are containing it — both of today's dispatches
+required one and neither was disturbed. Keeping the requirement permanently.
+
+## PROCESS-6 (original entry) — a stray edit to a source-of-truth doc, in the shared tree
 Found at session start: `docs/plans/authn-spi-impact-analysis.md` is modified in the shared
 working tree, uncommitted, its H1 reading `ne# Security SPI …` — two stray keystrokes, not a
 semantic edit. Consistent with PROCESS-3's second hazard (agents sharing one checkout).
@@ -362,6 +373,15 @@ column but never its values. So:
   ship without you saying so explicitly.
 **The ask is now a yes/no:** does any environment have rows in `users`? `make migrate-status`
 per environment, per `MIGRATIONS.md`. Answer that and E16-1 goes out immediately.
+
+## E7 — CORROBORATED on a second toolchain, unprompted
+T4 ran `make coverage-check` on go1.25.12 and got
+`modules/identity/infrastructure/auditlog: 0.0% < floor 60.0%`, `exit status 1`. It then
+stashed its own changes, re-ran against pristine `origin/main`, and got the **byte-identical**
+failure. This is exactly the mechanism the retracted COVERAGE-BLINDSPOT entry denied, arrived at
+by an agent that was not asked about it and had no stake in it. E7 stands, and the retraction
+was right. **Still not T4's to fix** — it needs a test or a reasoned `exempt`, never a lowered
+floor, and it needs an owner from you.
 
 ## E18 — CI's coverage gate is red on `main`, and there are TWO failures behind it
 1. `modules/identity/infrastructure/persistence/repository` — **57.1% vs its 60% floor**.
