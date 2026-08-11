@@ -22,9 +22,9 @@ States: pending | dispatched | in-review | blocked | merged | escalated
 | **T3** | platform-engineer | **merged** | #33 | APPROVE-WITH-NOTES |
 | B2a | transport-engineer | **superseded by E16-3** (was BLOCKED — E16) | - | - |
 | T2  | test-guardian | **merged** (via #35 — PROCESS-4) | #35 (`36784b6`) | **APPROVE** (verdict transferred, see below) |
-| T4  | platform-engineer | ready — **fix the lint job** (see E8/Q2) | - | - |
+| T4  | platform-engineer | **dispatched** 2026-08-11 | `ci/T4-golangci-lint-v2` | - |
 | T5  | platform-engineer | **merged** | #36 | not gated by me — landed from a prior session |
-| C1  | docs-scribe | **ready** — Phase B complete | - | - |
+| C1  | docs-scribe | **dispatched** 2026-08-11 | `feat/C1-authn-contract-docs` | - |
 | D5  | platform-engineer | **BLOCKED — E11, E13, E14** | - | - |
 | D6  | platform-engineer | **BLOCKED — E9b, E9c, E12** | - | - |
 | D7  | transport-engineer | **UNBLOCKED** — needs D6 | - | - |
@@ -37,9 +37,35 @@ States: pending | dispatched | in-review | blocked | merged | escalated
 | E16-4 | docs-scribe | pending — needs E16-3 merged; carries **E19**, BL40 | - | - |
 | E16-5 | unassigned | **UNSCOPED — E21** (`cmd/generator` reproduces the defect) | - | - |
 
-**Phase A and Phase B are complete on `main`.** No open code PRs; #33/#35/#36/#37/#38 all merged.
+**Phase A and Phase B are complete on `main`.** Open PR: **#41** (this board).
+**In flight 2026-08-11:** T4 (`ci/T4-golangci-lint-v2`) and C1 (`feat/C1-authn-contract-docs`),
+dispatched in parallel — no dependency edge between them, disjoint file sets, neither touches
+`cmd/api`. They are the ONLY two tasks on the board that need no answer from the human first.
 `gh pr merge` and pushes to `main` are blocked by the sandbox classifier, so a human
 merges; branch pushes and PR creation work.
+
+## WAITING ON YOU — six answers, and what each one unblocks
+Nothing below is mine to decide. Everything else on this board is blocked behind one of them.
+| Ask | Blocks | One-line question |
+| --- | --- | --- |
+| **E22** | E16-1, and the whole E16 chain behind it | Does **any** environment have rows in `users`? (`make migrate-status`) |
+| **E24** | E16-2, E16-3 | Dropping `name`/`email` empties the write API — option (a), (b) or (c)? |
+| **E23** | E16-3's acceptance | Approve **E16-P2** (test-guardian, ~20 lines): capture `put_not_found`/`delete_not_found`? |
+| **E19** | E16-1 (as a review objection) | Confirm the E16-ARCH decision supersedes `migration-strategy.md:249-251`? |
+| **E21** | E16-5 | `cmd/generator` reproduces the defect into every future module — scope it, or accept it? |
+| **E11/E13/E14** | **D5**, and D6/D8 behind it | The Phase D blockers, unanswered since Phase B closed. |
+**D5–D10 have now been parked longer than the E16 chain.** E11 is a one-line amendment to R1
+plus one archtest rule; it is the cheapest unblock on this board and it releases the entire
+notification back half. If you answer one thing today, answer E11.
+
+## PROCESS-6 — a stray edit to a source-of-truth doc, in the shared tree
+Found at session start: `docs/plans/authn-spi-impact-analysis.md` is modified in the shared
+working tree, uncommitted, its H1 reading `ne# Security SPI …` — two stray keystrokes, not a
+semantic edit. Consistent with PROCESS-3's second hazard (agents sharing one checkout).
+**I have not touched it** — companion docs are not mine to edit, and reverting it would destroy
+the only evidence of how it got there. It is inert as long as work happens in per-task
+worktrees, which both of today's dispatches require explicitly. **Ask:** discard it
+(`git restore`), or is it yours in progress?
 
 **Owed at Phase B close:** run **`make coverage-update`** — `internal/authn/authntest`
 measures 100% with no `baseline` entry, and BL19's three baselines lag their actuals.
