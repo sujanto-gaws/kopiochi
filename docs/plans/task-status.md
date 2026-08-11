@@ -172,7 +172,7 @@ against `main` rather than a fix on an open branch. The T2 review is being re-po
 
 ---
 
-# ESCALATIONS — OPEN (16)
+# ESCALATIONS — OPEN (17)
 
 Ordered by severity.
 
