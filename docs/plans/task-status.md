@@ -24,7 +24,7 @@ States: pending | dispatched | in-review | blocked | merged | escalated
 | T2  | test-guardian | **merged** (via #35 — PROCESS-4) | #35 (`36784b6`) | **APPROVE** (verdict transferred, see below) |
 | T4  | platform-engineer | **APPROVED — MERGE WHEN READY** | **#42** (`799c861`) | **APPROVE-WITH-NOTES**; amendment landed + verified |
 | T5  | platform-engineer | **merged** | #36 | not gated by me — landed from a prior session |
-| C1  | docs-scribe | **blocked — fixing** | **#43** (`d4eef29`) | **BLOCK** #1 — 2 must-fix, returned verbatim |
+| C1  | docs-scribe | **re-review** | **#43** (`66b69e1`) | BLOCK #1 fixed; re-review dispatched |
 | D5  | platform-engineer | **BLOCKED — E11, E13, E14** | - | - |
 | D6  | platform-engineer | **BLOCKED — E9b, E9c, E12** | - | - |
 | D7  | transport-engineer | **UNBLOCKED** — needs D6 | - | - |
@@ -440,6 +440,32 @@ index edit independently confirmed as forced by real gaps, matching my own check
 BF-1 — a property of one implementation stated as a property of the contract), since the file is
 open anyway; **do not** add the BL13 identifier — it is an internal board ID, meaningless and
 unresolvable to the adopters the document addresses; leave `:345-348` as written.
+
+## C1 — fix pushed as `66b69e1`; re-review out. One deviation I accepted.
+Fix scope verified by me: `git diff d4eef29 66b69e1` touches **only** `BOILERPLATE.md` (+4/-1) and
+`08-authn/README.md` (+18/-7); PR total still the same four files. No code, no `CHANGELOG.md`, no
+agent definition.
+
+**The deviation, and why I accepted it.** The owner changed a **fourth** location I had not
+authorised: the lead-in at `:476`, from `Four properties worth copying:` to `Three properties worth
+copying from it, and one rule that goes with them:`. Its argument is that BF-1 is **not discharged
+by rewriting the bullet alone** — bullets 1-3 all cite `modules/user`, so leaving "Four properties
+worth copying" above a bullet that now cites `modules/identity` still tells an adopter that reading
+the Principal is something `modules/user` does. *"A weaker form of the exact falsehood the finding
+blocks on."* It also observed that the reviewer's own model, `BOILERPLATE.md:370-373`, sits under a
+**rules** list, so matching the model implies matching its frame. **The count word was
+load-bearing** and I did not see it; the owner did. Accepted, and put to the reviewer to confirm the
+finding is discharged.
+
+**A second, smaller overreach I also accepted:** it dropped `make lint` from `BOILERPLATE.md:361`
+entirely, beyond the reviewer's prescribed text, on the ground that no depguard rule denies
+cross-module imports or names `internal/authn`, so `make arch` carries both enforced bullets alone.
+Consistent with BL43, but a factual claim beyond the prescription — flagged to the reviewer to
+confirm or reject.
+
+**This is BLOCK #1 only.** A second consecutive BLOCK escalates to the human with both reports
+rather than going back to the owner a third time; I have told the reviewer so, and asked it to say
+explicitly if a remaining issue is small enough to carry as a note instead.
 
 ## E25 — CONFIRMED by the reviewer, independently. Now a decision for you.
 A tree-wide grep for `RootInterface` returns **exactly one hit in the whole repository**:
