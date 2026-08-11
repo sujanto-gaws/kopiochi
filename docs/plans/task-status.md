@@ -24,7 +24,7 @@ States: pending | dispatched | in-review | blocked | merged | escalated
 | T2  | test-guardian | **merged** (via #35 — PROCESS-4) | #35 (`36784b6`) | **APPROVE** (verdict transferred, see below) |
 | T4  | platform-engineer | **in-review** | **#42** (`ci/T4-golangci-lint-v2`) | gate dispatched 2026-08-11 |
 | T5  | platform-engineer | **merged** | #36 | not gated by me — landed from a prior session |
-| C1  | docs-scribe | **dispatched** 2026-08-11 | `feat/C1-authn-contract-docs` | - |
+| C1  | docs-scribe | **in-review** | **#43** (`d4eef29`) | gate dispatched 2026-08-11 |
 | D5  | platform-engineer | **BLOCKED — E11, E13, E14** | - | - |
 | D6  | platform-engineer | **BLOCKED — E9b, E9c, E12** | - | - |
 | D7  | transport-engineer | **UNBLOCKED** — needs D6 | - | - |
@@ -120,6 +120,18 @@ needs a CI or second-toolchain reproduction — but it is stronger than an A/B i
 the tool printed its own reason. **Adopted in dispatches now** (isolate both; it costs nothing
 and the failure mode is silent under-reporting). Every earlier "lint clean from a worktree" on
 this board, including reviewers', is suspect to the extent it isolated only `GOCACHE`.
+
+**THIRD OBSERVATION, and this one was blind.** C1's agent — which I never told about the cache
+mechanism — ran `make lint`, got **`0 issues`**, and printed `path_relativity` warnings naming
+`internal/db/schema_test.go`: the exact file holding BL1's two known-real findings, which T4 was
+concurrently fixing. It reported the `0 issues` in good faith as a passing check. An agent that
+did not know the mechanism reproduced its precise signature.
+**I am still NOT promoting this out of PROVISIONAL.** All three observations are on this one
+machine, and PROCESS-2 exists because I published a wrong mechanism three times in this exact
+area off single-machine evidence. Three same-machine observations are still one machine. What it
+does establish beyond doubt: **`make lint` returning `0 issues` is not, by itself, evidence of
+anything on this effort** — including in reports I have already accepted. Dispatches keep
+requiring both caches isolated.
 
 ## PROCESS-4 — I dispatched a task that was already written, and it cost a duplicate PR
 At session start `git branch` reported **`test/T2-authn-layer-fence: 1 commits ahead`**. I
@@ -383,6 +395,18 @@ by an agent that was not asked about it and had no stake in it. E7 stands, and t
 was right. **Still not T4's to fix** — it needs a test or a reasoned `exempt`, never a lowered
 floor, and it needs an owner from you.
 
+## E25 — a STANDING AGENT DEFINITION carries a convention the merged code contradicts ⚠ NEW
+C1 was briefed — by its own agent definition, not by my dispatch — that provider modules return
+`(*module.Module, RootInterface, error)`. **It refused to document it**, because merged code says
+otherwise: `modules/identity/module.go:88` returns `(*module.Module, error)`, and the
+composition root builds its own verifier at `cmd/api/container.go:95-105`. It documented what
+exists and flagged the conflict. That is exactly the right call and I am recording it as such.
+**Why this is yours and not mine:** the error is in `.claude/agents/*.md`, which I do not modify —
+proposed changes to agent definitions are escalations by my own constitution. Left standing, every
+future docs task starts from a false premise about the constructor shape, and constructor shape is
+a settled decision on this effort. **Pending arch-reviewer's independent confirmation of the
+merged signature** (asked for in #43's gate); if confirmed, **ask:** correct the agent definition.
+
 ## E18 — CI's coverage gate is red on `main`, and there are TWO failures behind it
 1. `modules/identity/infrastructure/persistence/repository` — **57.1% vs its 60% floor**.
    A real measurement (17 tests, all passing). Bounded test work on error paths.
@@ -547,6 +571,15 @@ appears nowhere in the repo).
 ---
 
 # DOC AMENDMENTS I CANNOT MAKE
+**C1 adds three, all in `authn-spi-impact-analysis.md`, found by citation-checking it against
+merged code:** §7 names two permitted importers where enforcement has four areas plus two layer
+denials, and says depguard would "allow" when it in fact never denies (asymmetric, BL43); §8.1's
+"Expected finding" is false on both counts against `9e50896`'s goldens; §8.2's example body omits
+both `request_id` (E5) and the real response's `X-Content-Type-Options: nosniff`.
+**C1's proposal, which I am forwarding not deciding:** a one-line struck-through correction in
+each, because agents are still reading that document as a source and re-deriving the errors from
+it — C1 is the second agent to have to be warned off §7 by dispatch. **Ask:** authorise a doc-fix
+task, or leave the board as the record?
 Phase B's title overclaims; `authn-spi-impact-analysis.md` §7 is a **trap** (two areas where
 the fence has four, and self-refuting); plan `Config.Auth` → `Config.AuthMiddleware` (D7 too);
 blueprint §4.1 jitter formula and §6-vs-§4.1; plan D2/D3 "+ `github.com/google/uuid`"; plan
@@ -584,6 +617,12 @@ Every claim checked against **merged code**.
 ---
 
 # BACKLOG
+- **BL46** `SWAGGER.md:280,365,485` still document 401 as `@Failure 401 {object}
+  map[string]string` — stale against problem+json since Phase A. Found by C1, out of its file
+  list. Note for D10-swagger, which touches that surface.
+- **BL47** `modules/identity/transport/helpers.go:9-14` describes itself as duplicating
+  `internal/infrastructure/http/handlers`, a package deleted in 3.6b. A stale doc comment in the
+  file that BL45 says took live copies of `modules/user`'s writers — check both together.
 - **BL1** `internal/db/schema_test.go:31,43` — two errcheck findings; also a **dead duplicate**
   of `tools/schemacheck/schema_test.go`.
 - **BL3** `jwks.go:7` imports `infrastructure/token` in production, contradicting R1.
