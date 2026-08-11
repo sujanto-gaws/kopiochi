@@ -24,7 +24,7 @@ States: pending | dispatched | in-review | blocked | merged | escalated
 | T2  | test-guardian | **merged** (via #35 — PROCESS-4) | #35 (`36784b6`) | **APPROVE** (verdict transferred, see below) |
 | T4  | platform-engineer | **APPROVED — MERGE WHEN READY** | **#42** (`799c861`) | **APPROVE-WITH-NOTES**; amendment landed + verified |
 | T5  | platform-engineer | **merged** | #36 | not gated by me — landed from a prior session |
-| C1  | docs-scribe | **re-review** | **#43** (`66b69e1`) | BLOCK #1 fixed; re-review dispatched |
+| C1  | docs-scribe | **APPROVED — MERGE WHEN READY** | **#43** (`66b69e1`) | **APPROVE-WITH-NOTES** after BLOCK #1 fixed |
 | D5  | platform-engineer | **BLOCKED — E11, E13, E14** | - | - |
 | D6  | platform-engineer | **BLOCKED — E9b, E9c, E12** | - | - |
 | D7  | transport-engineer | **UNBLOCKED** — needs D6 | - | - |
@@ -190,7 +190,7 @@ no authorization layer exists in this repository.** The application service take
 **moved not written** in Phase 3.6b out of `internal/domain/user`,
 `internal/application/user` and `internal/infrastructure/*`. Its package doc: *"It was live
 the whole time… behaviour is unchanged."* So the defect **predates modularisation** and is
-live code, not a demo. `BOILERPLATE.md:279` names `modules/user/transport/user.go` as the
+live code, not a demo. `BOILERPLATE.md:279` (quote: "`modules/user/transport/user.go` or") names `modules/user/transport/user.go` as the
 worked example adopters copy — **the exemplar propagates it**.
 
 **Root cause is not a missing `if`:** `auth_users.id` is uuid, `users.id` is BIGSERIAL, and
@@ -315,7 +315,7 @@ the first, and the profile is **`id uuid` (= `auth_users.id`) + `created_at` + `
 ## E21 — `cmd/generator` reproduces the defect into every future module ⚠ unscoped, no owner
 `cmd/generator/main.go:202-206` hardcodes `PrimaryKey = {ID, int64, id}` with nothing
 overriding it; `:714` `if id <= 0`; `:910` `bun:"id,pk,autoincrement"`; `:979/1051/1094`
-`@Param id path int`; `:988/1061/1103` `strconv.ParseInt`. `BOILERPLATE.md:279` points
+`@Param id path int`; `:988/1061/1103` `strconv.ParseInt`. `BOILERPLATE.md:279` (quote: "`modules/user/transport/user.go` or") points
 adopters at `modules/user/transport/user.go` as the worked example.
 **Fixing `modules/user` without the generator means the next generated module ships the same
 IDOR shape** — and E16's severity rests on exactly that amplification.
@@ -334,7 +334,7 @@ So after E16-2/E16-3 the module offers: `POST /api/v1/users` with an empty body,
 `PUT` with no writable field is not a route, it is a 200 that lies.** I will not quietly ship
 that, and I will not redesign a public API surface on my own authority.
 
-**Also in play: `modules/user` is the exemplar.** `BOILERPLATE.md:279` names
+**Also in play: `modules/user` is the exemplar.** `BOILERPLATE.md:279` (quote: "`modules/user/transport/user.go` or") names
 `modules/user/transport/user.go` as the worked CRUD example adopters copy (the same
 amplification that makes E16 severe, and the subject of E21). An exemplar whose entity has no
 fields teaches nothing about CRUD.
@@ -441,7 +441,7 @@ BF-1 — a property of one implementation stated as a property of the contract),
 open anyway; **do not** add the BL13 identifier — it is an internal board ID, meaningless and
 unresolvable to the adopters the document addresses; leave `:345-348` as written.
 
-## C1 — fix pushed as `66b69e1`; re-review out. One deviation I accepted.
+## C1 — APPROVE-WITH-NOTES at `66b69e1`. Both blocking findings discharged on their merits.
 Fix scope verified by me: `git diff d4eef29 66b69e1` touches **only** `BOILERPLATE.md` (+4/-1) and
 `08-authn/README.md` (+18/-7); PR total still the same four files. No code, no `CHANGELOG.md`, no
 agent definition.
@@ -466,6 +466,31 @@ confirm or reject.
 **This is BLOCK #1 only.** A second consecutive BLOCK escalates to the human with both reports
 rather than going back to the owner a third time; I have told the reviewer so, and asked it to say
 explicitly if a remaining issue is small enough to carry as a note instead.
+
+**RE-REVIEW OUTCOME — no must-fix remains; `#43` is ready for your merge.**
+- **BF-1 closed, verified by sweep not by reading.** `grep` for `FromContext` across all three
+  changed docs returns only citations pointing at `modules/identity`, `internal/authn` and
+  `internal/testsupport`; `user_test.go` appears nowhere. **Nothing in the document now attributes
+  Principal-reading to `modules/user`.**
+- **The fourth-location deviation ACCEPTED by the reviewer, in my favour and the owner's.** Its
+  words: the re-review shape *"was a forecast of the minimal edit, not a boundary"*, and — the part
+  worth keeping — *"had the owner shipped three locations I would have had to block a third time on
+  the residual count-word, which is the outcome your escalation rule exists to avoid."* A remedy
+  that stops one line short of closing its own finding is not a smaller change, it is an unfinished
+  one.
+- **The `make lint` removal was not merely allowed, it was CONFIRMED CORRECT — and would have been
+  a finding if left in.** The reviewer read all five depguard rules (`.golangci.yml:36-146`): none
+  denies module → module, and `internal/authn` appears only as an **allow** (`:93`, `:130`), never
+  as a denial. The repo corroborates the owner verbatim at `tools/archtest/arch_test.go:349-353`:
+  *"depguard's domain-purity rule denies only bun/chi/viper/zerolog, and the fence sees a permitted
+  area."* So `make arch` carries both enforced bullets alone.
+- Scope confirmed: four hunks, two files; `CHANGELOG.md` and `docs/architectures/README.md`
+  untouched by the fix commit. All three new citations byte-exact, `(Principal, bool)` correct,
+  `(see §5)` resolves. **92 citations scanned, 16 byte-checked by hand, zero line-shift damage.**
+- `make arch` re-run green by the reviewer.
+
+**Both of the owner's pushbacks this task were right** — the `RootInterface` refusal (E25) and the
+count-word. Recorded because it bears on how I weight this owner's future deviations.
 
 ## E25 — CONFIRMED by the reviewer, independently. Now a decision for you.
 A tree-wide grep for `RootInterface` returns **exactly one hit in the whole repository**:
@@ -762,6 +787,17 @@ package: `0 issues`. The suppression is documented and correct: taking staticche
 delete the assertion the test exists to make. **Nothing to chase, nothing to fix.**
 
 # BACKLOG
+- **BL53** **My own board carried a fragile citation, and a reviewer caught it.** This file cites
+  `BOILERPLATE.md:279` in three places (E16's provenance and E21). All still resolve — C1's insert
+  is one contiguous block at line 315+, so `:279` is byte-identical before and after — but the next
+  `BOILERPLATE.md` edit *above* line 315 breaks E16 and E21's provenance chain **silently**.
+  **Mitigated now:** each of the three citations carries the quoted target text alongside the line
+  number, so a shift is detectable rather than invisible. **Standing correction:** cite actively
+  edited recipe files (`BOILERPLATE.md`, `SWAGGER.md`) by heading or quoted text, not by line alone.
+  Line citations into *code* stay — code citations are checked by reviewers every task.
+- **BL54** `docs/architectures/README.md`'s 11 ADR links are percent-encoded (`adr/NNN%20-%20….md`).
+  They resolve in a renderer and are pre-existing. Recorded **so the next reviewer does not
+  re-chase them** — a link checker will flag them every time.
 - **BL48** **`make lint` IS FAIL-OPEN.** `Makefile:100-104`: if `golangci-lint` is not on `PATH`,
   the `else` branch echoes a message and the target **exits 0**. Guardrail 8's `make lint` is
   therefore a **no-op pass** on any machine without the binary. Together with the cross-volume
