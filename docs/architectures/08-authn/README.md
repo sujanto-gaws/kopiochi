@@ -170,8 +170,10 @@ reports a cached PASS for a tree that now fails
 
 ## 3. The canonical 401
 
-Every rejection from an `authn.Middleware` goes through one writer,
-`httpx.Unauthorized` (`internal/httpx/unauthorized.go:52`):
+The shared kernel provides one writer for this, `httpx.Unauthorized`
+(`internal/httpx/unauthorized.go:52`). Calling it is the easy way to satisfy the
+spec below, not the spec itself — the contract is the bytes, not the writer (see
+§5), so a middleware is free to produce them another way:
 
 ```go
 func Unauthorized(w http.ResponseWriter, r *http.Request)
@@ -471,7 +473,7 @@ func (c Config) Validate() error {                             // :58
 func New(deps module.Deps, cfg Config) (*module.Module, error) // :75
 ```
 
-Four properties worth copying:
+Three properties worth copying from it, and one rule that goes with them:
 
 1. **It arrives as a middleware, not as a token verifier.** The module never
    learns how authentication is implemented (`modules/user/module.go:36-41`).
@@ -483,10 +485,12 @@ Four properties worth copying:
    (`modules/user/transport/user.go:41`), used in the route group at
    `modules/user/transport/user.go:199`. Routing and protection are declared
    together, so a route added outside the group is visible in the diff.
-4. **Handlers read the caller through the contract**, e.g.
-   `authn.FromContext(r.Context())` in `modules/user/transport/user_test.go:198`
-   and `authn.MustFromContext(r.Context()).Subject` in
-   `modules/identity/transport/auth.go:115`.
+4. **Read the caller through the contract**, not through another module's
+   context key. A handler that is only ever routed behind the middleware uses
+   `authn.MustFromContext(r.Context()).Subject`
+   (`modules/identity/transport/auth.go:115`); `authn.FromContext`, which
+   returns a `(Principal, bool)` pair (`internal/authn/authn.go:113`), is for a
+   route reachable both with and without the middleware.
 
 Identity's own `NewAuthHandler` still spells its parameter as the bare
 `func(http.Handler) http.Handler` (`modules/identity/transport/auth.go:47`).

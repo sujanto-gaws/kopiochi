@@ -358,7 +358,9 @@ authMW := identitytransport.AuthRequired(jwtSvc)
 return user.New(deps, user.Config{AuthMiddleware: authMW})
 ```
 
-Four rules that fall out of this, all enforced by `make arch` and `make lint`:
+Four rules that fall out of this. The last two are enforced by `make arch`; the
+first two are conventions this recipe asks you to keep — no check in the repo
+constrains what a `Config` may hold, or where a middleware gets applied:
 
 - **Take a middleware, never a token verifier.** The module then never learns how
   authentication is implemented, and swapping the implementation is a one-line
