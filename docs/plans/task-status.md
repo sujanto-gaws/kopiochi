@@ -22,7 +22,7 @@ States: pending | dispatched | in-review | blocked | merged | escalated
 | **T3** | platform-engineer | **merged** | #33 | APPROVE-WITH-NOTES |
 | B2a | transport-engineer | **superseded by E16-3** (was BLOCKED — E16) | - | - |
 | T2  | test-guardian | **merged** (via #35 — PROCESS-4) | #35 (`36784b6`) | **APPROVE** (verdict transferred, see below) |
-| T4  | platform-engineer | **APPROVED — ready to merge** | **#42** (`133f183`) | **APPROVE-WITH-NOTES**; comment amendment in flight |
+| T4  | platform-engineer | **APPROVED — MERGE WHEN READY** | **#42** (`799c861`) | **APPROVE-WITH-NOTES**; amendment landed + verified |
 | T5  | platform-engineer | **merged** | #36 | not gated by me — landed from a prior session |
 | C1  | docs-scribe | **blocked — fixing** | **#43** (`d4eef29`) | **BLOCK** #1 — 2 must-fix, returned verbatim |
 | D5  | platform-engineer | **BLOCKED — E11, E13, E14** | - | - |
@@ -459,9 +459,7 @@ history** — the authn/httpx fence's editor-time half is live, and B4-class pro
 Scope confirmed: 2 files, merge-base exactly `2dd621c`, net **+2 assertions**, no nolint,
 `.golangci.yml` byte-identical to base, genuine pin at `ci.yml:276`. Both deviations allowed.
 
-**Amendment dispatched (not a block):** T4's own comments at `ci.yml:268,271` call the old failure
-"silent", which its own correction disproves. I will not publish a board correction while the tree
-asserts the opposite.
+**Amendment LANDED as `799c861` and verified by me, not taken on report:** `git diff 133f183 origin/ci/T4-golangci-lint-v2` is **one file, +4/-3, every changed line inside the `#` comment block** — no workflow logic, no Go file. The comments at `ci.yml:268,271` no longer assert the old failure was silent. The agent rewrapped rather than pasting the reviewer's literal text, and found a **second** "silent" in the PR body I had not spotted. Three other uses of "silent" elsewhere in `ci.yml` are pre-existing, about unrelated jobs, and correct in context — left alone. **#42 is ready for your merge.**
 
 ## LINT — I HAD THIS WRONG, AND THE AGENT CORRECTED ME
 I recorded that `latest` produced a **silent** v1 pin. **False.** Main @ `2dd621c`, run
