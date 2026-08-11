@@ -22,9 +22,9 @@ States: pending | dispatched | in-review | blocked | merged | escalated
 | **T3** | platform-engineer | **merged** | #33 | APPROVE-WITH-NOTES |
 | B2a | transport-engineer | **superseded by E16-3** (was BLOCKED — E16) | - | - |
 | T2  | test-guardian | **merged** (via #35 — PROCESS-4) | #35 (`36784b6`) | **APPROVE** (verdict transferred, see below) |
-| T4  | platform-engineer | **in-review** | **#42** (`ci/T4-golangci-lint-v2`) | gate dispatched 2026-08-11 |
+| T4  | platform-engineer | **APPROVED — ready to merge** | **#42** (`133f183`) | **APPROVE-WITH-NOTES**; comment amendment in flight |
 | T5  | platform-engineer | **merged** | #36 | not gated by me — landed from a prior session |
-| C1  | docs-scribe | **in-review** | **#43** (`d4eef29`) | gate dispatched 2026-08-11 |
+| C1  | docs-scribe | **blocked — fixing** | **#43** (`d4eef29`) | **BLOCK** #1 — 2 must-fix, returned verbatim |
 | D5  | platform-engineer | **BLOCKED — E11, E13, E14** | - | - |
 | D6  | platform-engineer | **BLOCKED — E9b, E9c, E12** | - | - |
 | D7  | transport-engineer | **UNBLOCKED** — needs D6 | - | - |
@@ -407,6 +407,117 @@ future docs task starts from a false premise about the constructor shape, and co
 a settled decision on this effort. **Pending arch-reviewer's independent confirmation of the
 merged signature** (asked for in #43's gate); if confirmed, **ask:** correct the agent definition.
 
+## C1 — BLOCK #1, and the reviewer earned its keep
+Two must-fix findings, both false claims in adopter-facing text, both surgical. Returned verbatim
+to docs-scribe on the same branch. **This is BLOCK #1; a second consecutive BLOCK on C1 escalates
+with both reports.**
+
+**BF-1 — a security falsehood, and exactly what Adjustment 7 existed to prevent.**
+`08-authn/README.md:486-489` listed "handlers read the caller through the contract" as one of
+"four properties worth copying" from `modules/user` — the module the doc calls **the template**.
+Merged code says the opposite in terms, in the very package cited:
+`modules/user/transport/user_test.go:179-182` — *"no handler in this package reads the Principal"*;
+`ownership_golden_test.go:293-296` — *"the handler never reads that Principal. Not once, in any of
+the four routes... it is the finding"*. The cited line sits inside a **test probe middleware**, not
+a handler. **The absent property is E16's IDOR.** An adopter copying the template would have
+believed exactly the ownership-awareness whose absence is the vulnerability — published in a
+document that would have outlived the fix chain.
+
+**BF-2 — enforcement theatre, in the file that teaches enforcement.** `BOILERPLATE.md:361` claimed
+four rules "all enforced by `make arch` and `make lint`". Two are enforced by **nothing**: no rule
+constrains what a module's `Config` may hold (a config holding a verifier passes both tools), and
+"apply the middleware in the handler" is not expressible in either. The reviewer enumerated all
+seven `arch_test.go` tests as evidence. In a repo whose own arch test opens with a warning about
+vacuous greens, that is a material defect.
+
+**What passed, and it is worth recording:** 40+ of the 79 citations spot-checked across all six
+areas — **every one exact**. E3, E4, E5 and adjustments 4/5/6 all landed. Section 8.2 reproduced
+verbatim including its line wrap. The replacement recipe was traced end to end and **would work**,
+with both caveats real. All three declared deviations **allowed** — the root `CHANGELOG.md` and the
+index edit independently confirmed as forced by real gaps, matching my own check.
+
+**My rulings on the non-blocking notes:** fold in the `:173-174` overgeneralisation (same class as
+BF-1 — a property of one implementation stated as a property of the contract), since the file is
+open anyway; **do not** add the BL13 identifier — it is an internal board ID, meaningless and
+unresolvable to the adopters the document addresses; leave `:345-348` as written.
+
+## E25 — CONFIRMED by the reviewer, independently. Now a decision for you.
+A tree-wide grep for `RootInterface` returns **exactly one hit in the whole repository**:
+`.claude/agents/docs-scribe.md:33`. It exists nowhere in the Go tree. Both module constructors
+return `(*module.Module, error)` (`modules/identity/module.go:88`, `modules/user/module.go:75`),
+and the composition root builds its own verifier (`cmd/api/container.go:95-105`).
+**A standing agent definition carries a false convention about constructor shape** — a settled
+decision on this effort. C1 refused to write it and documented what exists instead; the reviewer
+confirms that was right. Pre-existing at base `2dd621c`, not attributable to #43.
+**Ask:** correct `.claude/agents/docs-scribe.md:33`. I do not edit agent definitions.
+
+## T4 — APPROVE-WITH-NOTES. No must-fix. One comment amendment in flight, then merge.
+The reviewer verified every functional claim independently and went beyond the agent: it **proved
+depguard actually executes** by planting deliberate violations (both `domain-purity` and
+`platform-independence` fired). **depguard has now run in CI for the first time in this repo's
+history** — the authn/httpx fence's editor-time half is live, and B4-class proofs can rely on it.
+Scope confirmed: 2 files, merge-base exactly `2dd621c`, net **+2 assertions**, no nolint,
+`.golangci.yml` byte-identical to base, genuine pin at `ci.yml:276`. Both deviations allowed.
+
+**Amendment dispatched (not a block):** T4's own comments at `ci.yml:268,271` call the old failure
+"silent", which its own correction disproves. I will not publish a board correction while the tree
+asserts the opposite.
+
+## LINT — I HAD THIS WRONG, AND THE AGENT CORRECTED ME
+I recorded that `latest` produced a **silent** v1 pin. **False.** Main @ `2dd621c`, run
+`31355178976`, job `93353420746`: conclusion **failure**, 12 seconds, and it announced itself —
+`Installing golangci-lint binary v1.64.8...`, then
+`Error: can't load config: the Go language version (go1.24) used to build golangci-lint is lower
+than the targeted Go version (1.25.12)`, `exit with code 3`, `Ran golangci-lint in 89ms`.
+**It was a loud non-result, not a silent green.** That is a different failure of process: the job
+was red and nobody acted on it, for an unknown number of runs. Raised by T4's agent against my
+dispatch's premise, confirmed independently by the reviewer from the run logs.
+**The stacking is confirmed too:** it died at config load on the Go-version check, so the
+`version: "2"` parse error was **never reached** — cause 2 is latent, not co-operative.
+
+## GATE-INTEGRITY — PROMOTED OUT OF PROVISIONAL, AND NARROWED
+PROCESS-2 demanded a second toolchain or CI before recording a mechanism as general. The reviewer
+delivered something better than a second measurement: **a negative control plus a stdlib root
+cause.**
+- **Warm cache, cross-drive** (`C:` worktree, `D:` repo): `0 issues` — false green, first run.
+- **NEGATIVE CONTROL — warm cache, same drive:** findings **survive**, 2 errcheck, rc=1.
+- **Root cause, machine-independent:** `filepath.Rel` errors only when two paths have different
+  volume names. golangci-lint caches issues with absolute paths, relativises them to the current
+  basepath, and **drops** any issue whose relativisation errors — warning as it goes, which is why
+  the tool named the vanishing files itself.
+**Narrowed claim, now recorded as confirmed:** the false green requires a warm
+`GOLANGCI_LINT_CACHE` shared across trees on **different Windows drive letters**. It **cannot occur
+on the Linux CI runner** — single root, `Rel` always succeeds. This is an explained causal chain
+with a passing negative control, not the unexplained one-machine correlation PROCESS-2 was written
+about. **Promoting it.**
+**This effort's own topology is the hazard:** every agent worktree lives on the `C:` temp drive
+while the repo is on `D:` — precisely the cross-volume topology that produces the false green.
+Live and recurring, not incidental. Both caches stay isolated in every dispatch.
+
+**New second-order hazard from the control:** same-drive worktrees do not go green but report
+findings **attributed to the other tree's path**, so a developer can be shown findings that do not
+exist in the tree in front of them.
+
+## E7 — MY RECORDED CAUSE WAS WRONG; THE FLOOR IS UNSATISFIABLE AS THE TREE STANDS
+I let "covered by integration tests, needs a database" stand as the reason `auditlog` reports 0.0%.
+**All three parts of that are false**, and it would have misdirected whoever fixes E7:
+1. `modules/identity/infrastructure/auditlog/` contains **exactly one file, `auditlog.go`, and no
+   `_test.go` files at all.** 0.0% is not a database artefact — **the package has no tests.**
+   `-with-database` cannot change it.
+2. `tools/coverage/policy.json:51-54` — `requires_database` lists only
+   `modules/*/infrastructure/persistence/repository` and `tools/schemacheck`. **`auditlog` is not on
+   it** and is never exempted, with or without the flag.
+3. CI's own log, on the Linux runner **with a live Postgres**, prints
+   `.../auditlog  coverage: 0.0% of statements` — a bare line, no `ok`, i.e. no test binary.
+**E7's fix is tests for `auditlog`, or a reasoned policy change. Never a database, never a lowered
+floor.** The floor is unsatisfiable as the tree stands.
+
+## E18 — CONFIRMED WITH FILE:LINE: THE COVERAGE GATE HAS NEVER EXECUTED
+`.github/workflows/ci.yml:122-123` (`go run ./tools/coverage ... -with-database`) is **unreachable**
+while `.github/workflows/ci.yml:91-92` (`go test -race`) exits 1 on E8's two `internal/db`
+failures. The coverage gate is **dead in CI today**, independent of E7. E8 is the keystone: clear
+it and two latent floor failures surface at once.
+
 ## E18 — CI's coverage gate is red on `main`, and there are TWO failures behind it
 1. `modules/identity/infrastructure/persistence/repository` — **57.1% vs its 60% floor**.
    A real measurement (17 tests, all passing). Bounded test work on error paths.
@@ -616,7 +727,38 @@ Every claim checked against **merged code**.
 
 ---
 
+## RESOLVED THIS SESSION — `secret_test.go` was never a mystery
+The third `path_relativity` warning named `internal/platform/secret/secret_test.go`, and I left it
+open as "a stale finding from some other tree state". **It is neither stale nor hidden.**
+`internal/platform/secret/secret_test.go:26` carries `//nolint:staticcheck // S1025: exercising the
+%s verb is the test`, with a four-line justification. golangci-lint's `nolint` processor runs
+**after** cache restore and path relativity, so the raw S1025 issue is in the cached set — which is
+why the warning named the file — and is suppressed before reporting. Cold-cache run of that
+package: `0 issues`. The suppression is documented and correct: taking staticcheck's advice would
+delete the assertion the test exists to make. **Nothing to chase, nothing to fix.**
+
 # BACKLOG
+- **BL48** **`make lint` IS FAIL-OPEN.** `Makefile:100-104`: if `golangci-lint` is not on `PATH`,
+  the `else` branch echoes a message and the target **exits 0**. Guardrail 8's `make lint` is
+  therefore a **no-op pass** on any machine without the binary. Together with the cross-volume
+  cache false green, that is **two independent ways `make lint` reports success while checking
+  nothing** — one local, one cross-tree. Every historical "lint clean" on this board is worth
+  exactly as much as the evidence that the linter ran. Pre-existing; not T4's file list.
+- **BL49** `Makefile:103`'s install hint is the **v1 module path**
+  (`.../golangci-lint/cmd/golangci-lint@latest`). Following it now installs a v1 that cannot parse
+  `version: "2"` and cannot run against go1.25 — i.e. the hint reproduces the exact failure T4 just
+  fixed in CI. Correct is the `/v2/` path pinned to `v2.12.2`.
+- **BL50** `make lint` pins no version, so a locally newer v2 can report findings CI does not.
+- **BL51** `internal/db/schema_test.go` **never runs anywhere.** `testDSN()` (`:99-107`) reads
+  `APP_DB_*` (default `postgres`/`postgres`/`kopiochi`); the build job sets only
+  `TEST_DATABASE_URL` against a `kopiochi`/`kopiochi_test` service (`ci.yml:62-63`), and the
+  `APP_DB_*` block lives in the **migrations** job (`ci.yml:144-151`), which does not run this test.
+  So it skips in CI and locally. This is the mechanism behind BL1's dead-duplicate observation.
+  Consequence accepted at T4's merge: its `Close()` fix runs on the skip path, its `DROP SCHEMA`
+  fix is compile-verified only and **executes nowhere**. Wire it or delete it — your call.
+- **BL52** `golangci-lint-action@v8` is a **floating major tag** while the linter itself is pinned.
+  Consistent with the repo's existing posture (`ci.yml` already notes no action is SHA-pinned and
+  that pinning is Phase 5 hygiene). Recorded, not a finding against T4.
 - **BL46** `SWAGGER.md:280,365,485` still document 401 as `@Failure 401 {object}
   map[string]string` — stale against problem+json since Phase A. Found by C1, out of its file
   list. Note for D10-swagger, which touches that surface.
