@@ -265,11 +265,12 @@ jobs:
       # targeted Go version", and bumping the directive cannot help because the
       # constraint is the linter's own build. Stacked behind that,
       # `.golangci.yml` declares `version: "2"`, which v1.64.8 cannot parse at
-      # all. Two independent reasons for the same silent non-result.
+      # all. Two independent reasons for the same non-result: the job was red,
+      # at exit code 3, and stayed red — it never linted anything.
       #
       # Action v8 (v7+ is the first that installs golangci-lint v2) with an
-      # explicit pin. Pinned, not `latest`: `latest` is what produced the silent
-      # v1 above, and a linter version that moves on its own turns an unrelated
+      # explicit pin. Pinned, not `latest`: `latest` is what produced the v1
+      # above, and a linter version that moves on its own turns an unrelated
       # pull request red for reasons its author did not write.
       - uses: golangci/golangci-lint-action@v8
         with:
