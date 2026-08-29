@@ -1,5 +1,4 @@
-// Package repository implements the user domain's persistence port over
-// bun.
+// Package repository implements the user domain's persistence port over bun.
 package repository
 
 import (
@@ -7,112 +6,64 @@ import (
 	"database/sql"
 	"errors"
 
+	"github.com/google/uuid"
 	"github.com/uptrace/bun"
 
+	"github.com/sujanto-gaws/kopiochi/internal/db"
 	domain "github.com/sujanto-gaws/kopiochi/modules/user/domain"
 	"github.com/sujanto-gaws/kopiochi/modules/user/infrastructure/persistence/models"
 )
 
-// userRepository implements the domain.Repository interface
+// userRepository implements domain.Repository.
 type userRepository struct {
 	db bun.IDB
 }
 
-// NewUserRepository creates a new user repository
+// NewUserRepository creates a new user repository.
 func NewUserRepository(db bun.IDB) domain.Repository {
 	return &userRepository{db: db}
 }
 
-// Create persists a new user
-func (r *userRepository) Create(ctx context.Context, u *domain.User) error {
-	dbModel := toDBModel(u)
-	_, err := r.db.NewInsert().Model(dbModel).Exec(ctx)
-	if err == nil {
-		// Update domain entity with generated ID and timestamps
-		u.ID = dbModel.ID
-		u.CreatedAt = dbModel.CreatedAt
-		u.UpdatedAt = dbModel.UpdatedAt
-	}
-	return err
+// EnsureExists creates id's profile, or does nothing if it already has one.
+//
+// ON CONFLICT DO NOTHING rather than a read-then-insert: the check and the
+// insert would otherwise be two statements with a gap between them, and two
+// concurrent first requests from one caller would race into a duplicate-key
+// error that the second caller did nothing to deserve. One statement makes the
+// idempotency the database's rather than the caller's.
+//
+// A foreign key to auth_users(id) means an id with no identity is refused here
+// rather than producing an orphan profile. It arrives from a verified token, so
+// that should be unreachable — which is exactly why it is worth a constraint
+// rather than a comment.
+func (r *userRepository) EnsureExists(ctx context.Context, id uuid.UUID) error {
+	_, err := r.db.NewInsert().
+		Model(&models.UserDBModel{ID: id}).
+		On("CONFLICT (id) DO NOTHING").
+		Exec(ctx)
+	return db.Translate(err)
 }
 
-// GetByID retrieves a user by ID
-func (r *userRepository) GetByID(ctx context.Context, id int64) (*domain.User, error) {
-	var dbModel models.UserDBModel
-	err := r.db.NewSelect().
-		Model(&dbModel).
-		Where("id = ?", id).
-		Scan(ctx)
-
+// GetByID returns id's profile, or domain.ErrUserNotFound.
+func (r *userRepository) GetByID(ctx context.Context, id uuid.UUID) (*domain.User, error) {
+	row := new(models.UserDBModel)
+	err := r.db.NewSelect().Model(row).Where("id = ?", id).Scan(ctx)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return nil, nil
+			return nil, domain.ErrUserNotFound
 		}
-		return nil, err
+		return nil, db.Translate(err)
 	}
-	return toDomainEntity(&dbModel), nil
+	return toDomain(row), nil
 }
 
-// GetByEmail retrieves a user by email, ignoring case: an address is the same
-// address whatever case it is typed in. The predicate matches the
-// idx_users_email_lower expression index (migration 00007) exactly, so it
-// stays an index scan.
-func (r *userRepository) GetByEmail(ctx context.Context, email string) (*domain.User, error) {
-	var dbModel models.UserDBModel
-	err := r.db.NewSelect().
-		Model(&dbModel).
-		Where("lower(email) = lower(?)", email).
-		Scan(ctx)
-
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil, nil
-		}
-		return nil, err
-	}
-	return toDomainEntity(&dbModel), nil
-}
-
-// Update updates an existing user
-func (r *userRepository) Update(ctx context.Context, u *domain.User) error {
-	dbModel := toDBModel(u)
-	_, err := r.db.NewUpdate().Model(dbModel).WherePK().Exec(ctx)
-	if err == nil {
-		u.UpdatedAt = dbModel.UpdatedAt
-	}
-	return err
-}
-
-// Delete removes a user by ID
-func (r *userRepository) Delete(ctx context.Context, id int64) error {
-	_, err := r.db.NewDelete().Model((*models.UserDBModel)(nil)).Where("id = ?", id).Exec(ctx)
-	return err
-}
-
-// toDomainEntity converts database model to domain entity
-func toDomainEntity(dbModel *models.UserDBModel) *domain.User {
-	if dbModel == nil {
-		return nil
-	}
+// toDomain maps a row to the entity. There is no toDBModel any more: the only
+// write this repository performs supplies the id and lets the column defaults
+// fill the timestamps.
+func toDomain(row *models.UserDBModel) *domain.User {
 	return &domain.User{
-		ID:        dbModel.ID,
-		Name:      dbModel.Name,
-		Email:     dbModel.Email,
-		CreatedAt: dbModel.CreatedAt,
-		UpdatedAt: dbModel.UpdatedAt,
-	}
-}
-
-// toDBModel converts domain entity to database model
-func toDBModel(u *domain.User) *models.UserDBModel {
-	if u == nil {
-		return nil
-	}
-	return &models.UserDBModel{
-		ID:        u.ID,
-		Name:      u.Name,
-		Email:     u.Email,
-		CreatedAt: u.CreatedAt,
-		UpdatedAt: u.UpdatedAt,
+		ID:        row.ID,
+		CreatedAt: row.CreatedAt,
+		UpdatedAt: row.UpdatedAt,
 	}
 }

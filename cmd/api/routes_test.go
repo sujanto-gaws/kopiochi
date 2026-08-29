@@ -66,10 +66,18 @@ func TestRouteTable(t *testing.T) {
 	require.Contains(t, got, "GET /readyz")
 	require.Contains(t, got, "GET /health") // deprecated alias for /healthz
 
-	require.Contains(t, got, "POST /api/v1/users")
-	require.Contains(t, got, "GET /api/v1/users/{id}")
-	require.Contains(t, got, "PUT /api/v1/users/{id}")
-	require.Contains(t, got, "DELETE /api/v1/users/{id}")
+	// Two routes, both /users/me, and none carrying an id (E16, E24). The
+	// absences are asserted rather than left implicit: an id-bearing profile
+	// route reappearing is the IDOR reappearing, and a route table that only
+	// checks for what should be present would not notice.
+	require.Contains(t, got, "POST /api/v1/users/me")
+	require.Contains(t, got, "GET /api/v1/users/me")
+	require.NotContains(t, got, "/api/v1/users/{id}",
+		"a profile route addressed by id is back; that is E16")
+	require.NotContains(t, got, "PUT /api/v1/users",
+		"the profile has no writable field, so a PUT can only lie (E24)")
+	require.NotContains(t, got, "DELETE /api/v1/users",
+		"deleting a profile without its identity leaves a logged-in caller with none")
 }
 
 func routeTableString(routes []string) string {

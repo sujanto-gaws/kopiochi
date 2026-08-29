@@ -2,64 +2,38 @@ package domain
 
 import (
 	"time"
+
+	"github.com/google/uuid"
 )
 
-// CreateUserRequest represents the request body for creating a user
-type CreateUserRequest struct {
-	Name  string `json:"name" validate:"required"`
-	Email string `json:"email" validate:"required,email"`
-}
+// CreateUserRequest and UpdateUserRequest are deleted, not emptied (E24).
+//
+// Both were {Name, Email}, and both fields are columns E20 removed. An empty
+// request struct would have been a parameter that cannot carry anything,
+// documenting a body no caller should send. The routes that took them are gone
+// with them: a PUT with no writable field is a 200 that lies, and the POST that
+// accepted an arbitrary body is the "unrestricted creation behind mere
+// authentication" leg of E16.
 
-// UpdateUserRequest represents the request body for updating a user
-type UpdateUserRequest struct {
-	Name  string `json:"name" validate:"required"`
-	Email string `json:"email" validate:"required,email"`
-}
-
-// UserResponse represents the response body for user operations
+// UserResponse is the profile as the API returns it.
+//
+// The id is the caller's own identity uuid, so this response tells a client
+// nothing it did not already know about itself — which is the point. It carries
+// no name and no email; those belong to the identity.
 type UserResponse struct {
-	ID        int64     `json:"id"`
-	Name      string    `json:"name"`
-	Email     string    `json:"email"`
+	ID        uuid.UUID `json:"id"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
-// ToUserResponse converts a domain User entity to UserResponse DTO
+// ToUserResponse converts a profile to its API representation.
 func ToUserResponse(u *User) *UserResponse {
 	if u == nil {
 		return nil
 	}
 	return &UserResponse{
 		ID:        u.ID,
-		Name:      u.Name,
-		Email:     u.Email,
 		CreatedAt: u.CreatedAt,
 		UpdatedAt: u.UpdatedAt,
-	}
-}
-
-// ToUserResponses converts a slice of domain User entities to UserResponse DTOs
-func ToUserResponses(users []*User) []*UserResponse {
-	responses := make([]*UserResponse, len(users))
-	for i, u := range users {
-		responses[i] = ToUserResponse(u)
-	}
-	return responses
-}
-
-// ToDomain converts CreateUserRequest DTO to domain User entity
-func (r *CreateUserRequest) ToDomain() *User {
-	return &User{
-		Name:  r.Name,
-		Email: r.Email,
-	}
-}
-
-// ToDomain converts UpdateUserRequest DTO to domain User entity
-func (r *UpdateUserRequest) ToDomain() *User {
-	return &User{
-		Name:  r.Name,
-		Email: r.Email,
 	}
 }

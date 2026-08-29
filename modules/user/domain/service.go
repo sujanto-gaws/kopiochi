@@ -2,13 +2,17 @@ package domain
 
 import (
 	"context"
+
+	"github.com/google/uuid"
 )
 
-// Service defines the domain interface for user business logic
+// Service is the profile use cases, stated in terms of the caller.
+//
+// Every method takes the caller's own id and there is no parameter naming
+// somebody else's, which is what makes the E16 IDOR unexpressible here rather
+// than merely unperformed: a handler has nothing to pass but the Principal it
+// was given.
 type Service interface {
-	CreateUser(ctx context.Context, name, email string) (*User, error)
-	GetUserByID(ctx context.Context, id int64) (*User, error)
-	GetUserByEmail(ctx context.Context, email string) (*User, error)
-	UpdateUser(ctx context.Context, id int64, name, email string) (*User, error)
-	DeleteUser(ctx context.Context, id int64) error
+	EnsureOwnProfile(ctx context.Context, caller uuid.UUID) (*UserResponse, error)
+	GetOwnProfile(ctx context.Context, caller uuid.UUID) (*UserResponse, error)
 }
