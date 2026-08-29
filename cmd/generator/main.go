@@ -48,6 +48,57 @@ type TemplateData struct {
 	UpdatedAt   bool
 }
 
+// disabledNotice is why this generator refuses to run. See E21 on the task board.
+//
+// It is a hard refusal with no override flag, on purpose. An escape hatch would
+// be used, and the point is that reviving this tool requires editing this file
+// and therefore reading this comment.
+const disabledNotice = `cmd/generator is DISABLED. It cannot be revived by a flag; see below.
+
+WHY IT IS DISABLED
+
+1. It already leaves the repository non-compiling, and has since Phase 1.5.
+   It writes to internal/infrastructure/http/routes/routes.go, which was
+   deleted. Documented in three places and never fixed:
+     docs/architectures/00-overview/current-state.md:260
+     docs/architectures/07-roadmap/remediation-plan.md:72
+     BOILERPLATE.md:195
+   Until now it reported those failures as warnings and exited 0, so a broken
+   run looked like a successful one.
+
+2. It reproduces a CONFIRMED IDOR into every module it generates (E16, E21).
+   The template hardcodes an int64 primary key, an "if id <= 0" guard, a
+   "@Param id path int" annotation and a strconv.ParseInt on every id route,
+   and emits CRUD handlers that never read the caller. modules/user shipped
+   exactly that shape, where any valid token reads, overwrites or deletes any
+   other user's row.
+
+WHAT MUST HAPPEN BEFORE IT COMES BACK  (E21 part 2, after E16-3)
+
+  - Default the primary key to uuid. auth_users and notifications already do;
+    only the legacy users/products tables use BIGSERIAL.
+  - Drop strconv.ParseInt and "@Param id path int" with it.
+  - Emit handlers that FAIL CLOSED — 501 and an explicit TODO — rather than
+    working CRUD with no authorization. A generated module must not be able to
+    ship an unauthorized surface that merely looks finished.
+  - Repoint route and wiring updates at httpx.Mount and cmd/api/container.go.
+
+The third item is blocked on a decision this repository has never made: there is
+no authorization primitive anywhere in it. grep -rn "RequireRole|RequirePermission|Authorize"
+returns nothing. A code generator is the worst possible place to invent one, so
+that decision comes first.
+`
+
+// refuseToGenerate prints disabledNotice and exits non-zero. It never returns.
+//
+// It is a function rather than an inline os.Exit so that the generator body
+// below it stays ordinary, reachable-looking code: whoever revives this tool
+// deletes one call, rather than reconstructing a main that was gutted.
+func refuseToGenerate() {
+	fmt.Fprint(os.Stderr, disabledNotice)
+	os.Exit(2)
+}
+
 func main() {
 	domain := flag.String("domain", "", "Domain name (e.g., Product, Order)")
 	fields := flag.String("fields", "", "Fields as name:type pairs (e.g., name:string,price:float64). Optional if -table is provided")
@@ -58,6 +109,10 @@ func main() {
 	configFile := flag.String("config", "config/default.yaml", "Path to config file for DB connection")
 
 	flag.Parse()
+
+	// Fail closed before doing anything else, including flag validation: there
+	// is no combination of arguments that makes generating safe today.
+	refuseToGenerate()
 
 	if *domain == "" {
 		fmt.Println("Error: -domain is required")
@@ -264,17 +319,19 @@ func generate(config Config) error {
 	}
 
 	// Auto-update routes
+	// Fatal, not a warning. Reporting success while leaving the tree
+	// non-compiling is the defect current-state.md:260 records; if the refusal
+	// in main is ever removed, this must not come back with it.
 	if err := updateRoutes(baseDir, config.Domain, config.DomainLower); err != nil {
-		fmt.Printf("  ⚠ Warning: Could not update routes: %v\n", err)
-		fmt.Printf("  You may need to manually add routes to internal/infrastructure/http/routes/routes.go\n")
+		return fmt.Errorf("update routes: %w (the generated tree does not compile without this; see E21)", err)
 	} else {
 		fmt.Printf("  ✓ Routes updated in internal/infrastructure/http/routes/routes.go\n")
 	}
 
 	// Auto-update main.go for dependency injection
+	// Fatal for the same reason as updateRoutes above.
 	if err := updateMainGo(baseDir, config.Domain, config.DomainLower, config.ModulePath); err != nil {
-		fmt.Printf("  ⚠ Warning: Could not update main.go: %v\n", err)
-		fmt.Printf("  You may need to manually wire the handler/service in cmd/api/main.go\n")
+		return fmt.Errorf("update dependency injection: %w (the generated module is unreachable without this; see E21)", err)
 	} else {
 		fmt.Printf("  ✓ Dependency injection updated in cmd/api/main.go\n")
 	}
