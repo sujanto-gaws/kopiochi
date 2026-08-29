@@ -216,8 +216,15 @@ func TestDispatchBatchDeadLettersWithoutRetrying(t *testing.T) {
 	t.Run("no sender is registered for the channel", func(t *testing.T) {
 		// A deployment with email switched off. The row is a configuration
 		// mismatch, not a transient outage.
+		//
+		// Seeded directly rather than through Enqueue: since E13, Enqueue
+		// refuses an unroutable channel outright, so this row can only arise
+		// the way it does in production — queued while the sender was wired,
+		// drained after it was removed. Routing it through Enqueue here would
+		// test the new guard and quietly stop covering the dispatcher's
+		// fail-closed handling, which is what this case is for.
 		h := newHarnessWith(t, []domain.Channel{domain.ChannelInApp}, nil, testDispatchConfig)
-		row := h.enqueue(t, domain.ChannelEmail, domain.CategorySecurity, "")
+		row := h.seedRow(t, domain.ChannelEmail, domain.CategorySecurity)
 
 		if _, err := h.svc.DispatchBatch(context.Background()); err != nil {
 			t.Fatalf("DispatchBatch: %v", err)

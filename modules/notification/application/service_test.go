@@ -104,6 +104,62 @@ func TestNewServiceAcceptsNoSenders(t *testing.T) {
 	}
 }
 
+// TestEnqueueRefusesAnUnroutableChannel — E13.
+//
+// domain.Channel accepts email, inapp and webhook, but only a channel with a
+// registered sender can be delivered. Before this guard, enqueueing one of the
+// others was reported as SUCCESS and the row then died at the dispatch gate
+// without a single attempt: a silent drop wearing the costume of a durable
+// outbox. E13 found it as "every in-app notification dies at the D6 gate"; the
+// shape is general, and webhook would have repeated it verbatim.
+//
+// The row must not be written. A refused enqueue that still queues something is
+// the worst of both: an error for the caller AND a corpse for an operator.
+func TestEnqueueRefusesAnUnroutableChannel(t *testing.T) {
+	h := newHarnessWith(t, []domain.Channel{domain.ChannelInApp}, nil, testDispatchConfig)
+
+	err := h.svc.Enqueue(context.Background(), EnqueueRequest{
+		RecipientID: testUser,
+		Channel:     domain.ChannelEmail,
+		Category:    domain.CategorySecurity,
+		TemplateKey: "security.password_changed",
+	})
+
+	if !errors.Is(err, ErrChannelNotRoutable) {
+		t.Fatalf("Enqueue error = %v, want ErrChannelNotRoutable", err)
+	}
+	if !strings.Contains(err.Error(), "email") {
+		t.Errorf("error = %q, want it to name the channel", err)
+	}
+	if got := h.notifications.count(); got != 0 {
+		t.Errorf("outbox holds %d rows after a refused enqueue, want 0", got)
+	}
+}
+
+// TestEnqueueChecksRoutabilityBeforePreferences: an unroutable channel is a
+// broken contract between this service and whoever wired it, and it stays
+// broken whether or not this user wanted the message. Reporting "delivered
+// nothing, successfully" because the recipient had it switched off would hide a
+// misconfiguration behind a user's setting.
+func TestEnqueueChecksRoutabilityBeforePreferences(t *testing.T) {
+	h := newHarnessWith(t, []domain.Channel{domain.ChannelInApp}, nil, testDispatchConfig)
+	h.preferences.prefs = []domain.Preference{{
+		UserID: testUser, Channel: domain.ChannelEmail,
+		Category: domain.CategorySecurity, Enabled: false,
+	}}
+
+	err := h.svc.Enqueue(context.Background(), EnqueueRequest{
+		RecipientID: testUser,
+		Channel:     domain.ChannelEmail,
+		Category:    domain.CategorySecurity,
+		TemplateKey: "security.password_changed",
+	})
+
+	if !errors.Is(err, ErrChannelNotRoutable) {
+		t.Fatalf("Enqueue error = %v, want ErrChannelNotRoutable even when the user disabled the channel", err)
+	}
+}
+
 func TestEnqueueWritesAPendingRow(t *testing.T) {
 	h := newHarness(t)
 

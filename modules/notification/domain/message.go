@@ -39,9 +39,30 @@ type RenderedMessage struct {
 	// of one ignore it.
 	Subject string
 
-	// Body is the rendered content for Channel. One body per channel, not one
-	// per MIME type: the renderer resolves a template per (key, channel), so a
-	// channel that needs several representations is a channel that names
-	// several templates.
+	// Body is the rendered content for Channel, as PLAIN TEXT, and it is always
+	// present. Every sender can use it; a channel with no richer form uses only
+	// this.
+	//
+	// The template axis is per (key, channel) — one template family per channel,
+	// not per MIME type. That answers "email versus in-app". It does NOT answer
+	// "the HTML part versus the text part of one email", because those are two
+	// representations of a SINGLE message and cannot be two notifications. That
+	// second axis is HTMLBody, below.
 	Body string
+
+	// HTMLBody is an optional richer rendering of the same message. Empty means
+	// there is none, which is a normal state and not a failure.
+	//
+	// Plain Body is mandatory and this is optional, never the reverse, and that
+	// asymmetry is the whole point rather than an accident of ordering. An
+	// email sent HTML-only is penalised by spam filters and unreadable to a
+	// text client — and the notification most likely to be filtered is the
+	// security mail, which is the one that must arrive. Making the plain part
+	// the required one means no template can produce an HTML-only message even
+	// by omission.
+	//
+	// An email sender emits multipart/alternative when this is set and a
+	// text-only message when it is not, and must NEVER send HTML alone.
+	// Channels with no rich form — in-app, webhook — ignore it and read Body.
+	HTMLBody string
 }
