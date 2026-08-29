@@ -34,7 +34,8 @@ States: pending | dispatched | in-review | blocked | merged | escalated
 | **E11-FIX** | *(in-session, ungated)* | **merged** | #51 (`8f82381`) | **none — see PROCESS-7** |
 | **E13/E14-FIX** | *(in-session, ungated)* | **merged** | #53 (`0d0b02d`) | **none — see PROCESS-7** |
 | **E15-PRE** | *(in-session, ungated)* | **merged** | #55 (`ee9bbd9`) | **none — see PROCESS-7** |
-| **E16-P2** | *(in-session, ungated)* | **in review** | **#58** (`49ee321`) — 7/7 green | **none** |
+| **E16-P2** | *(in-session, ungated)* | **merged** | #58 (`49ee321`) | **none — see PROCESS-7** |
+| **E21-1** | *(in-session, ungated)* | **in review** | **#61** (`7723cba`) | **none** |
 | D5  | platform-engineer | **UNBLOCKED 2026-08-29** — E11, E13, E14 all answered. Scope grew: `sender/inapp.go`, and its file list must say `domain/message.go`, not `application/ports.go` | - | - |
 | D6  | platform-engineer | **BLOCKED — E9b, E9c, E12** | - | - |
 | D7  | transport-engineer | **UNBLOCKED** — needs D6 | - | - |
@@ -45,7 +46,7 @@ States: pending | dispatched | in-review | blocked | merged | escalated
 | E16-2 | domain-engineer | **UNBLOCKED 2026-08-29** (E24 = option b). **Scope changed:** `CreateUserRequest`/`UpdateUserRequest` are **deleted, not emptied**; `UserResponse` becomes `{id uuid, created_at, updated_at}`; `ID int64`→`uuid.UUID`; drop the `id <= 0` guard | - | - |
 | E16-3 | transport-engineer | **UNBLOCKED 2026-08-29** (E24 = option b). **Scope SHRANK:** the route table becomes `GET /api/v1/users/me` alone — POST/PUT/DELETE are removed, so there is no `{id}` param, no `strconv.ParseInt` ×3, no `@Param id path int` ×3, and **the byte-identity obligation is moot on verbs that no longer exist**. The handler reads the Principal | - | - |
 | E16-4 | docs-scribe | pending — needs E16-3 merged; carries **E19**, BL40 | - | - |
-| E16-5 | unassigned | **UNSCOPED — E21** (`cmd/generator` reproduces the defect) | - | - |
+| E16-5 | platform-engineer | **part 1 merged (#61)**; part 2 **BLOCKED — no authorization primitive exists**, and needs E16-3 first | - | - |
 
 **Phase A and Phase B are complete on `main`.** `main` is **`5030e7f`**.
 
@@ -64,8 +65,8 @@ fences had never actually been enforced by CI until 2026-08-29 and they hold; an
 `gh pr merge` and pushes to `main` are blocked by the sandbox classifier, so a human
 merges; branch pushes and PR creation work.
 
-## WAITING ON YOU — three answers, and what each one unblocks
-Nothing below is mine to decide. **These three are the ONLY thing blocking this board** — as of
+## WAITING ON YOU — two answers, and what each one unblocks
+Nothing below is mine to decide. **These two are the ONLY thing blocking this board** — as of
 2026-08-29 every task that needed no answer from you has been done and merged.
 
 **E22 is the ONLY thing still blocking the E16 chain**, and it is the one item on this board
@@ -74,7 +75,6 @@ settled by `make migrate-status`. Everything else in the chain is now scoped and
 | Ask | Blocks | One-line question |
 | --- | --- | --- |
 | **E22** | E16-1, and the whole E16 chain behind it | Does **any** environment have rows in `users`? (`make migrate-status`) |
-| **E21** | E16-5 | `cmd/generator` reproduces the defect into every future module — scope it, or accept it? |
 | **E9b/E9c/E12** | **D6** | The last Phase D asks. D5 and D8 are both unblocked; D6 is the only one still waiting. |
 **Phase D's dependency wall is down.** E11 (#51), E13/E14 (#53) and E15 (#55 + decision) are
 all answered, so **D5 and D8 are both dispatchable now**. **D6 alone still waits**, on
@@ -221,9 +221,13 @@ against `main` rather than a fix on an open branch. The T2 review is being re-po
 
 ---
 
-# ESCALATIONS — OPEN (7)
-**Was 17. E7, E8, E18, E11, E13, E14, E15, E19, E23 and E24 were resolved 2026-08-29** — see
-their entries below, each now headed RESOLVED or ANSWERED. Nothing else changed state.
+# ESCALATIONS — OPEN (6)
+**Was 17. E7, E8, E18, E11, E13, E14, E15, E19, E21, E23 and E24 were resolved 2026-08-29** —
+see their entries below, each now headed RESOLVED or ANSWERED. Nothing else changed state.
+
+**One NEW question surfaced and deliberately not numbered by me: this repository has no
+authorization primitive at all.** It is why the IDOR was expressible, it blocks E21 part 2, and
+it is framed under E21 below rather than opened as an escalation, because naming it is yours.
 
 Ordered by severity.
 
@@ -455,7 +459,58 @@ the first, and the profile is **`id uuid` (= `auth_users.id`) + `created_at` + `
    Class warning already on this board (E8): any `goose.Down()` caller breaks when a newer
    migration lands.
 
-## E21 — `cmd/generator` reproduces the defect into every future module ⚠ unscoped, no owner
+## E21 — **ANSWERED 2026-08-29 (human, delegated). SPLIT: part 1 in #61; part 2 after E16-3 and BLOCKED.**
+**Not a non-goal, and not a rewrite now.**
+
+**The fact that reframes it: the generator is ALREADY broken, and documented as broken in three
+places** — `current-state.md:260`, `remediation-plan.md:72`, `BOILERPLATE.md:195` — because it
+writes to `internal/infrastructure/http/routes/routes.go`, which Phase 1.5 deleted. **So the
+amplification this entry fears is latent, not live** (this board's own E7/E18 distinction):
+nobody can currently generate a working module.
+
+**But latent here is worse than inert, and that is what decided the answer.** The commit that
+revives `make generate` is **exactly** the commit that arms the amplification, and nothing
+connected the two. Whoever fixes it will be looking at deleted routing paths, not at
+`PrimaryKey = {ID, int64, id}` or `strconv.ParseInt` — they fix the routes, the generator starts
+working, and the IDOR shape goes live in the same change, **silently**. A comment cannot prevent
+that; the tool has to stop.
+
+**Part 1 — DONE, #61 (`7723cba`).** The generator exits 2 with an explanation instead of
+generating, and the two paths that swallowed failure are fatal. **Verified in code, not taken on
+report:** `main.go:267` and `:274` printed `⚠ Warning` and **continued**, so a run that left the
+tree non-compiling still exited 0 and printed ✓ lines. Both are now fatal, so removing the
+refusal does not bring the silent-success defect back with it. **No override flag** — an escape
+hatch would be used, and the point is that reviving the tool requires editing the file and
+therefore reading why it was disabled. No CI impact: nothing in `ci.yml` runs `make generate`.
+
+**Part 2 — after E16-3, and BLOCKED on something bigger than E21.** Two reasons it cannot be
+done now:
+- **There is nothing to mirror.** The generator's shape follows `modules/user`, and under
+  E24 = option (b) that module stops being a CRUD exemplar at all. `/me` is not the answer for a
+  generic entity either, which is not 1:1 with a user. The safe shape for a generated resource is
+  an open question until E16-3 settles it.
+- **There is no authorization primitive to emit.** E16 established this repository has **zero**
+  `RequireRole`/`RequirePermission`/`Authorize` matches — no authz layer exists anywhere. Writing
+  the template now would mean **inventing the authorization model inside a code generator**,
+  which is the worst possible place to invent it.
+
+**⚠ THE SECOND POINT IS A NEW ESCALATION IN ITS OWN RIGHT.** "This repository has no
+authorization primitive" is bigger than E21, bigger than E16-3, and is the reason the IDOR was
+expressible at all. E16-3 closes the surface for one module by deleting it; nothing yet decides
+what an authorized route looks like in this codebase. **Recorded here rather than opened as a
+numbered escalation only because it deserves the human's framing, not mine.**
+
+**When part 2 runs:** default the PK to uuid (`auth_users` and `notifications` already do; only
+the legacy `users`/`products` use `BIGSERIAL`), drop `strconv.ParseInt` and `@Param id path int`
+with it, emit handlers that **fail closed** — 501 and an explicit TODO — rather than working
+CRUD with no authorization, and repoint the route/wiring updates at `httpx.Mount` and
+`cmd/api/container.go`. That list is duplicated into the tool's own refusal message, so it
+reaches someone who never opens this board.
+
+**Owner:** platform-engineer (`cmd/**`), as this entry proposed. **Part 1 did not serialise
+against the `cmd/api` single-writer rule** — it touches only `cmd/generator`.
+
+### E21 (original entry, kept) — `cmd/generator` reproduces the defect into every future module
 `cmd/generator/main.go:202-206` hardcodes `PrimaryKey = {ID, int64, id}` with nothing
 overriding it; `:714` `if id <= 0`; `:910` `bun:"id,pk,autoincrement"`; `:979/1051/1094`
 `@Param id path int`; `:988/1061/1103` `strconv.ParseInt`. `BOILERPLATE.md:279` (quote: "`modules/user/transport/user.go` or") points
