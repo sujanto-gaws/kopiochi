@@ -35,8 +35,9 @@ States: pending | dispatched | in-review | blocked | merged | escalated
 | **E13/E14-FIX** | *(in-session, ungated)* | **merged** | #53 (`0d0b02d`) | **none — see PROCESS-7** |
 | **E15-PRE** | *(in-session, ungated)* | **merged** | #55 (`ee9bbd9`) | **none — see PROCESS-7** |
 | **E16-P2** | *(in-session, ungated)* | **merged** | #58 (`49ee321`) | **none — see PROCESS-7** |
-| **E21-1** | *(in-session, ungated)* | **in review** | **#61** (`af83214`) | **none** |
-| **E9b/E9c-FIX** | *(in-session, ungated)* | **in review** | **#63** (`aa784a1`) | **none** |
+| **E21-1** | *(in-session, ungated)* | **merged** | #61 (`af83214`) | **none — see PROCESS-7** |
+| **E9b/E9c-FIX** | *(in-session, ungated)* | **merged** | #63 (`aa784a1`) | **none — see PROCESS-7** |
+| **E12-FIX** | *(in-session, ungated)* | **in review** | **#65** (`ae8f61e`) — 7/7 green | **none** |
 | D5  | platform-engineer | **UNBLOCKED 2026-08-29** — E11, E13, E14 all answered. Scope grew: `sender/inapp.go`, and its file list must say `domain/message.go`, not `application/ports.go` | - | - |
 | D6  | platform-engineer | **UNBLOCKED 2026-08-29** — E9b/E9c answered and implemented (#63); E12 answered and additive, not a dependency | - | - |
 | D7  | transport-engineer | **UNBLOCKED** — needs D6 | - | - |
@@ -118,7 +119,9 @@ board: #19/#21/#24/#27/#28/#32 → `ca397f1` · #41 board
 #45 `cf7a4cb` **T7** · #46 `bc0cc2f` **E8** · #47 `7349edd` **E18+E7**
 #48 `2d8d529` **BL34b** · #49 `979df0f` **GITIGNORE** · #50 board · #51 `8f82381` **E11** ·
 #52 board · #53 `0d0b02d` **E13+E14** · #54 board · #55 `ee9bbd9` **E15 precursor** ·
-#56 board · #57 board · *(open: #58 E16-P2, #59 board)*
+#56 board · #57 board · #58 `49ee321` **E16-P2** · #59 board · #60 board ·
+#61 `af83214` **E21-1** · #62 board · #63 `aa784a1` **E9b+E9c** · #64 board ·
+*(open: #65 E12, #66 board)*
 
 ## PROCESS-7 — six changes merged with NO arch-reviewer verdict
 T6 (#44), T7 (#45), E8-FIX (#46), E18-FIX (#47), BL34b (#48), GITIGNORE (#49), E11-FIX (#51),
@@ -948,7 +951,7 @@ catches**. Amend R1 to `infrastructure → domain, own application's ports, …`
 archtest rule permitting `modules/X/infrastructure → modules/X/application` only.
 **Must land before D5.**
 
-## E12 — **ANSWERED 2026-08-29 (human, delegated): approved, with one binding constraint. NOT yet implemented.**
+## E12 — **ANSWERED 2026-08-29 (human, delegated) and IMPLEMENTED in #65 (`ae8f61e`).**
 `DispatchObserver`, optional, nil ⇒ no-op, as proposed. Confirmed in code: `settle` computes the
 outcome and channel per row and discards both, and `DispatchBatch` returns only `len(claimed)`.
 
@@ -970,9 +973,30 @@ return value cannot, and the change stays additive with no breaking edit to a me
 survives in a new form. `settleSafely` currently wraps a recovered panic in a bare
 `fmt.Errorf`; it should wrap a sentinel the observer can `errors.Is`.
 
-**Not implemented in #63**, deliberately: E12 is independent of D6's chain and touches the
-application layer rather than persistence. **`claimed_at` (E9b) has already landed the durable
-half of its latency measurement.**
+**Implemented in #65, separately from #63** because E12 is independent of D6's chain and touches
+the application layer rather than persistence. `claimed_at` (E9b, #63) landed the durable half of
+the latency measurement; `took` is the in-process half.
+
+**What shipped differs from this answer in one place, and it is recorded rather than glossed:**
+the signature carries **`took time.Duration`** beyond the `Settled(n, outcome, err)` proposed
+here. Without it the port answers two of this entry's three stated needs and silently drops the
+histogram, which would have been a quiet half-fix.
+
+**Two decisions made during implementation, both worth a reviewer's eye.** `Settled` fires
+**after** the `Save`, never before — a row whose `Save` failed has not settled, and an audit
+event for a dead-letter that did not happen is worse than no event; there is a test that asserts
+the non-report. And the entity is passed **by value**, because an observer is a bystander and
+handing it the pointer the dispatch loop still holds would let a careless implementation mutate a
+row mid-cycle.
+
+**BL25's sentinel keeps the OLD message text**, deliberately. The first cut reworded it and broke
+an existing assertion that pins the exact phrase; changing that test to match new wording would
+have been fitting the assertion to the code. `ErrPanicked` now produces the string
+`settleSafely` already produced, and the existing test passes untouched — a sentinel should not
+change what an operator reads in a log.
+
+**`DispatchBatch`'s signature is unchanged**, as this answer predicted: nothing merged had to be
+broken.
 
 ### E12 (original entry, kept) — `DispatchBatch (int, error)` cannot support D10's metrics or audit
 Per-channel counters, a latency histogram, and an audit event on **security-category
