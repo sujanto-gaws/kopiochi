@@ -88,8 +88,25 @@ jobs:
       # -race is the reason this job exists at all; see the header comment.
       # -covermode=atomic is required with -race and is what tools/coverage
       # reads.
+      #
+      # -p 1 runs one package binary at a time. Every integration test resolves
+      # to the SAME database — one TEST_DATABASE_URL for the whole job — so at
+      # the default -p the binaries collide in it. internal/db migrates the
+      # schema up and down while the four repository packages TRUNCATE ...
+      # RESTART IDENTITY CASCADE at their own setup, on the same tables, with
+      # no coordination. The result is not a stable failure: rows vanish out
+      # from under a test that inserted them, and PostgreSQL reports
+      # "deadlock detected (SQLSTATE 40P01)" from testsupport.TruncateAll.
+      # Observed twice on one commit in run 33236797861, failing a DIFFERENT
+      # set of tests each time across notification and identity.
+      #
+      # This is the cost of one shared database, not of the tests: none of the
+      # four integration files calls t.Parallel(), so serialising the binaries
+      # removes the last source of concurrent access. The honest price is
+      # wall-clock — the packages no longer overlap. Per-package databases
+      # would buy that time back and are the better long-term answer.
       - name: go test -race
-        run: go test -race -covermode=atomic -coverprofile=coverage.out ./...
+        run: go test -race -p 1 -covermode=atomic -coverprofile=coverage.out ./...
 
       # Fail loudly if the database was not actually reachable. Every
       # integration test skips cleanly when it is not, so without this check a
