@@ -22,9 +22,15 @@ States: pending | dispatched | in-review | blocked | merged | escalated
 | **T3** | platform-engineer | **merged** | #33 | APPROVE-WITH-NOTES |
 | B2a | transport-engineer | **superseded by E16-3** (was BLOCKED — E16) | - | - |
 | T2  | test-guardian | **merged** (via #35 — PROCESS-4) | #35 (`36784b6`) | **APPROVE** (verdict transferred, see below) |
-| T4  | platform-engineer | **APPROVED — MERGE WHEN READY** | **#42** (`799c861`) | **APPROVE-WITH-NOTES**; amendment landed + verified |
+| T4  | platform-engineer | **merged** | #42 (`799c861`) | **APPROVE-WITH-NOTES**; amendment landed + verified |
 | T5  | platform-engineer | **merged** | #36 | not gated by me — landed from a prior session |
-| C1  | docs-scribe | **APPROVED — MERGE WHEN READY** | **#43** (`66b69e1`) | **APPROVE-WITH-NOTES** after BLOCK #1 fixed |
+| C1  | docs-scribe | **merged** | #43 (`66b69e1`) | **APPROVE-WITH-NOTES** after BLOCK #1 fixed |
+| **T6** | *(in-session, ungated)* | **merged** | #44 (`cb020d6`) | **none — see PROCESS-7** |
+| **T7** | *(in-session, ungated)* | **merged** | #45 (`cf7a4cb`) | **none — see PROCESS-7** |
+| **E8-FIX** | *(in-session, ungated)* | **merged** | #46 (`bc0cc2f`) | **none — see PROCESS-7** |
+| **E18-FIX** | *(in-session, ungated)* | **merged** | #47 (`7349edd`) | **none — see PROCESS-7** |
+| **BL34b** | *(in-session, ungated)* | **in review** | **#48** (`2d8d529`) — 7/7 green | **none** |
+| **GITIGNORE** | *(in-session, ungated)* | **in review** | **#49** (`979df0f`) — 7/7 green | **none** |
 | D5  | platform-engineer | **BLOCKED — E11, E13, E14** | - | - |
 | D6  | platform-engineer | **BLOCKED — E9b, E9c, E12** | - | - |
 | D7  | transport-engineer | **UNBLOCKED** — needs D6 | - | - |
@@ -37,15 +43,25 @@ States: pending | dispatched | in-review | blocked | merged | escalated
 | E16-4 | docs-scribe | pending — needs E16-3 merged; carries **E19**, BL40 | - | - |
 | E16-5 | unassigned | **UNSCOPED — E21** (`cmd/generator` reproduces the defect) | - | - |
 
-**Phase A and Phase B are complete on `main`.** Open PR: **#41** (this board).
-**In flight 2026-08-11:** T4 (`ci/T4-golangci-lint-v2`) and C1 (`feat/C1-authn-contract-docs`),
-dispatched in parallel — no dependency edge between them, disjoint file sets, neither touches
-`cmd/api`. They are the ONLY two tasks on the board that need no answer from the human first.
+**Phase A and Phase B are complete on `main`.** `main` is **`5030e7f`**.
+
+**2026-08-29 — CI IS GREEN. ALL SEVEN JOBS.** For the first time in this repository's
+history. #42 (T4) made the linter run at all; #44 (T6) cleared six stdlib advisories;
+#45 (T7) stopped the test binaries colliding in one database; #46 fixed E8, the two
+migration tests that had been killing the `build` job before it reached its own gates;
+#47 cleared E18's two floors. **Open: #48 and #49, both 7/7 green.**
+
+**Two CI steps executed for the first time ever**, both previously `skipped` because the
+job died at `go test -race`: **`architecture rules` — and it PASSED**, so B4's and T2's
+fences had never actually been enforced by CI until 2026-08-29 and they hold; and
+**`coverage floors and ratchet`** — see E18.
+
 `gh pr merge` and pushes to `main` are blocked by the sandbox classifier, so a human
 merges; branch pushes and PR creation work.
 
 ## WAITING ON YOU — six answers, and what each one unblocks
-Nothing below is mine to decide. Everything else on this board is blocked behind one of them.
+Nothing below is mine to decide. **These six are now the ONLY thing blocking this board** —
+as of 2026-08-29 every task that needed no answer from you has been done and merged.
 | Ask | Blocks | One-line question |
 | --- | --- | --- |
 | **E22** | E16-1, and the whole E16 chain behind it | Does **any** environment have rows in `users`? (`make migrate-status`) |
@@ -80,13 +96,28 @@ worktrees, which both of today's dispatches require explicitly. **Ask:** discard
 
 **Owed at Phase B close:** run **`make coverage-update`** — `internal/authn/authntest`
 measures 100% with no `baseline` entry, and BL19's three baselines lag their actuals.
+**STILL OWED as of 2026-08-29, and NOT discharged by the green gate.** The gate reports
+*"all floors met, no regressions"*, which is a statement about floors and the ratchet — **not**
+that the baselines are current. Not verified this session.
 
 ## Merge log
 #15 `d63200b` rename · #16 `f594ebc` A1+A2 · #17 `d74ec67` A3 · #18 `0c0a1cf` T1 ·
 #20 `a475151` A4 · #22 `21c94bb` D1 · #23 `68402ec` D2+D3 · #25 E9a ·
 #26 `5481dbd` **B1 only** (see PROCESS-1) · #29 `73409cc` D4 ·
 #30 `42b7a98` **B2+B3 recovered** · #31 `ad5ba26` B4 ·
-board: #19/#21/#24/#27/#28/#32 → `ca397f1`
+board: #19/#21/#24/#27/#28/#32 → `ca397f1` · #41 board
+**2026-08-29:** #42 `799c861` T4 · #43 `66b69e1` C1 · #44 `cb020d6` **T6** ·
+#45 `cf7a4cb` **T7** · #46 `bc0cc2f` **E8** · #47 `7349edd` **E18+E7**
+
+## PROCESS-7 — six changes merged with NO arch-reviewer verdict
+T6 (#44), T7 (#45), E8-FIX (#46), E18-FIX (#47) and the two open PRs (#48, #49) were
+produced and merged without passing the gate every earlier task passed. They are
+test/CI/config only — **no production Go file was modified by any of them** — and each
+carries its own in-PR verification (real Postgres 16, mutation tests on #46, the actual
+coverage gate on #47). But the gate is the gate, and the board must record that these six
+are **unreviewed** rather than let the merge log imply otherwise.
+**Standing correction:** work done directly in the lead's session is still work, and is
+not exempt from the gate because it was convenient.
 
 ## PROCESS-1 — B2 and B3 were never pushed
 PR #26 merged **only** `ea0d30f` (B1). B2 and B3 stacked onto the same branch and **I
@@ -172,7 +203,9 @@ against `main` rather than a fix on an open branch. The T2 review is being re-po
 
 ---
 
-# ESCALATIONS — OPEN (17)
+# ESCALATIONS — OPEN (14)
+**Was 17. E7, E8 and E18 were resolved 2026-08-29** — see their entries below, each now
+headed RESOLVED. Nothing else changed state.
 
 Ordered by severity.
 
@@ -561,7 +594,38 @@ I let "covered by integration tests, needs a database" stand as the reason `audi
 **E7's fix is tests for `auditlog`, or a reasoned policy change. Never a database, never a lowered
 floor.** The floor is unsatisfiable as the tree stands.
 
-## E18 — CONFIRMED WITH FILE:LINE: THE COVERAGE GATE HAS NEVER EXECUTED
+## E18 — **RESOLVED 2026-08-29 by #47 (`7349edd`). E7 WITH IT.**
+Both floors cleared **by tests, not by moving a floor**:
+
+    modules/identity/infrastructure/persistence/repository   57.1% -> 83.0%   (floor 60%)
+    modules/identity/infrastructure/auditlog                  0.0% -> 100.0%  (floor 60%)
+
+The board recorded both numbers from a local profile. **CI now confirms them to the
+decimal**, and the gate — executing for the first time ever — reports *"all floors met, no
+regressions"*.
+
+**E18's severity was understated here.** The repository's gap was not spread thinly:
+**three functions carried ZERO coverage — `FindAny`, `Rotate`, `RevokeFamily` — and together
+they are the entire refresh-token reuse-detection path.** Rotation alone does not survive
+theft; the family sweep is what ends the attacker's session, and none of it was exercised.
+Every property is enforced in SQL (a `rowsAffected` check, a family predicate), so no unit
+test could have reached it. The sharpest new assertion: after a refused second rotation the
+loser's successor must **not exist** — if the `UPDATE` fails after the `INSERT` lands, the
+caller just refused walks away with a working token.
+
+**E7's prescription was followed exactly** — *"tests for `auditlog`, or a reasoned policy
+change. Never a database, never a lowered floor."* It got tests: 100.0%, asserting the
+mapping (a failed login carries the attempted username in `Subject` with **no** `actor_id`;
+the reuse record leaks no token or hash; `revocation_failed` present when revocation failed
+and absent when it did not; a nil logger across all eight methods).
+
+**Still live, small:** `tools/coverage/policy.json:41`'s `why` for the
+`modules/*/infrastructure/...` floor still reads *"Covered by integration tests, which need
+a database"*. That string is printed on ANY failure under that pattern and is what
+misdirected E7 the first time. It is true of the persistence packages and false of
+`auditlog`. Worth splitting the pattern or rewording before it misdirects again.
+
+### E18 (original entry, kept) — CONFIRMED WITH FILE:LINE: THE COVERAGE GATE HAS NEVER EXECUTED
 `.github/workflows/ci.yml:122-123` (`go run ./tools/coverage ... -with-database`) is **unreachable**
 while `.github/workflows/ci.yml:91-92` (`go test -race`) exits 1 on E8's two `internal/db`
 failures. The coverage gate is **dead in CI today**, independent of E7. E8 is the keystone: clear
@@ -670,7 +734,34 @@ findings** — and that is the default shape of most OAuth/OIDC middleware. Also
 401 is invariant by vacuity. **Fix:** compare the whole rejection response across cases and
 treat an absent `detail` as a finding. **Its own task**, not B4's.
 
-## E8 — `internal/db` — the one-line fix is NOT enough
+## E8 — **RESOLVED 2026-08-29 by #46 (`bc0cc2f`)**
+The entry below was right, and can be sharpened: **the two halves repair DIFFERENT tests,
+and neither is optional.**
+- **Isolation alone does not fix `_IsReversible`.** In an empty schema `goose.Up` still
+  applies all 8 migrations and `goose.Down` still reverts only the newest. It needs the
+  version pin: `UpTo(7)` → `DownTo(6)` → `UpTo(7)`.
+- **Pinning alone does not fix `_RefusesCollidingData`**, and is worse: `DownTo(6)` on the
+  shared database leaves `public` at 6 for whatever runs next.
+- **Isolation alone DOES fix `_RefusesCollidingData`** — a private schema makes `UpTo(6)`
+  mean what it says.
+
+**New fact, found while verifying:** the old tests did not merely fail. Running them
+against a fully migrated database **rewinds `public` from `20260808170025` to `7` and
+leaves it there**; every package running afterwards inherited that. The fix carries
+`assertPublicUntouched` so a recurrence fails loudly at the source.
+
+Isolation was **not designed** — `schema_test.go:43-58` already migrated into a private
+schema, which is exactly why that test alone in the package was never part of E8. Two
+details it lacks were added: `SetMaxOpenConns(1)` (a bare `SET search_path` lands on one
+pooled connection, and `schema_test.go` survives on pool luck) and a `current_schema()`
+assertion.
+
+Verified against real Postgres 16 in CI's configuration — both failures reproduced with
+CI's exact messages first — and **mutation-tested**: removing 00007's constraint restore
+fails `_IsReversible`; downgrading its `RAISE EXCEPTION` to `RAISE NOTICE` fails
+`_RefusesCollidingData`. No assertion was weakened; no migration file was touched.
+
+### E8 (original entry, kept) — `internal/db` — the one-line fix is NOT enough
 In the configuration **CI uses** (one shared `TEST_DATABASE_URL`), **two** tests fail; in
 isolation `_RefusesCollidingData` passes — which reconciles four contradictory reports.
 1. `goose.Down()` reverts only the **newest** migration, and D1's is now newest.
@@ -684,34 +775,59 @@ even pinned it still hands the next test a migrated database. **Do both:** pin t
 
 ---
 
-# CI — what is red on `main`, precisely (verified in run logs)
+# CI — GREEN on `main` as of 2026-08-29 (verified in run logs)
 
-| Job | State | Notes |
-| --- | --- | --- |
-| **Vulnerabilities and secrets** | 🟢 **fixed by T3** | Confirmed green in CI run **31325881382**. `gitleaks` was never failing. |
-| Migrations up/down/up | 🟢 green | Stays green through pgx v5.9.2. |
-| Binary size | 🟢 green | Reported, not gated. |
-| **Swagger spec** | 🔴 **red once after T3 merges, then self-heals** | See SWAGGER below. **Not a T3 regression.** |
-| **Build, vet, test** | 🔴 red | Three causes, two not yet reached: E8's two failures; the notification concurrency **flake**; then E18's two floor failures once E8 clears. |
-| **golangci-lint** | 🔴 red | Has **never once run the configured linters**. See below. |
+`main` = `5030e7f`. Latest full green: run 33243128092.
 
-## SWAGGER — new, needs a task (T5)
-`setup-go`'s module cache is keyed on `go.sum`, so **any** `go.sum` change gives
-`Cache is not found`; `swag init --parseDependency` then hits `go: downloading …` mid-parse
-and aborts with `cannot find all dependencies`. Reproduced green locally with a warm cache.
-**Fix:** one `go mod download` step before `generate` in the swagger job. It will bite the
-first post-merge `main` run and then recover.
+| Job | State |
+| --- | --- |
+| **Build, vet, test** | 🟢 green — **every step**, including the two below that had never run |
+| **golangci-lint** | 🟢 green — T4 (#42). depguard now executes; the authn/httpx fence's editor-time half is live |
+| **Swagger spec** | 🟢 green — T5 self-healed exactly as predicted |
+| **Migrations up/down/up** | 🟢 green |
+| **Vulnerabilities and secrets** | 🟢 green — T3, then **T6 (#44)** |
+| **Binary size / No large files** | 🟢 green |
 
-## LINT — root cause found, needs a task (T4)
-`golangci/golangci-lint-action@v6` with `version: latest` resolves to **golangci-lint
-v1.64.8**, the last v1, built with **go1.24** — hence `the Go language version (go1.24) used
-to build golangci-lint is lower than the targeted Go version`. Bumping the `go` directive
-cannot help: `1.25.0` already exceeded `go1.24`. Stacked behind it, `.golangci.yml:13`
-declares `version: "2"`, which v1.64.8 **cannot parse at all**.
-**Fix:** `golangci/golangci-lint-action@v8` (v7+ is required for golangci-lint v2) with
-`version: v2.12.2` — **pin it**; `latest` is what produced the silent v1 pin.
-**Scope it as "make the job run AND clear what it finds"**, not a one-line YAML edit: the
-linter has never executed against this tree. Expect at least BL1's two errcheck findings.
+**Two steps executed for the first time in this repository's history**, both previously
+`skipped` because the job died at `go test -race` before reaching them:
+- **`architecture rules` — PASSED.** B4's and T2's fences had never once been enforced by
+  CI. They hold. Until 2026-08-29 the archtest suite was written, merged, believed, and
+  never run by the pipeline.
+- **`coverage floors and ratchet`** — now passing; see E18.
+
+## T6 — the toolchain pin has no owner, and this WILL recur ⚠ NEW
+#44 bumped `go 1.25.12` → **`1.25.14`** after **six** stdlib advisories accumulated against
+a fixed floor: GO-2026-6218 (`net/url`), GO-2026-6090 (`crypto/tls`), GO-2026-6089 and
+GO-2026-5026 (`net/http`), GO-2026-6088 (`encoding/xml`), GO-2026-5972 (`encoding/asn1`) —
+every one traced to our own call sites (`cmd/api/healthcheck.go:70`,
+`internal/httpx/server.go:96`).
+
+**This is T3's mechanism working as designed, not a regression.** CI installs
+`govulncheck@latest` so the advisory database is always current, while the `go` directive is
+a floor that fails closed. **The failure mode is time-based, not change-based:** it reddens
+pull requests whose authors changed nothing — here after an eighteen-day gap between CI runs
+on `main`.
+
+**1.25.14 was taken over the 1.25.13 govulncheck named.** T3 pinned on "the newest patch in
+the 1.25 line" and the two criteria had diverged; the merely-sufficient version schedules its
+own recurrence. The `Dockerfile` moved in the same commit, per T3 — no CI job builds the
+image (BL37), so that commit is the only thing coupling them.
+
+**Ask:** who owns keeping this current, and on what trigger? Nothing on this board does.
+
+## GITIGNORE — #49 ⚠ NEW, small
+`.gitignore:22` read `*.zipcoverage.out` — **two entries fused into one**, so **`*.zip` was
+ignored by nothing at all**. `coverage.out` was never at risk (`coverage.*` line 31, and
+`*.out` line 16). Root cause is the **missing trailing newline** on the last line, so
+anything appending lands *on* it; fixed too, or it recurs.
+
+**Third time this file has bitten** — see `8b1b185`, "land tools/coverage, **which
+.gitignore had been swallowing**".
+
+Left undone: nine comment headers sit in a block at the top, detached from the entries they
+label, body in one flat alphabetical run. The file looks `sort`ed, which is also the likeliest
+origin of the fusion. Cosmetic — no effect on what is ignored.
+
 
 ---
 
@@ -853,9 +969,30 @@ delete the assertion the test exists to make. **Nothing to chase, nothing to fix
   `arch_test.go`, exact in `policy.json`. Fix by notation (`/...` suffix).
 - **BL33** `schemacheck` compares **column names only** — it cannot catch a tag whose
   *semantics* diverge from the column (D4's `default:true` class).
-- **BL34** Shared-`TEST_DATABASE_URL` leaks state between test binaries; `-p 1` avoids it.
+- **BL34 — RESOLVED 2026-08-29, in TWO parts, because it had two failure modes.**
+  (a) **Concurrent access** → #45 (`cf7a4cb`), `-p 1` on `ci.yml:92`. Sufficient rather than
+  partial: none of the four integration files calls `t.Parallel()`, so all remaining
+  concurrency was between binaries. Cost: `build` 2m16s → 3m33s.
+  (b) **Leftover rows** → #48. `cmd/api/login_e2e_test.go` called `testsupport.MigratedDB`
+  and never `TruncateAll`, so it inherited whatever ran before it and died on
+  `idx_auth_users_email_lower`. **`-p 1` does not help this** — it fixed concurrency, not
+  residue. It was green only because `cmd/api` sorts first under `./...` and so usually met
+  an empty database: an ordering accident, not a property.
+  Long-term: **per-package databases** remove both and buy back the 77s.
+- **BL34 (original entry, kept)** Shared-`TEST_DATABASE_URL` leaks state between test binaries; `-p 1` avoids it.
 - **BL35** Arch failures are reported twice per violation (`[p.test]` variant).
-- **BL36** `TestNotificationRepo_ClaimBatchIsExclusiveUnderConcurrency` is a **timing flake** —
+- **BL36 — ~~RETRACTED~~ 2026-08-29. THE TEST WAS NOT FLAKY AND ITS ASSERTION WAS SOUND.**
+  It was one instance of BL34's class. The fix this entry proposed — force overlap, or drop
+  the assertion — would have **weakened a correct test and left the real bug in place**.
+  Evidence: CI run 33236797861, the SAME SHA run twice, failed a **different set of tests
+  each time** — only `internal/db` (E8) was constant, the rest rotated across notification
+  AND identity. Signatures: `"[]" should have 2 item(s), but has 0` (rows removed mid-test)
+  and `deadlock detected (SQLSTATE 40P01)` traced to `internal/testsupport/db.go:168`
+  (`TruncateAll`). Fixed by #45, not by touching the test.
+  **Standing correction:** a test that fails intermittently is a *hypothesis about the
+  test*, not a conclusion. Before recording one as flaky, run the same SHA twice and check
+  whether the **same** test fails.
+- **BL36 (original entry, kept)** `TestNotificationRepo_ClaimBatchIsExclusiveUnderConcurrency` is a **timing flake** —
   failed on `main`'s run, passed on #33's. Its `require.NotEmpty` on both claimers fails when
   the goroutines do not overlap. Fails safe (never a false pass) but it will redden CI at
   random. Needs a fix that forces overlap or drops that assertion.
