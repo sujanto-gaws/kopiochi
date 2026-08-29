@@ -44,7 +44,7 @@ States: pending | dispatched | in-review | blocked | merged | escalated
 | D8  | platform-engineer | **UNBLOCKED 2026-08-29** — E15 answered; precursor #55. Port declared by the sender, adapter in `cmd/api` | - | - |
 | D9a/D9b, D10 | domain / platform | pending | - | - |
 | E16-P | test-guardian | **merged** | #37 (`1dc6aa7`) | **APPROVE-WITH-NOTES** |
-| E16-1 | persistence-engineer | **BLOCKED — E22 only** (E20 answered, E19 ruled 2026-08-29) | - | - |
+| E16-1 | persistence-engineer | **UNBLOCKED 2026-08-30** — E20 answered, E19 ruled, E22 dissolved. **Scope amended:** the migration back-fills by `lower(email)` and **RAISEs on any `users` row it cannot map**, so it is correct on an empty table and on a populated one | - | - |
 | E16-2 | domain-engineer | **UNBLOCKED 2026-08-29** (E24 = option b). **Scope changed:** `CreateUserRequest`/`UpdateUserRequest` are **deleted, not emptied**; `UserResponse` becomes `{id uuid, created_at, updated_at}`; `ID int64`→`uuid.UUID`; drop the `id <= 0` guard | - | - |
 | E16-3 | transport-engineer | **UNBLOCKED 2026-08-29** (E24 = option b). **Scope SHRANK:** the route table becomes `GET /api/v1/users/me` alone — POST/PUT/DELETE are removed, so there is no `{id}` param, no `strconv.ParseInt` ×3, no `@Param id path int` ×3, and **the byte-identity obligation is moot on verbs that no longer exist**. The handler reads the Principal | - | - |
 | E16-4 | docs-scribe | pending — needs E16-3 merged; carries **E19**, BL40 | - | - |
@@ -67,17 +67,19 @@ fences had never actually been enforced by CI until 2026-08-29 and they hold; an
 `gh pr merge` and pushes to `main` are blocked by the sandbox classifier, so a human
 merges; branch pushes and PR creation work.
 
-## WAITING ON YOU — one answer
-Nothing below is mine to decide. **E22 is now the ONLY thing blocking this board.** Every other
-escalation has been answered, and every task that needed no answer from you has been done and
-merged. **Phase D is fully unblocked: D5, D6 and D8 are all dispatchable.**
+## WAITING ON YOU — NOTHING IS BLOCKED
+**Every escalation on this board is answered, and every task is dispatchable.**
 
-**E22 is the ONLY thing still blocking the E16 chain**, and it is the one item on this board
-that cannot be answered from the repository at all: it is a fact about deployed environments,
-settled by `make migrate-status`. Everything else in the chain is now scoped and dispatchable.
-| Ask | Blocks | One-line question |
-| --- | --- | --- |
-| **E22** | E16-1, and the whole E16 chain behind it | Does **any** environment have rows in `users`? (`make migrate-status`) |
+**E22 was the last one, and it was dissolved rather than decided (2026-08-30).** It asked a
+question about the world that the repository cannot settle — *does any environment hold rows in
+`users`?* — so E16-1 is instead specified to be correct **whichever way the answer falls**. See
+E22 below for the evidence and the migration shape.
+
+**`make migrate-status` is still worth running before this ships anywhere real.** It has stopped
+being a blocker and become an ordinary pre-deploy check, which is where it belonged.
+
+**Still open, blocking nothing:** E10 and E17. **Still unnumbered and larger than any of them:**
+this repository has no authorization primitive at all — see E21.
 **Phase D's dependency wall is down.** E11 (#51), E13/E14 (#53) and E15 (#55 + decision) are
 all answered, so **D5 and D8 are both dispatchable now**. **D6 alone still waits**, on
 E9b/E9c/E12 — and those are the only Phase D asks left. Nothing in Phase D is blocked on
@@ -225,12 +227,16 @@ against `main` rather than a fix on an open branch. The T2 review is being re-po
 
 ---
 
-# ESCALATIONS — OPEN (3)
+# ESCALATIONS — OPEN (2)
 **Was 17. Fourteen were resolved on 2026-08-29** — E7, E8, E9b, E9c, E11, E12, E13, E14, E15,
 E18, E19, E21, E23 and E24 — each now headed RESOLVED or ANSWERED below.
 
-**What remains: E22** (the human's, and the only board item unanswerable from the repository),
-**E10** and **E17**.
+**What remains: E10 and E17, and neither blocks anything.** E22 was the last blocking
+escalation; it was **dissolved on 2026-08-30** rather than answered, by specifying E16-1 to be
+correct whichever way the unanswerable question falls.
+
+**The largest open question on this effort is not numbered here:** this repository has no
+authorization primitive at all. It is why E16 was expressible, and it is recorded under E21.
 
 **One NEW question surfaced and deliberately not numbered by me: this repository has no
 authorization primitive at all.** It is why the IDOR was expressible, it blocks E21 part 2, and
@@ -307,6 +313,15 @@ are sequenced, not parallel):
   the enumeration oracle the fix must close.
 - **E16-1** persistence — new migration + `UserDBModel`; `autoincrement` is invalid for a
   uuid PK. Must land with the model in one commit or `tools/schemacheck` fails.
+  **AMENDED 2026-08-30 (E22 dissolved): the migration must be correct whether or not `users`
+  holds rows.** Back-fill by joining `lower(email)` against `auth_users`, and **`RAISE
+  EXCEPTION` on any row that cannot be mapped**, naming the values. On an empty table the
+  back-fill is a no-op and the result is indistinguishable from a clean break; on a populated one
+  it refuses to destroy what it cannot map, exactly as `00007`'s collision guard does. Both
+  `lower(email)` indexes are UNIQUE, so the join is at most 1:1 and an unmatched row is the only
+  failure mode. **Note in the migration why this is not B2 being overturned:** B2 refused
+  `lower(email)` as a per-request authorization decision; this is a one-time supervised migration
+  that fails closed.
 - **E16-2** domain — `ID int64` → `uuid.UUID` through `domain/{user,dto,repository}.go` and
   `application/service.go`, including deleting the `id <= 0` guard, which has no uuid analogue.
 - **E16-3** transport — **SUPERSEDED 2026-08-29 by E24 = option (b), and it SHRANK.** The route
@@ -614,7 +629,52 @@ fields teaches nothing about CRUD.
 **Recommendation withheld deliberately** — (b) and (c) are opposite answers to "what is this
 module *for*", which the plan does not settle and I am not entitled to settle.
 
-## E22 — is there deployed `users` data? ⚠ blocks E16-1's back-fill decision
+## E22 — **ANSWERED 2026-08-30 (human, delegated). DISSOLVED, not decided. E16-1 is unblocked.**
+
+**The fork was clean-break OR back-fill. E16-1 does not have to choose**, and specifying it to
+choose was the mistake this entry inherited. One migration is correct under both:
+
+1. Create the reshaped profile keyed by `auth_users.id`.
+2. Back-fill from any existing `users` rows, joining `lower(email)` against `auth_users`.
+3. **`RAISE EXCEPTION` on any `users` row that cannot be mapped**, naming the offending values.
+
+On an empty `users` — the expected case — the back-fill is a no-op and this behaves **exactly**
+like a clean break. On a populated one it migrates what it can and **refuses to destroy what it
+cannot**. That is not a new principle here: `00007`'s collision guard already does it, and E16's
+own analysis endorsed the reasoning — *"there is no correct automatic answer — merging them is a
+decision about someone's data. The migration must therefore stop."*
+
+**The join is safe to rely on, verified:** `00007` creates **`CREATE UNIQUE INDEX`** on
+`lower(email)` for *both* tables — `idx_auth_users_email_lower` and `idx_users_email_lower` — so
+the match is at most 1:1 in both directions. The only failure mode is a `users` row with no
+corresponding identity, which is exactly what the `RAISE` catches.
+
+**The B2 objection, answered before a reviewer raises it.** B2 refused `lower(email)` matching,
+correctly — as a **runtime authorization decision**, evaluated on every request against a mutable
+natural key. This is a **one-time data migration**, run under supervision, that **fails closed on
+ambiguity**. Same predicate, categorically different risk. **Say so in the migration's comment**,
+or it reads as B2 being quietly overturned.
+
+**What the repository can establish, recorded as inference and not as fact.** Every artifact that
+would exist if this were deployed is absent: `.github/workflows/` holds **only `ci.yml`, with no
+deploy job**; `config/` holds **only `default.yaml`**; `docker-compose.yml` states in its own
+header *"This is a development stack. It is not a deployment manifest."*; there is no terraform,
+k8s, helm, `fly.toml`, `render.yaml` or `Procfile`; and no document claims the project is
+deployed. One artifact that would be *absent* if it were deployed is **present**: `products`, a
+table created by `00002` with **no model and no Go code referencing it anywhere** — a dead
+boilerplate table surviving unremarked is what an un-deployed repository looks like.
+
+With E16-P's findings — no seed data, no init scripts, no seed target — **the evidence points one
+way: no environment holds rows in `users`.**
+
+**That is an inference and it is labelled one.** The repository cannot see a database someone
+provisioned by hand, and dressing a strong inference as a fact is precisely the shape of
+PROCESS-2. **The migration above is what makes the inference not need to be right.**
+
+**`make migrate-status` before shipping anywhere real remains correct** — as a pre-deploy check,
+not a blocker.
+
+### E22 (original entry, kept) — is there deployed `users` data?
 Repo-side facts are settled (E16-P): **no seed data anywhere** — no seed SQL, no
 `docker-entrypoint-initdb.d`, no Makefile seed target; every integration test calls
 `TruncateAll` at **setup**, and `internal/testsupport/db.go:145-169` discovers tables
