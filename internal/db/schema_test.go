@@ -28,7 +28,11 @@ func TestModelsMatchMigratedSchema(t *testing.T) {
 	if err != nil {
 		t.Skipf("schema drift test: cannot open database handle, skipping: %v", err)
 	}
-	defer sqlDB.Close()
+	defer func() {
+		if err := sqlDB.Close(); err != nil {
+			t.Errorf("close database handle: %v", err)
+		}
+	}()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
@@ -40,7 +44,15 @@ func TestModelsMatchMigratedSchema(t *testing.T) {
 	if _, err := sqlDB.Exec(fmt.Sprintf(`CREATE SCHEMA %q`, schemaName)); err != nil {
 		t.Fatalf("create scratch schema: %v", err)
 	}
-	defer sqlDB.Exec(fmt.Sprintf(`DROP SCHEMA %q CASCADE`, schemaName))
+	// Reported rather than discarded: these schemas are named per-nanosecond,
+	// so a DROP that quietly fails leaves a schema_drift_test_* behind on
+	// every run and nothing ever says so. Registered after the Close above, so
+	// LIFO runs it while the handle is still open.
+	defer func() {
+		if _, err := sqlDB.Exec(fmt.Sprintf(`DROP SCHEMA %q CASCADE`, schemaName)); err != nil {
+			t.Errorf("drop scratch schema %q: %v", schemaName, err)
+		}
+	}()
 
 	if _, err := sqlDB.Exec(fmt.Sprintf(`SET search_path TO %q`, schemaName)); err != nil {
 		t.Fatalf("set search_path: %v", err)

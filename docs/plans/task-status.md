@@ -21,25 +21,62 @@ States: pending | dispatched | in-review | blocked | merged | escalated
 | B4  | test-guardian | **merged** | #31 (`9c0ede5`) | APPROVE-WITH-NOTES |
 | **T3** | platform-engineer | **merged** | #33 | APPROVE-WITH-NOTES |
 | B2a | transport-engineer | **superseded by E16-3** (was BLOCKED — E16) | - | - |
-| T2  | test-guardian | **merged** (via #35, not my dispatch — PROCESS-4) | #35 (`36784b6`) | re-review pending on `36784b6` |
-| T4  | platform-engineer | ready — **fix the lint job** (see E8/Q2) | - | - |
+| T2  | test-guardian | **merged** (via #35 — PROCESS-4) | #35 (`36784b6`) | **APPROVE** (verdict transferred, see below) |
+| T4  | platform-engineer | **APPROVED — MERGE WHEN READY** | **#42** (`799c861`) | **APPROVE-WITH-NOTES**; amendment landed + verified |
 | T5  | platform-engineer | **merged** | #36 | not gated by me — landed from a prior session |
-| C1  | docs-scribe | **ready** — Phase B complete | - | - |
+| C1  | docs-scribe | **APPROVED — MERGE WHEN READY** | **#43** (`66b69e1`) | **APPROVE-WITH-NOTES** after BLOCK #1 fixed |
 | D5  | platform-engineer | **BLOCKED — E11, E13, E14** | - | - |
 | D6  | platform-engineer | **BLOCKED — E9b, E9c, E12** | - | - |
 | D7  | transport-engineer | **UNBLOCKED** — needs D6 | - | - |
 | D8  | platform-engineer | **BLOCKED — E15, E11** | - | - |
 | D9a/D9b, D10 | domain / platform | pending | - | - |
-| E16-P | test-guardian | **merged** | #37 (`1dc6aa7`) | verdict pending — merged ahead of it (PROCESS-5) |
-| E16-1 | persistence-engineer | **BLOCKED — E20, E22** — new migration + bun model | - | - |
-| E16-2 | domain-engineer | pending — needs E16-1 merged | - | - |
-| E16-3 | transport-engineer | pending — needs E16-2 merged; **closes E16 / B2a** | - | - |
+| E16-P | test-guardian | **merged** | #37 (`1dc6aa7`) | **APPROVE-WITH-NOTES** |
+| E16-1 | persistence-engineer | **BLOCKED — E22 only** (E20 answered) | - | - |
+| E16-2 | domain-engineer | **BLOCKED — E24** (empty DTOs) | - | - |
+| E16-3 | transport-engineer | **BLOCKED — E24**; byte-identity on GET/PUT/DELETE (E23) | - | - |
 | E16-4 | docs-scribe | pending — needs E16-3 merged; carries **E19**, BL40 | - | - |
 | E16-5 | unassigned | **UNSCOPED — E21** (`cmd/generator` reproduces the defect) | - | - |
 
-**Phase A and Phase B are complete on `main`.** No open code PRs; #33/#35/#36/#37/#38 all merged.
+**Phase A and Phase B are complete on `main`.** Open PR: **#41** (this board).
+**In flight 2026-08-11:** T4 (`ci/T4-golangci-lint-v2`) and C1 (`feat/C1-authn-contract-docs`),
+dispatched in parallel — no dependency edge between them, disjoint file sets, neither touches
+`cmd/api`. They are the ONLY two tasks on the board that need no answer from the human first.
 `gh pr merge` and pushes to `main` are blocked by the sandbox classifier, so a human
 merges; branch pushes and PR creation work.
+
+## WAITING ON YOU — six answers, and what each one unblocks
+Nothing below is mine to decide. Everything else on this board is blocked behind one of them.
+| Ask | Blocks | One-line question |
+| --- | --- | --- |
+| **E22** | E16-1, and the whole E16 chain behind it | Does **any** environment have rows in `users`? (`make migrate-status`) |
+| **E24** | E16-2, E16-3 | Dropping `name`/`email` empties the write API — option (a), (b) or (c)? |
+| **E23** | E16-3's acceptance | Approve **E16-P2** (test-guardian, ~20 lines): capture `put_not_found`/`delete_not_found`? |
+| **E19** | E16-1 (as a review objection) | Confirm the E16-ARCH decision supersedes `migration-strategy.md:249-251`? |
+| **E21** | E16-5 | `cmd/generator` reproduces the defect into every future module — scope it, or accept it? |
+| **E11/E13/E14** | **D5**, and D6/D8 behind it | The Phase D blockers, unanswered since Phase B closed. |
+**D5–D10 have now been parked longer than the E16 chain.** E11 is a one-line amendment to R1
+plus one archtest rule; it is the cheapest unblock on this board and it releases the entire
+notification back half. If you answer one thing today, answer E11.
+
+## PROCESS-6 — RESOLVED, and PROCESS-3 recurred a third time
+The stray edit is **gone** — T4 reports `authn-spi-impact-analysis.md` was already clean when
+it arrived, and the shared tree is now clean on `main`. Nobody needs to act.
+**But the shared tree moved branches again, mid-session, and not by me or by T4.** Its reflog:
+`checkout: moving from feat/T2-authn-layer-fence to main`, then `pull --tags origin main`.
+T4's only shared-repo commands were read-only (`fetch`, `status`, `branch`, `log`,
+`worktree list`, `worktree add`), none of which move a worktree HEAD. **T2's commit
+`00fa2e5` is verified safe on its branch** (checked by me, not taken from the report).
+Whatever is doing this, per-task worktrees are containing it — both of today's dispatches
+required one and neither was disturbed. Keeping the requirement permanently.
+
+## PROCESS-6 (original entry) — a stray edit to a source-of-truth doc, in the shared tree
+Found at session start: `docs/plans/authn-spi-impact-analysis.md` is modified in the shared
+working tree, uncommitted, its H1 reading `ne# Security SPI …` — two stray keystrokes, not a
+semantic edit. Consistent with PROCESS-3's second hazard (agents sharing one checkout).
+**I have not touched it** — companion docs are not mine to edit, and reverting it would destroy
+the only evidence of how it got there. It is inert as long as work happens in per-task
+worktrees, which both of today's dispatches require explicitly. **Ask:** discard it
+(`git restore`), or is it yours in progress?
 
 **Owed at Phase B close:** run **`make coverage-update`** — `internal/authn/authntest`
 measures 100% with no `baseline` entry, and BL19's three baselines lag their actuals.
@@ -69,6 +106,32 @@ correct entry.
 **second toolchain or in CI**. A/B on one machine is not a mechanism.
 
 ---
+
+## GATE-INTEGRITY — AMENDED: isolating `GOCACHE` alone is NOT enough for `make lint`
+Raised by T2's reviewer, with the tool's own diagnosis as evidence. Its first `make lint` from
+an isolated worktree **with `GOCACHE` already isolated** printed **`0 issues`** — a false green
+that would have let it report BL1 as fixed. golangci-lint keeps its **own** cache, keyed
+independently, and said so:
+`[runner/path_relativity] Getting relative path (basepath): Rel: can't make …\internal\db\schema_test.go relative to …\scratchpad\wt-t2`
+Three such warnings, naming exactly the files whose findings vanished. Setting
+**`GOLANGCI_LINT_CACHE`** alongside `GOCACHE` restored the two errcheck findings.
+**Status: provisional.** Per PROCESS-2 I am not recording a mechanism from one machine — it
+needs a CI or second-toolchain reproduction — but it is stronger than an A/B inference because
+the tool printed its own reason. **Adopted in dispatches now** (isolate both; it costs nothing
+and the failure mode is silent under-reporting). Every earlier "lint clean from a worktree" on
+this board, including reviewers', is suspect to the extent it isolated only `GOCACHE`.
+
+**THIRD OBSERVATION, and this one was blind.** C1's agent — which I never told about the cache
+mechanism — ran `make lint`, got **`0 issues`**, and printed `path_relativity` warnings naming
+`internal/db/schema_test.go`: the exact file holding BL1's two known-real findings, which T4 was
+concurrently fixing. It reported the `0 issues` in good faith as a passing check. An agent that
+did not know the mechanism reproduced its precise signature.
+**I am still NOT promoting this out of PROVISIONAL.** All three observations are on this one
+machine, and PROCESS-2 exists because I published a wrong mechanism three times in this exact
+area off single-machine evidence. Three same-machine observations are still one machine. What it
+does establish beyond doubt: **`make lint` returning `0 issues` is not, by itself, evidence of
+anything on this effort** — including in reports I have already accepted. Dispatches keep
+requiring both caches isolated.
 
 ## PROCESS-4 — I dispatched a task that was already written, and it cost a duplicate PR
 At session start `git branch` reported **`test/T2-authn-layer-fence: 1 commits ahead`**. I
@@ -109,7 +172,7 @@ against `main` rather than a fix on an open branch. The T2 review is being re-po
 
 ---
 
-# ESCALATIONS — OPEN (16)
+# ESCALATIONS — OPEN (17)
 
 Ordered by severity.
 
@@ -127,7 +190,7 @@ no authorization layer exists in this repository.** The application service take
 **moved not written** in Phase 3.6b out of `internal/domain/user`,
 `internal/application/user` and `internal/infrastructure/*`. Its package doc: *"It was live
 the whole time… behaviour is unchanged."* So the defect **predates modularisation** and is
-live code, not a demo. `BOILERPLATE.md:279` names `modules/user/transport/user.go` as the
+live code, not a demo. `BOILERPLATE.md:279` (quote: "`modules/user/transport/user.go` or") names `modules/user/transport/user.go` as the
 worked example adopters copy — **the exemplar propagates it**.
 
 **Root cause is not a missing `if`:** `auth_users.id` is uuid, `users.id` is BIGSERIAL, and
@@ -191,6 +254,27 @@ are sequenced, not parallel):
 - **E16-4** docs — `BOILERPLATE.md`, `SWAGGER.md`, `README.md`, `MIGRATIONS.md` examples,
   plus **E19**'s contradiction and BL40.
 
+## E23 — the enumeration oracle is captured for GET only; PUT and DELETE are unguarded ⚠ small, must land before E16-3
+Raised by E16-P's reviewer. The probe recorded `get_not_found`, so after the fix
+`get_cross_user` can be checked byte-for-byte against it. **There is no `put_not_found` and no
+`delete_not_found`.** The obligation applies to all three vulnerable verbs: a cross-user `PUT`
+must be indistinguishable from a `PUT` against a genuinely absent id, and likewise `DELETE`.
+**`204 vs 404` enumerates the id space exactly as well as `200 vs 404` does** — and today the
+recorded cross-user answers are 200 and 204 while `modules/user/transport/user.go` maps
+`domain.ErrUserNotFound` to 404 on both routes, so the difference is real, exploitable, and
+currently unrecorded.
+**Proposed E16-P2** (test-guardian, same file, ~20 lines): add `put_not_found` and
+`delete_not_found` to `routeCases()` in `modules/user/transport/ownership_golden_test.go`,
+extend `TestIDORIsPresentToday` with the matching `require.NotEqual` pairs, and add the
+reviewer's N2 hardening — a `// E16: invert to require.Equal when the ownership check lands`
+marker on each assertion, so the refactor's checklist can grep for them instead of relying on a
+comment being read.
+**Why I am asking rather than dispatching:** it is a **new task**, and new tasks are yours. It
+is cheap, owner-consistent (that file is test-guardian's), and blocks nothing today since E16-1
+is already paused on E20/E22 — so approving it costs nothing, and declining it costs the guard
+on two of the three vulnerable verbs. **E16-3's acceptance criteria are amended on this board to
+require byte-identity on all three verbs regardless of how E23 is answered.**
+
 ## E19 — a MERGED doc contradicts the settled decision ⚠ needs a ruling before E16-1
 `docs/architectures/05-data/migration-strategy.md:249-251` states that `users` *"moves with
 the profile-user module **rather than being reshaped**"* — the opposite of the decision. The
@@ -201,32 +285,76 @@ Found by E16-P. **I do not edit docs and I do not adjudicate a merged doc agains
 decision.** Left standing, this becomes a legitimate review objection against E16-1.
 **Ask:** confirm the decision supersedes `:249-251`, and E16-4 rewrites that paragraph.
 
-## E20 — does the profile keep its own `name`/`email` columns? ⚠ blocks E16-1
-The overlap is exact on two columns: `auth_users.email TEXT NOT NULL` (unique on
-`lower(email)`) vs `users.email VARCHAR(255)` (unique on `lower(email)`); `auth_users.name
-TEXT` **nullable** vs `users.name VARCHAR(255) NOT NULL`.
-**E15 already rejected a second copy of a user's address** as a staleness hazard — a stale
-address means *"your password was changed"* is mailed to the address the attacker just
-replaced. Keying the profile by the identity uuid does not by itself remove the copy.
-**Evidence (E16-P, file:line in its report):** the profile's `email`/`name` have exactly
-**one** consumer — the `/api/v1/users` CRUD JSON echoing back what was posted. No handler,
-no sender, no template reads them; `GetUserByEmail` is **unreachable over HTTP** (transport's
-`UserService` interface omits it); `modules/notification` consumes no address at all.
-**Ask:** drop them (profile becomes uuid + timestamps + future profile-only fields, and the
-`users` response shape changes) or keep them (two copies of an email, permanently)?
-**I am not choosing:** it changes a public response shape and touches the same
-copy-of-identity-data question E15 was escalated on.
+## E20 — **ANSWERED 2026-08-10 (human): drop `name` and `email` from the profile.**
+Settled. The profile stops carrying a second copy of a person's identity data; `auth_users`
+owns `email` and `name`, and E15's staleness hazard is closed at the source rather than
+managed. Nothing downstream reads the profile's copies — E16-P established that their only
+consumer is the `/api/v1/users` JSON echoing back what was posted.
+
+**What the profile table becomes.** Verified against `migrations/00001_create_users.sql:3-9`,
+which is the whole table: `id`, `name`, `email`, `created_at`, `updated_at`. Remove two, rekey
+the first, and the profile is **`id uuid` (= `auth_users.id`) + `created_at` + `updated_at`**.
+
+**Three consequences that follow mechanically, and are not open questions:**
+1. `GetUserByEmail` (`application/service.go:54-55`, `domain/repository.go:11`) becomes
+   impossible and is deleted, not ported. It was already unreachable over HTTP — transport's
+   `UserService` interface never declared it.
+2. `domain.Validate`'s body was entirely name/email rules; it empties out.
+3. **`00007`'s users work must be undone by the new migration**
+   (`00007_case_insensitive_identifiers.sql:73-78`): it dropped `users_email_key` and
+   `idx_users_email` and created `idx_users_email_lower` **on `lower(email)`**. That index
+   cannot survive the column. ⚠ **Reversibility trap for E16-1:** `00007`'s own `Down`
+   (`:83-87`) runs `ALTER TABLE users ADD CONSTRAINT users_email_key UNIQUE (email)`, so if the
+   new migration's `Down` does not restore an `email` column of the right shape, rolling back
+   past `00007` **fails outright**. And a `Down` can restore the *column* but never the
+   *values* — with rows present, restoring `email VARCHAR(255) UNIQUE NOT NULL` cannot succeed.
+   **This is a second, independent reason E22 must be answered before E16-1 is dispatched.**
+   Class warning already on this board (E8): any `goose.Down()` caller breaks when a newer
+   migration lands.
 
 ## E21 — `cmd/generator` reproduces the defect into every future module ⚠ unscoped, no owner
 `cmd/generator/main.go:202-206` hardcodes `PrimaryKey = {ID, int64, id}` with nothing
 overriding it; `:714` `if id <= 0`; `:910` `bun:"id,pk,autoincrement"`; `:979/1051/1094`
-`@Param id path int`; `:988/1061/1103` `strconv.ParseInt`. `BOILERPLATE.md:279` points
+`@Param id path int`; `:988/1061/1103` `strconv.ParseInt`. `BOILERPLATE.md:279` (quote: "`modules/user/transport/user.go` or") points
 adopters at `modules/user/transport/user.go` as the worked example.
 **Fixing `modules/user` without the generator means the next generated module ships the same
 IDOR shape** — and E16's severity rests on exactly that amplification.
 This is a **new task, outside every existing task's file list** ⇒ scope escalation. Natural
 owner is platform-engineer (`cmd/**`), which then serialises against the `cmd/api`
 single-writer rule. **Ask:** in scope now, after E16-3, or a recorded non-goal?
+
+## E24 — dropping the columns empties the module's write API ⚠ NEW, blocks E16-2/E16-3
+Direct consequence of E20, verified in `modules/user/domain/dto.go:8-25`:
+`CreateUserRequest` is `{Name, Email}` and `UpdateUserRequest` is `{Name, Email}` — **every
+field either one has is a column you just dropped.** They become empty structs. `UserResponse`
+becomes `{id, created_at, updated_at}`.
+
+So after E16-2/E16-3 the module offers: `POST /api/v1/users` with an empty body, `PUT
+/api/v1/users/{id}` that can change nothing, `GET` returning two timestamps, `DELETE`. **A
+`PUT` with no writable field is not a route, it is a 200 that lies.** I will not quietly ship
+that, and I will not redesign a public API surface on my own authority.
+
+**Also in play: `modules/user` is the exemplar.** `BOILERPLATE.md:279` (quote: "`modules/user/transport/user.go` or") names
+`modules/user/transport/user.go` as the worked CRUD example adopters copy (the same
+amplification that makes E16 severe, and the subject of E21). An exemplar whose entity has no
+fields teaches nothing about CRUD.
+
+**Options, decision-ready:**
+- **(a) Keep four routes, shrink the DTOs.** `POST` takes no body and creates the *caller's own*
+  profile with `id` from the Principal — not from a body, which also removes the "unrestricted
+  creation behind mere authentication" leg of E16. `PUT` is deleted or answers 405.
+  Smallest diff; leaves a CRUD exemplar with nothing to C or U.
+- **(b) Reduce the surface honestly:** `GET /api/v1/users/me` + `DELETE`, drop `POST`/`PUT`.
+  The profile becomes an existence record. Cleanest semantics; biggest route-table change; the
+  exemplar stops being a CRUD example at all.
+- **(c) Give the profile real profile-only fields now** — `display_name`, `avatar_url`,
+  `locale`, `timezone` — so the module stays a meaningful CRUD exemplar and the four routes keep
+  their meaning. Note `display_name` is *not* `name` returning by the back door: it would be
+  profile-owned presentation data, with `auth_users.name` remaining the identity's legal/display
+  name. Largest scope; needs you to name the fields, since inventing a schema is not mine.
+
+**Recommendation withheld deliberately** — (b) and (c) are opposite answers to "what is this
+module *for*", which the plan does not settle and I am not entitled to settle.
 
 ## E22 — is there deployed `users` data? ⚠ blocks E16-1's back-fill decision
 Repo-side facts are settled (E16-P): **no seed data anywhere** — no seed SQL, no
@@ -241,6 +369,203 @@ match on a **mutable natural key**, which B2 already refused for the ownership c
 disposition explicitly open; `MIGRATIONS.md` says verify with `make migrate-status` against
 every environment first. **Ask:** clean break (drop/recreate), or back-fill by `lower(email)`
 with a documented fallback for profiles that match no identity?
+
+**ADDENDUM after E20 was answered — the question narrows but does NOT dissolve.**
+With `name` and `email` dropped, a surviving `users` row carries **no information except that a
+profile exists** for that identity, and that is reconstructible from `auth_users`. So a
+back-fill would preserve almost nothing. **But E20 also made rows actively dangerous:** the new
+migration's `Down` must restore `email VARCHAR(255) UNIQUE NOT NULL` for `00007`'s own `Down` to
+run at all, and **with rows present that restore cannot succeed** — a `Down` can recreate a
+column but never its values. So:
+- **No rows anywhere ⇒ clean break**, and reversibility is honest because there is nothing to
+  lose.
+- **Rows in some environment ⇒** you are choosing between a one-way migration (documented as
+  irreversible, contradicting `CLAUDE.md`'s reversible-migrations convention) and a `Down` that
+  fabricates placeholder emails to satisfy a `NOT NULL UNIQUE` restore — which I would refuse to
+  ship without you saying so explicitly.
+**The ask is now a yes/no:** does any environment have rows in `users`? `make migrate-status`
+per environment, per `MIGRATIONS.md`. Answer that and E16-1 goes out immediately.
+
+## E7 — CORROBORATED on a second toolchain, unprompted
+T4 ran `make coverage-check` on go1.25.12 and got
+`modules/identity/infrastructure/auditlog: 0.0% < floor 60.0%`, `exit status 1`. It then
+stashed its own changes, re-ran against pristine `origin/main`, and got the **byte-identical**
+failure. This is exactly the mechanism the retracted COVERAGE-BLINDSPOT entry denied, arrived at
+by an agent that was not asked about it and had no stake in it. E7 stands, and the retraction
+was right. **Still not T4's to fix** — it needs a test or a reasoned `exempt`, never a lowered
+floor, and it needs an owner from you.
+
+## E25 — a STANDING AGENT DEFINITION carries a convention the merged code contradicts ⚠ NEW
+C1 was briefed — by its own agent definition, not by my dispatch — that provider modules return
+`(*module.Module, RootInterface, error)`. **It refused to document it**, because merged code says
+otherwise: `modules/identity/module.go:88` returns `(*module.Module, error)`, and the
+composition root builds its own verifier at `cmd/api/container.go:95-105`. It documented what
+exists and flagged the conflict. That is exactly the right call and I am recording it as such.
+**Why this is yours and not mine:** the error is in `.claude/agents/*.md`, which I do not modify —
+proposed changes to agent definitions are escalations by my own constitution. Left standing, every
+future docs task starts from a false premise about the constructor shape, and constructor shape is
+a settled decision on this effort. **Pending arch-reviewer's independent confirmation of the
+merged signature** (asked for in #43's gate); if confirmed, **ask:** correct the agent definition.
+
+## C1 — BLOCK #1, and the reviewer earned its keep
+Two must-fix findings, both false claims in adopter-facing text, both surgical. Returned verbatim
+to docs-scribe on the same branch. **This is BLOCK #1; a second consecutive BLOCK on C1 escalates
+with both reports.**
+
+**BF-1 — a security falsehood, and exactly what Adjustment 7 existed to prevent.**
+`08-authn/README.md:486-489` listed "handlers read the caller through the contract" as one of
+"four properties worth copying" from `modules/user` — the module the doc calls **the template**.
+Merged code says the opposite in terms, in the very package cited:
+`modules/user/transport/user_test.go:179-182` — *"no handler in this package reads the Principal"*;
+`ownership_golden_test.go:293-296` — *"the handler never reads that Principal. Not once, in any of
+the four routes... it is the finding"*. The cited line sits inside a **test probe middleware**, not
+a handler. **The absent property is E16's IDOR.** An adopter copying the template would have
+believed exactly the ownership-awareness whose absence is the vulnerability — published in a
+document that would have outlived the fix chain.
+
+**BF-2 — enforcement theatre, in the file that teaches enforcement.** `BOILERPLATE.md:361` claimed
+four rules "all enforced by `make arch` and `make lint`". Two are enforced by **nothing**: no rule
+constrains what a module's `Config` may hold (a config holding a verifier passes both tools), and
+"apply the middleware in the handler" is not expressible in either. The reviewer enumerated all
+seven `arch_test.go` tests as evidence. In a repo whose own arch test opens with a warning about
+vacuous greens, that is a material defect.
+
+**What passed, and it is worth recording:** 40+ of the 79 citations spot-checked across all six
+areas — **every one exact**. E3, E4, E5 and adjustments 4/5/6 all landed. Section 8.2 reproduced
+verbatim including its line wrap. The replacement recipe was traced end to end and **would work**,
+with both caveats real. All three declared deviations **allowed** — the root `CHANGELOG.md` and the
+index edit independently confirmed as forced by real gaps, matching my own check.
+
+**My rulings on the non-blocking notes:** fold in the `:173-174` overgeneralisation (same class as
+BF-1 — a property of one implementation stated as a property of the contract), since the file is
+open anyway; **do not** add the BL13 identifier — it is an internal board ID, meaningless and
+unresolvable to the adopters the document addresses; leave `:345-348` as written.
+
+## C1 — APPROVE-WITH-NOTES at `66b69e1`. Both blocking findings discharged on their merits.
+Fix scope verified by me: `git diff d4eef29 66b69e1` touches **only** `BOILERPLATE.md` (+4/-1) and
+`08-authn/README.md` (+18/-7); PR total still the same four files. No code, no `CHANGELOG.md`, no
+agent definition.
+
+**The deviation, and why I accepted it.** The owner changed a **fourth** location I had not
+authorised: the lead-in at `:476`, from `Four properties worth copying:` to `Three properties worth
+copying from it, and one rule that goes with them:`. Its argument is that BF-1 is **not discharged
+by rewriting the bullet alone** — bullets 1-3 all cite `modules/user`, so leaving "Four properties
+worth copying" above a bullet that now cites `modules/identity` still tells an adopter that reading
+the Principal is something `modules/user` does. *"A weaker form of the exact falsehood the finding
+blocks on."* It also observed that the reviewer's own model, `BOILERPLATE.md:370-373`, sits under a
+**rules** list, so matching the model implies matching its frame. **The count word was
+load-bearing** and I did not see it; the owner did. Accepted, and put to the reviewer to confirm the
+finding is discharged.
+
+**A second, smaller overreach I also accepted:** it dropped `make lint` from `BOILERPLATE.md:361`
+entirely, beyond the reviewer's prescribed text, on the ground that no depguard rule denies
+cross-module imports or names `internal/authn`, so `make arch` carries both enforced bullets alone.
+Consistent with BL43, but a factual claim beyond the prescription — flagged to the reviewer to
+confirm or reject.
+
+**This is BLOCK #1 only.** A second consecutive BLOCK escalates to the human with both reports
+rather than going back to the owner a third time; I have told the reviewer so, and asked it to say
+explicitly if a remaining issue is small enough to carry as a note instead.
+
+**RE-REVIEW OUTCOME — no must-fix remains; `#43` is ready for your merge.**
+- **BF-1 closed, verified by sweep not by reading.** `grep` for `FromContext` across all three
+  changed docs returns only citations pointing at `modules/identity`, `internal/authn` and
+  `internal/testsupport`; `user_test.go` appears nowhere. **Nothing in the document now attributes
+  Principal-reading to `modules/user`.**
+- **The fourth-location deviation ACCEPTED by the reviewer, in my favour and the owner's.** Its
+  words: the re-review shape *"was a forecast of the minimal edit, not a boundary"*, and — the part
+  worth keeping — *"had the owner shipped three locations I would have had to block a third time on
+  the residual count-word, which is the outcome your escalation rule exists to avoid."* A remedy
+  that stops one line short of closing its own finding is not a smaller change, it is an unfinished
+  one.
+- **The `make lint` removal was not merely allowed, it was CONFIRMED CORRECT — and would have been
+  a finding if left in.** The reviewer read all five depguard rules (`.golangci.yml:36-146`): none
+  denies module → module, and `internal/authn` appears only as an **allow** (`:93`, `:130`), never
+  as a denial. The repo corroborates the owner verbatim at `tools/archtest/arch_test.go:349-353`:
+  *"depguard's domain-purity rule denies only bun/chi/viper/zerolog, and the fence sees a permitted
+  area."* So `make arch` carries both enforced bullets alone.
+- Scope confirmed: four hunks, two files; `CHANGELOG.md` and `docs/architectures/README.md`
+  untouched by the fix commit. All three new citations byte-exact, `(Principal, bool)` correct,
+  `(see §5)` resolves. **92 citations scanned, 16 byte-checked by hand, zero line-shift damage.**
+- `make arch` re-run green by the reviewer.
+
+**Both of the owner's pushbacks this task were right** — the `RootInterface` refusal (E25) and the
+count-word. Recorded because it bears on how I weight this owner's future deviations.
+
+## E25 — CONFIRMED by the reviewer, independently. Now a decision for you.
+A tree-wide grep for `RootInterface` returns **exactly one hit in the whole repository**:
+`.claude/agents/docs-scribe.md:33`. It exists nowhere in the Go tree. Both module constructors
+return `(*module.Module, error)` (`modules/identity/module.go:88`, `modules/user/module.go:75`),
+and the composition root builds its own verifier (`cmd/api/container.go:95-105`).
+**A standing agent definition carries a false convention about constructor shape** — a settled
+decision on this effort. C1 refused to write it and documented what exists instead; the reviewer
+confirms that was right. Pre-existing at base `2dd621c`, not attributable to #43.
+**Ask:** correct `.claude/agents/docs-scribe.md:33`. I do not edit agent definitions.
+
+## T4 — APPROVE-WITH-NOTES. No must-fix. One comment amendment in flight, then merge.
+The reviewer verified every functional claim independently and went beyond the agent: it **proved
+depguard actually executes** by planting deliberate violations (both `domain-purity` and
+`platform-independence` fired). **depguard has now run in CI for the first time in this repo's
+history** — the authn/httpx fence's editor-time half is live, and B4-class proofs can rely on it.
+Scope confirmed: 2 files, merge-base exactly `2dd621c`, net **+2 assertions**, no nolint,
+`.golangci.yml` byte-identical to base, genuine pin at `ci.yml:276`. Both deviations allowed.
+
+**Amendment LANDED as `799c861` and verified by me, not taken on report:** `git diff 133f183 origin/ci/T4-golangci-lint-v2` is **one file, +4/-3, every changed line inside the `#` comment block** — no workflow logic, no Go file. The comments at `ci.yml:268,271` no longer assert the old failure was silent. The agent rewrapped rather than pasting the reviewer's literal text, and found a **second** "silent" in the PR body I had not spotted. Three other uses of "silent" elsewhere in `ci.yml` are pre-existing, about unrelated jobs, and correct in context — left alone. **#42 is ready for your merge.**
+
+## LINT — I HAD THIS WRONG, AND THE AGENT CORRECTED ME
+I recorded that `latest` produced a **silent** v1 pin. **False.** Main @ `2dd621c`, run
+`31355178976`, job `93353420746`: conclusion **failure**, 12 seconds, and it announced itself —
+`Installing golangci-lint binary v1.64.8...`, then
+`Error: can't load config: the Go language version (go1.24) used to build golangci-lint is lower
+than the targeted Go version (1.25.12)`, `exit with code 3`, `Ran golangci-lint in 89ms`.
+**It was a loud non-result, not a silent green.** That is a different failure of process: the job
+was red and nobody acted on it, for an unknown number of runs. Raised by T4's agent against my
+dispatch's premise, confirmed independently by the reviewer from the run logs.
+**The stacking is confirmed too:** it died at config load on the Go-version check, so the
+`version: "2"` parse error was **never reached** — cause 2 is latent, not co-operative.
+
+## GATE-INTEGRITY — PROMOTED OUT OF PROVISIONAL, AND NARROWED
+PROCESS-2 demanded a second toolchain or CI before recording a mechanism as general. The reviewer
+delivered something better than a second measurement: **a negative control plus a stdlib root
+cause.**
+- **Warm cache, cross-drive** (`C:` worktree, `D:` repo): `0 issues` — false green, first run.
+- **NEGATIVE CONTROL — warm cache, same drive:** findings **survive**, 2 errcheck, rc=1.
+- **Root cause, machine-independent:** `filepath.Rel` errors only when two paths have different
+  volume names. golangci-lint caches issues with absolute paths, relativises them to the current
+  basepath, and **drops** any issue whose relativisation errors — warning as it goes, which is why
+  the tool named the vanishing files itself.
+**Narrowed claim, now recorded as confirmed:** the false green requires a warm
+`GOLANGCI_LINT_CACHE` shared across trees on **different Windows drive letters**. It **cannot occur
+on the Linux CI runner** — single root, `Rel` always succeeds. This is an explained causal chain
+with a passing negative control, not the unexplained one-machine correlation PROCESS-2 was written
+about. **Promoting it.**
+**This effort's own topology is the hazard:** every agent worktree lives on the `C:` temp drive
+while the repo is on `D:` — precisely the cross-volume topology that produces the false green.
+Live and recurring, not incidental. Both caches stay isolated in every dispatch.
+
+**New second-order hazard from the control:** same-drive worktrees do not go green but report
+findings **attributed to the other tree's path**, so a developer can be shown findings that do not
+exist in the tree in front of them.
+
+## E7 — MY RECORDED CAUSE WAS WRONG; THE FLOOR IS UNSATISFIABLE AS THE TREE STANDS
+I let "covered by integration tests, needs a database" stand as the reason `auditlog` reports 0.0%.
+**All three parts of that are false**, and it would have misdirected whoever fixes E7:
+1. `modules/identity/infrastructure/auditlog/` contains **exactly one file, `auditlog.go`, and no
+   `_test.go` files at all.** 0.0% is not a database artefact — **the package has no tests.**
+   `-with-database` cannot change it.
+2. `tools/coverage/policy.json:51-54` — `requires_database` lists only
+   `modules/*/infrastructure/persistence/repository` and `tools/schemacheck`. **`auditlog` is not on
+   it** and is never exempted, with or without the flag.
+3. CI's own log, on the Linux runner **with a live Postgres**, prints
+   `.../auditlog  coverage: 0.0% of statements` — a bare line, no `ok`, i.e. no test binary.
+**E7's fix is tests for `auditlog`, or a reasoned policy change. Never a database, never a lowered
+floor.** The floor is unsatisfiable as the tree stands.
+
+## E18 — CONFIRMED WITH FILE:LINE: THE COVERAGE GATE HAS NEVER EXECUTED
+`.github/workflows/ci.yml:122-123` (`go run ./tools/coverage ... -with-database`) is **unreachable**
+while `.github/workflows/ci.yml:91-92` (`go test -race`) exits 1 on E8's two `internal/db`
+failures. The coverage gate is **dead in CI today**, independent of E7. E8 is the keystone: clear
+it and two latent floor failures surface at once.
 
 ## E18 — CI's coverage gate is red on `main`, and there are TWO failures behind it
 1. `modules/identity/infrastructure/persistence/repository` — **57.1% vs its 60% floor**.
@@ -406,6 +731,15 @@ appears nowhere in the repo).
 ---
 
 # DOC AMENDMENTS I CANNOT MAKE
+**C1 adds three, all in `authn-spi-impact-analysis.md`, found by citation-checking it against
+merged code:** §7 names two permitted importers where enforcement has four areas plus two layer
+denials, and says depguard would "allow" when it in fact never denies (asymmetric, BL43); §8.1's
+"Expected finding" is false on both counts against `9e50896`'s goldens; §8.2's example body omits
+both `request_id` (E5) and the real response's `X-Content-Type-Options: nosniff`.
+**C1's proposal, which I am forwarding not deciding:** a one-line struck-through correction in
+each, because agents are still reading that document as a source and re-deriving the errors from
+it — C1 is the second agent to have to be warned off §7 by dispatch. **Ask:** authorise a doc-fix
+task, or leave the board as the record?
 Phase B's title overclaims; `authn-spi-impact-analysis.md` §7 is a **trap** (two areas where
 the fence has four, and self-refuting); plan `Config.Auth` → `Config.AuthMiddleware` (D7 too);
 blueprint §4.1 jitter formula and §6-vs-§4.1; plan D2/D3 "+ `github.com/google/uuid`"; plan
@@ -442,7 +776,55 @@ Every claim checked against **merged code**.
 
 ---
 
+## RESOLVED THIS SESSION — `secret_test.go` was never a mystery
+The third `path_relativity` warning named `internal/platform/secret/secret_test.go`, and I left it
+open as "a stale finding from some other tree state". **It is neither stale nor hidden.**
+`internal/platform/secret/secret_test.go:26` carries `//nolint:staticcheck // S1025: exercising the
+%s verb is the test`, with a four-line justification. golangci-lint's `nolint` processor runs
+**after** cache restore and path relativity, so the raw S1025 issue is in the cached set — which is
+why the warning named the file — and is suppressed before reporting. Cold-cache run of that
+package: `0 issues`. The suppression is documented and correct: taking staticcheck's advice would
+delete the assertion the test exists to make. **Nothing to chase, nothing to fix.**
+
 # BACKLOG
+- **BL53** **My own board carried a fragile citation, and a reviewer caught it.** This file cites
+  `BOILERPLATE.md:279` in three places (E16's provenance and E21). All still resolve — C1's insert
+  is one contiguous block at line 315+, so `:279` is byte-identical before and after — but the next
+  `BOILERPLATE.md` edit *above* line 315 breaks E16 and E21's provenance chain **silently**.
+  **Mitigated now:** each of the three citations carries the quoted target text alongside the line
+  number, so a shift is detectable rather than invisible. **Standing correction:** cite actively
+  edited recipe files (`BOILERPLATE.md`, `SWAGGER.md`) by heading or quoted text, not by line alone.
+  Line citations into *code* stay — code citations are checked by reviewers every task.
+- **BL54** `docs/architectures/README.md`'s 11 ADR links are percent-encoded (`adr/NNN%20-%20….md`).
+  They resolve in a renderer and are pre-existing. Recorded **so the next reviewer does not
+  re-chase them** — a link checker will flag them every time.
+- **BL48** **`make lint` IS FAIL-OPEN.** `Makefile:100-104`: if `golangci-lint` is not on `PATH`,
+  the `else` branch echoes a message and the target **exits 0**. Guardrail 8's `make lint` is
+  therefore a **no-op pass** on any machine without the binary. Together with the cross-volume
+  cache false green, that is **two independent ways `make lint` reports success while checking
+  nothing** — one local, one cross-tree. Every historical "lint clean" on this board is worth
+  exactly as much as the evidence that the linter ran. Pre-existing; not T4's file list.
+- **BL49** `Makefile:103`'s install hint is the **v1 module path**
+  (`.../golangci-lint/cmd/golangci-lint@latest`). Following it now installs a v1 that cannot parse
+  `version: "2"` and cannot run against go1.25 — i.e. the hint reproduces the exact failure T4 just
+  fixed in CI. Correct is the `/v2/` path pinned to `v2.12.2`.
+- **BL50** `make lint` pins no version, so a locally newer v2 can report findings CI does not.
+- **BL51** `internal/db/schema_test.go` **never runs anywhere.** `testDSN()` (`:99-107`) reads
+  `APP_DB_*` (default `postgres`/`postgres`/`kopiochi`); the build job sets only
+  `TEST_DATABASE_URL` against a `kopiochi`/`kopiochi_test` service (`ci.yml:62-63`), and the
+  `APP_DB_*` block lives in the **migrations** job (`ci.yml:144-151`), which does not run this test.
+  So it skips in CI and locally. This is the mechanism behind BL1's dead-duplicate observation.
+  Consequence accepted at T4's merge: its `Close()` fix runs on the skip path, its `DROP SCHEMA`
+  fix is compile-verified only and **executes nowhere**. Wire it or delete it — your call.
+- **BL52** `golangci-lint-action@v8` is a **floating major tag** while the linter itself is pinned.
+  Consistent with the repo's existing posture (`ci.yml` already notes no action is SHA-pinned and
+  that pinning is Phase 5 hygiene). Recorded, not a finding against T4.
+- **BL46** `SWAGGER.md:280,365,485` still document 401 as `@Failure 401 {object}
+  map[string]string` — stale against problem+json since Phase A. Found by C1, out of its file
+  list. Note for D10-swagger, which touches that surface.
+- **BL47** `modules/identity/transport/helpers.go:9-14` describes itself as duplicating
+  `internal/infrastructure/http/handlers`, a package deleted in 3.6b. A stale doc comment in the
+  file that BL45 says took live copies of `modules/user`'s writers — check both together.
 - **BL1** `internal/db/schema_test.go:31,43` — two errcheck findings; also a **dead duplicate**
   of `tools/schemacheck/schema_test.go`.
 - **BL3** `jwks.go:7` imports `infrastructure/token` in production, contradicting R1.
@@ -500,6 +882,30 @@ Every claim checked against **merged code**.
   `users` table" while its tag says `auth_users`; `scripts/init.sh:171-172` still removes
   `internal/domain/user`, a path deleted in 3.6b.
 
+- **BL42** The domain rule is **documented as an allowlist and implemented as a denylist**.
+  `tools/archtest/arch_test.go:335-339` says the domain layer may use "the standard library and
+  `internal/platform`, and nothing else", but the mechanism is a fixed forbidden map — a domain
+  package importing an unlisted third-party module passes today. Pre-existing; T2 closed the
+  specific `internal/authn` hole correctly. Fixing the general shape (invert to an allowlist, or
+  reword the docstring to promise only what it enforces) is a decision, not a chore.
+- **BL43** **depguard now lags the arch test by one `make arch`.** `.golangci.yml`'s
+  `domain-purity` and `application-purity` still deny only bun, chi, viper, zerolog and pgx —
+  not `internal/authn` — so an author gets editor-time feedback for the ORM but not for the
+  authentication contract. T2 was right not to touch it (not in its file list). The
+  file-glob vs import-graph split is deliberate per the config's own header, so aligning them is
+  a judgement call.
+- **BL44** The shipped T2 docstring (`36784b6`) says depguard's domain-purity "denies only
+  bun/chi/viper/zerolog"; the reviewer enumerated **five** — pgx is also denied. Harmless
+  imprecision in a comment, in the enforcement layer where comments have misled before (it was a
+  fence docstring that made the B4 gap look covered). Fold into any future edit of that file.
+
+- **BL45** `modules/user/transport/helpers.go` sets `Content-Type: application/json`
+  **unconditionally before `WriteHeader`**, so `DELETE /api/v1/users/{id}` answers **204 with a
+  representation header and an empty body**. RFC 9110 says a 204 has no content. Found by
+  E16-P's goldens — the probe photographing an oddity nobody had noticed, which is what a probe
+  is for. `modules/identity/transport/helpers.go` reportedly took **live copies** of these
+  writers; check it for the same shape before anyone fixes one of them.
+
 # DEVIATIONS ACCEPTED
 - **A1 (4), A2 (1)+copy-on-write, A3 (2), A4 (2)** — adjudicated.
 - **T1 (1)** — **refused** my instruction to baseline five unmeasurable packages.
@@ -521,3 +927,78 @@ Every claim checked against **merged code**.
   image. Also: `go 1.25.12` is pinned in the **`go` directive** rather than a `toolchain` line,
   deliberately — the directive is a hard **security floor** that fails closed under
   `GOTOOLCHAIN=local`, whereas `toolchain` is advisory and silently overridable.
+
+---
+
+# T2 — the verdict transferred, and why that is sound
+
+The review was dispatched against **#39** (`00fa2e5`), which I then closed as a duplicate of
+what shipped in **#35** (`36784b6`). The **APPROVE** transfers, and this is the evidence rather
+than an assumption: `tools/archtest/arch_test.go:163` declares
+`const authnPkg = internalPrefix + "authn"`, so the two versions add **the same map key with the
+same value to the same two maps**. Diffing both files with comments stripped leaves exactly two
+differing lines — `authnPkg:` versus `internalPrefix + "authn":` — i.e. two spellings of one
+constant expression. Nothing else differs outside comments.
+
+What the reviewer established, which now stands as the record for `36784b6`:
+- **The gap was real, reproduced against the base tree**, not inferred: probes in
+  `modules/user/domain` and `modules/user/application` left `make arch` **green** at `6fc7592`.
+- **The rule bites, and the prefix match is exactly right** — it also catches
+  `internal/authn/authntest` (the mandatory `/` means a future `internal/authnz` is *not*
+  swept in). Verified by execution, and BL35's doubled output accounted for.
+- **No legitimate importer is newly denied** — all six `internal/authn` importers enumerated via
+  `go list` over test-inclusive imports; none is a domain or application package.
+- **The fence was not narrowed:** `authnAreas`, `underArea` and `TestMayImportAuthnSemantics`
+  byte-identical to base, and `modules/user/module.go:17,53` confirms the module-root
+  `authn.Middleware` that makes the `modules/*` recursion load-bearing.
+- **Docstring deviation ACCEPTED** on the reviewed branch, with the reasoning that a bare map
+  entry would read as duplication of the fence and invite deletion — the fence's own docstring
+  is what made the B4 gap look covered. **Caveat I am recording rather than papering over:** the
+  shipped commit carries *different* docstring text, which the reviewer never read. See BL44.
+
+**Not carried forward as work:** N2 (unnormalized `imp` in the layer tests — checked, no gap)
+and N5 (the new entries have no pinning test, which is true of every other entry in those maps
+and introduces no new asymmetry).
+
+---
+
+# E16-P — APPROVE-WITH-NOTES, and what the review established
+
+**The verdict applies to `main`:** the reviewer confirmed `git diff --stat 1dc6aa7 <main> -- modules/user/transport/`
+is empty, so the merged bytes are the reviewed bytes (PROCESS-5 notwithstanding).
+
+- **Nothing production changed, structurally.** All seven diff entries are `A` — zero `M`, zero
+  `D` — so "no test weakened, skipped or deleted" is proven by the shape of the diff rather than
+  by inspection. No `.golangci.yml`, no `policy.json`, no route table, no `cmd/api`.
+- **The goldens are honest recordings, not aspirations:** regenerated with `-update`, then
+  `git status --porcelain` came back empty.
+- **The `-update` absorption claim is TRUE, proven by simulation.** The reviewer patched
+  `GetUser()` to answer the not-found response for every id but 1 — a stand-in for the ownership
+  check — and ran the suite **with `-update`**. `TestCurrentUserRouteShapes` silently
+  re-recorded, as a camera should; **`TestIDORIsPresentToday` failed both subtests anyway**,
+  because it never touches `*updateGolden`. The fix cannot land unnoticed.
+- **The byte-identity obligation is genuinely checkable:** under the simulated fix `status`,
+  `content_type` and `body` all become equal between `get_cross_user` and `get_not_found`, and
+  the only remaining difference is `path` — a property of the request, not of the answer.
+- **All four deviations ACCEPTED**, the wider golden schema most emphatically: without
+  `store_after`, `delete_cross_user`'s `204 ""` is indistinguishable from a legitimate
+  self-delete, and *which row is gone* is the entire point of that case.
+- **Fixture honesty upheld**, and better than required: `TestIDORIsPresentToday`'s first subtest
+  asserts the cross-user body equals the owner's body, which is true **independent of any
+  fixture convention**. That is the honest way to state an IDOR in a codebase that cannot
+  express ownership.
+- **Arch clean on current `main`** with T2's fence merged — the transitive `testsupport → authn`
+  edge does not trip the new domain/application denials.
+- **Security:** no key material in the goldens, a consequence of choosing `testsupport.FakeAuth`
+  over minting real RS256 tokens.
+
+**Minor, recorded not actioned:** the agent cited `:65-83` for the fixture-convention comment;
+it is at `:68-83` (E1's citation discipline extends to line numbers). `get_owner` is called "the
+control" at `:145`, which oversells it — with no link between the two id spaces it traverses the
+same code as `get_cross_user` and proves nothing about ownership *today*; its value is entirely
+prospective.
+
+**Lint tooling — a real improvement in what this board can claim.** The reviewer's local
+`golangci-lint` is **v2.12.2 built with go1.25.12**, which parses the v2 config, so the tree has
+now actually been linted end to end. **BL1's two findings are therefore confirmed *complete*,
+not merely *reported*.** CI's v1.64.8 still cannot start.
