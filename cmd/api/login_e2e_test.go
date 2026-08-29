@@ -38,12 +38,25 @@ import (
 const testSeededPassword = "correct horse battery staple"
 
 // scratchIdentityDB returns a *bun.DB backed by a disposable Postgres with
-// every migration applied. The container/skip logic and the migration run both
-// live in internal/testsupport now, so there is one way to stand up a
-// throwaway database rather than one per test package.
+// every migration applied and no rows. The container/skip logic and the
+// migration run both live in internal/testsupport now, so there is one way to
+// stand up a throwaway database rather than one per test package.
+//
+// The TruncateAll is not belt-and-braces. "Disposable" is only true when no
+// TEST_DATABASE_URL is set; with one — the CI configuration — every package in
+// the tree shares a single database, and this helper hands back whatever the
+// package that ran before it left there. seedAuthUser then inserts a fixed
+// address, so one stale row under the same email fails the insert on
+// idx_auth_users_email_lower and this test dies on data it never created.
+// Every other integration suite truncates at setup for exactly this reason;
+// this one did not, which made it green only because cmd/api sorts first under
+// ./... and therefore usually meets an empty database.
 func scratchIdentityDB(t *testing.T) *bun.DB {
 	t.Helper()
-	return testsupport.MigratedDB(t)
+
+	db := testsupport.MigratedDB(t)
+	testsupport.TruncateAll(t, db)
+	return db
 }
 
 // seedAuthUser inserts one row into auth_users directly through the identity
