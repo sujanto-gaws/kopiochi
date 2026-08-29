@@ -34,6 +34,7 @@ States: pending | dispatched | in-review | blocked | merged | escalated
 | **E11-FIX** | *(in-session, ungated)* | **merged** | #51 (`8f82381`) | **none — see PROCESS-7** |
 | **E13/E14-FIX** | *(in-session, ungated)* | **merged** | #53 (`0d0b02d`) | **none — see PROCESS-7** |
 | **E15-PRE** | *(in-session, ungated)* | **merged** | #55 (`ee9bbd9`) | **none — see PROCESS-7** |
+| **E16-P2** | *(in-session, ungated)* | **in review** | **#58** (`49ee321`) — 7/7 green | **none** |
 | D5  | platform-engineer | **UNBLOCKED 2026-08-29** — E11, E13, E14 all answered. Scope grew: `sender/inapp.go`, and its file list must say `domain/message.go`, not `application/ports.go` | - | - |
 | D6  | platform-engineer | **BLOCKED — E9b, E9c, E12** | - | - |
 | D7  | transport-engineer | **UNBLOCKED** — needs D6 | - | - |
@@ -63,17 +64,18 @@ fences had never actually been enforced by CI until 2026-08-29 and they hold; an
 `gh pr merge` and pushes to `main` are blocked by the sandbox classifier, so a human
 merges; branch pushes and PR creation work.
 
-## WAITING ON YOU — five answers, and what each one unblocks
-Nothing below is mine to decide. **These five are the ONLY thing blocking this board** — as of
+## WAITING ON YOU — four answers, and what each one unblocks
+Nothing below is mine to decide. **These four are the ONLY thing blocking this board** — as of
 2026-08-29 every task that needed no answer from you has been done and merged.
 
-**Four of the five are the E16 chain**, which is the confirmed IDOR. **E22 and E24 are the two
-that matter**: E22 alone now blocks E16-1, and E24 blocks E16-2 and E16-3 behind it.
+**Three of the four are the E16 chain**, which is the confirmed IDOR. **E22 is the one that
+matters most**: it is now E16-1's ONLY blocker, it is a single question about your deployed
+environments (`make migrate-status`), and it is the one thing on this board nobody here can
+answer from the repository.
 | Ask | Blocks | One-line question |
 | --- | --- | --- |
 | **E22** | E16-1, and the whole E16 chain behind it | Does **any** environment have rows in `users`? (`make migrate-status`) |
 | **E24** | E16-2, E16-3 | Dropping `name`/`email` empties the write API — option (a), (b) or (c)? |
-| **E23** | E16-3's acceptance | Approve **E16-P2** (test-guardian, ~20 lines): capture `put_not_found`/`delete_not_found`? |
 | **E21** | E16-5 | `cmd/generator` reproduces the defect into every future module — scope it, or accept it? |
 | **E9b/E9c/E12** | **D6** | The last Phase D asks. D5 and D8 are both unblocked; D6 is the only one still waiting. |
 **Phase D's dependency wall is down.** E11 (#51), E13/E14 (#53) and E15 (#55 + decision) are
@@ -117,7 +119,7 @@ board: #19/#21/#24/#27/#28/#32 → `ca397f1` · #41 board
 #45 `cf7a4cb` **T7** · #46 `bc0cc2f` **E8** · #47 `7349edd` **E18+E7**
 #48 `2d8d529` **BL34b** · #49 `979df0f` **GITIGNORE** · #50 board · #51 `8f82381` **E11** ·
 #52 board · #53 `0d0b02d` **E13+E14** · #54 board · #55 `ee9bbd9` **E15 precursor** ·
-#56 board · *(open: #57 board)*
+#56 board · #57 board · *(open: #58 E16-P2, #59 board)*
 
 ## PROCESS-7 — six changes merged with NO arch-reviewer verdict
 T6 (#44), T7 (#45), E8-FIX (#46), E18-FIX (#47), BL34b (#48), GITIGNORE (#49), E11-FIX (#51),
@@ -221,8 +223,8 @@ against `main` rather than a fix on an open branch. The T2 review is being re-po
 
 ---
 
-# ESCALATIONS — OPEN (9)
-**Was 17. E7, E8, E18, E11, E13, E14, E15 and E19 were resolved 2026-08-29** — see their
+# ESCALATIONS — OPEN (8)
+**Was 17. E7, E8, E18, E11, E13, E14, E15, E19 and E23 were resolved 2026-08-29** — see their
 entries below, each now headed RESOLVED or ANSWERED. Nothing else changed state.
 
 Ordered by severity.
@@ -305,7 +307,45 @@ are sequenced, not parallel):
 - **E16-4** docs — `BOILERPLATE.md`, `SWAGGER.md`, `README.md`, `MIGRATIONS.md` examples,
   plus **E19**'s contradiction and BL40.
 
-## E23 — the enumeration oracle is captured for GET only; PUT and DELETE are unguarded ⚠ small, must land before E16-3
+## E23 — **APPROVED 2026-08-29 (human, delegated). E16-P2 implemented in #58 (`49ee321`).**
+Every claim in the entry below was verified before approving: `routeCases()` had `get_not_found`
+and no counterpart for the other two verbs, while `user.go:145,179` maps `domain.ErrUserNotFound`
+to 404 on both routes and the recorded cross-user answers are 200 and 204. **Without these,
+a fix could have closed the read oracle, left PUT and DELETE announcing which ids exist, and
+passed.**
+
+**One refinement added to the proposal.** Each probe mirrors its cross-user counterpart in every
+field except the id — same method, same caller, and **for PUT the same request body**. That makes
+E16-3's acceptance **mechanically checkable** rather than a judgement call: once the ownership
+check lands, `put_cross_user.json` and `put_not_found.json` must differ in **`path` and nothing
+else**, and likewise for delete. With mismatched bodies the two files would differ in two ways
+and the argument would move to which difference mattered.
+
+**What the goldens record today** — four differing fields each, and after E16-3 there must be one:
+
+    put     path · status (200 vs 404) · body · store_after
+    delete  path · status (204 vs 404) · body · store_after
+
+**A correction to this entry: the side-effect leg was NOT a gap.** E23 does not mention
+`StoreAfter`, and a reader could conclude nothing guards it. `routeGolden` already carries
+`StoreAfter: repo.snapshot()`, and its doc comment says why better than a summary could — *"for
+PUT and DELETE the interesting damage is not in the response at all — a 204 looks innocent until
+you notice which row is gone."* E16-P had already provided for it. The new assertions **use** it
+rather than duplicating it: a refused write that still wrote would be byte-identical to a refusal
+and would still have destroyed the row.
+
+**N2 hardening landed as specified**: six `// E16: invert to require.Equal when the ownership
+check lands` markers, on every inverted assertion including the two that predate E16-P2, so the
+refactor's checklist greps rather than relying on a comment being read.
+
+**Verified the recording step is real, not a silent `-update`:** both new cases fail with *"run
+the test with -update to create it"* before their goldens exist — which is precisely the failure
+mode this file's own header warns about (*"rather than run `-update`, see green, and ship"*).
+
+**Currency fix to this entry:** it says E16-1 is "paused on E20/E22". **E20 was answered
+2026-08-10** and **E19 was ruled 2026-08-29** — **E16-1 is blocked on E22 alone.**
+
+### E23 (original entry, kept) — the enumeration oracle is captured for GET only; PUT and DELETE are unguarded
 Raised by E16-P's reviewer. The probe recorded `get_not_found`, so after the fix
 `get_cross_user` can be checked byte-for-byte against it. **There is no `put_not_found` and no
 `delete_not_found`.** The obligation applies to all three vulnerable verbs: a cross-user `PUT`
