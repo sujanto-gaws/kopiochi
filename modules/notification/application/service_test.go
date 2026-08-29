@@ -27,38 +27,46 @@ func TestNewServiceRefusesAnIncompleteDependencySet(t *testing.T) {
 		wantMsg string
 	}{
 		{
-			name:    "no notification repository",
-			build:   func() (*Service, error) { return NewService(nil, prefs, renderer, nil, clock, nil, testDispatchConfig) },
+			name: "no notification repository",
+			build: func() (*Service, error) {
+				return NewService(nil, prefs, renderer, nil, clock, nil, nil, testDispatchConfig)
+			},
 			wantMsg: "notification repository is required",
 		},
 		{
-			name:    "no preference repository",
-			build:   func() (*Service, error) { return NewService(repo, nil, renderer, nil, clock, nil, testDispatchConfig) },
+			name: "no preference repository",
+			build: func() (*Service, error) {
+				return NewService(repo, nil, renderer, nil, clock, nil, nil, testDispatchConfig)
+			},
 			wantMsg: "preference repository is required",
 		},
 		{
-			name:    "no renderer",
-			build:   func() (*Service, error) { return NewService(repo, prefs, nil, nil, clock, nil, testDispatchConfig) },
+			name: "no renderer",
+			build: func() (*Service, error) {
+				return NewService(repo, prefs, nil, nil, clock, nil, nil, testDispatchConfig)
+			},
 			wantMsg: "template renderer is required",
 		},
 		{
 			// The one dependency whose absence would otherwise surface as a nil
 			// dereference inside a background worker hours after boot.
-			name:    "no clock",
-			build:   func() (*Service, error) { return NewService(repo, prefs, renderer, nil, nil, nil, testDispatchConfig) },
+			name: "no clock",
+			build: func() (*Service, error) {
+				return NewService(repo, prefs, renderer, nil, nil, nil, nil, testDispatchConfig)
+			},
 			wantMsg: "clock is required",
 		},
 		{
 			name: "a nil sender",
 			build: func() (*Service, error) {
-				return NewService(repo, prefs, renderer, []ChannelSender{nil}, clock, nil, testDispatchConfig)
+				return NewService(repo, prefs, renderer, []ChannelSender{nil}, clock, nil, nil, testDispatchConfig)
 			},
 			wantMsg: "sender 0 is nil",
 		},
 		{
 			name: "a sender for an unknown channel",
 			build: func() (*Service, error) {
-				return NewService(repo, prefs, renderer, []ChannelSender{&fakeSender{ch: "carrier-pigeon"}}, clock, nil, testDispatchConfig)
+				return NewService(repo, prefs, renderer, []ChannelSender{&fakeSender{ch: "carrier-pigeon"}}, clock, nil, nil, testDispatchConfig)
 			},
 			wantMsg: `sender 0 claims unknown channel "carrier-pigeon"`,
 		},
@@ -69,7 +77,7 @@ func TestNewServiceRefusesAnIncompleteDependencySet(t *testing.T) {
 					&fakeSender{ch: domain.ChannelEmail},
 					&fakeSender{ch: domain.ChannelEmail},
 				}
-				return NewService(repo, prefs, renderer, senders, clock, nil, testDispatchConfig)
+				return NewService(repo, prefs, renderer, senders, clock, nil, nil, testDispatchConfig)
 			},
 			wantMsg: `two senders registered for channel "email"`,
 		},
@@ -95,7 +103,7 @@ func TestNewServiceRefusesAnIncompleteDependencySet(t *testing.T) {
 // boot failure. Rows for the missing channel dead-letter at dispatch with a
 // reason an operator can read.
 func TestNewServiceAcceptsNoSenders(t *testing.T) {
-	svc, err := NewService(newFakeNotificationRepo(), &fakePreferenceRepo{}, &fakeRenderer{}, nil, newFixedClock(testNow), nil, testDispatchConfig)
+	svc, err := NewService(newFakeNotificationRepo(), &fakePreferenceRepo{}, &fakeRenderer{}, nil, newFixedClock(testNow), nil, nil, testDispatchConfig)
 	if err != nil {
 		t.Fatalf("NewService: %v", err)
 	}

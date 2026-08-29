@@ -540,3 +540,115 @@ func TestDispatchBatchSendsOnASecondAttempt(t *testing.T) {
 		t.Errorf("SentAt = %v, want %v", settled.SentAt, testNow.Add(30*time.Second))
 	}
 }
+
+// Observer tests — E12.
+//
+// What is worth pinning is not that a hook fires. It is that the three things
+// DispatchBatch's (int, error) return could never carry now reach a bystander:
+// which channel, which outcome, and — the case that pays for the port — a
+// security-category dead-letter, which is the event an audit trail exists for.
+
+func TestObserverSeesTheOutcomeOfEverySettledRow(t *testing.T) {
+	h := newHarness(t)
+	sent := h.enqueue(t, domain.ChannelEmail, domain.CategoryAccount, "ok")
+
+	h.senders[domain.ChannelInApp].err = fmt.Errorf("%w: gone", domain.ErrNonRetryable)
+	dead := h.enqueue(t, domain.ChannelInApp, domain.CategorySecurity, "dead")
+
+	if _, err := h.svc.DispatchBatch(context.Background()); err != nil {
+		t.Fatalf("DispatchBatch: %v", err)
+	}
+
+	calls := h.observer.calls()
+	if len(calls) != 2 {
+		t.Fatalf("observer saw %d rows, want 2", len(calls))
+	}
+
+	byID := map[uuid.UUID]settledCall{}
+	for _, c := range calls {
+		byID[c.id] = c
+	}
+
+	if got := byID[sent.ID]; got.outcome != domain.StatusSent || got.err != nil {
+		t.Errorf("sent row reported as outcome=%q err=%v, want sent and no error", got.outcome, got.err)
+	}
+	if got := byID[sent.ID].channel; got != domain.ChannelEmail {
+		t.Errorf("channel = %q, want email: per-channel counters are the point", got)
+	}
+
+	// The dead-letter is the one an auditor has to be able to find, and the
+	// category is what makes it findable.
+	got := byID[dead.ID]
+	if got.outcome != domain.StatusDead {
+		t.Errorf("dead row reported as %q, want dead", got.outcome)
+	}
+	if got.err == nil || !errors.Is(got.err, domain.ErrNonRetryable) {
+		t.Errorf("dead row reported err=%v, want the non-retryable cause", got.err)
+	}
+}
+
+// TestObserverIsNotToldAboutARowThatFailedToSave: a row whose Save failed has
+// not settled. Reporting it would mean an audit event for a dead-letter that
+// never happened, and a counter that disagrees with the table.
+func TestObserverIsNotToldAboutARowThatFailedToSave(t *testing.T) {
+	h := newHarness(t)
+	victim := h.enqueue(t, domain.ChannelInApp, domain.CategoryAccount, "doomed")
+	h.notifications.saveErrs[victim.ID] = errors.New("connection closed")
+
+	if _, err := h.svc.DispatchBatch(context.Background()); err == nil {
+		t.Fatal("DispatchBatch returned no error, want the failed save reported")
+	}
+
+	for _, c := range h.observer.calls() {
+		if c.id == victim.ID {
+			t.Fatalf("observer was told a row settled whose Save failed: %+v", c)
+		}
+	}
+}
+
+// TestObserverSeesAPanicBelowSettle is BL25. A panic there never reaches the
+// normal report, and as one entry in a joined error it is indistinguishable
+// from an ordinary delivery failure. The sentinel is what an observer keys on.
+func TestObserverSeesAPanicBelowSettle(t *testing.T) {
+	h := newHarness(t)
+	victim := h.enqueue(t, domain.ChannelInApp, domain.CategoryAccount, "panics")
+	h.notifications.savePanics[victim.ID] = "sql: database is closed"
+
+	if _, err := h.svc.DispatchBatch(context.Background()); err == nil {
+		t.Fatal("DispatchBatch returned no error, want the panic reported")
+	}
+
+	var seen *settledCall
+	for _, c := range h.observer.calls() {
+		if c.id == victim.ID {
+			seen = &c
+			break
+		}
+	}
+	if seen == nil {
+		t.Fatal("the panicking row was never reported: BL25's gap is still open")
+	}
+	if !errors.Is(seen.err, ErrPanicked) {
+		t.Errorf("reported err=%v, want it to wrap ErrPanicked so a panic is not "+
+			"indistinguishable from a delivery failure", seen.err)
+	}
+}
+
+// TestNilObserverIsANoOp: the port is optional, and every existing caller
+// passes nil. If that panicked, the option would not be one.
+func TestNilObserverIsANoOp(t *testing.T) {
+	h := newHarnessWith(t, []domain.Channel{domain.ChannelInApp}, nil, testDispatchConfig)
+	h.observer = nil
+
+	svc, err := NewService(h.notifications, h.preferences, h.renderer,
+		[]ChannelSender{h.senders[domain.ChannelInApp]}, h.clock, nil, nil, testDispatchConfig)
+	if err != nil {
+		t.Fatalf("NewService with a nil observer: %v", err)
+	}
+	h.svc = svc
+
+	h.enqueue(t, domain.ChannelInApp, domain.CategoryAccount, "quiet")
+	if _, err := svc.DispatchBatch(context.Background()); err != nil {
+		t.Fatalf("DispatchBatch with a nil observer: %v", err)
+	}
+}

@@ -20,7 +20,12 @@ type Service struct {
 	senders       map[domain.Channel]ChannelSender
 	clock         Clock
 	jitter        domain.JitterSource
-	cfg           DispatchConfig
+
+	// observer is optional; nil means nothing is reported. Guarded in one
+	// place, s.observe, so no call site has to remember the nil check.
+	observer DispatchObserver
+
+	cfg DispatchConfig
 }
 
 // NewService assembles the service, refusing a dependency set that would fail
@@ -46,6 +51,7 @@ func NewService(
 	senders []ChannelSender,
 	clock Clock,
 	jitter domain.JitterSource,
+	observer DispatchObserver,
 	cfg DispatchConfig,
 ) (*Service, error) {
 	if notifications == nil {
@@ -83,6 +89,7 @@ func NewService(
 		senders:       registry,
 		clock:         clock,
 		jitter:        jitter,
+		observer:      observer,
 		cfg:           cfg,
 	}, nil
 }
