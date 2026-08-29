@@ -127,6 +127,30 @@ type NotificationRepository interface {
 	// injected clock governs the whole dispatch cycle, including the tests.
 	ClaimBatch(ctx context.Context, n int, now time.Time) ([]*Notification, error)
 
+	// ClaimStalled takes up to n rows that are still sending and were claimed
+	// before stalledBefore, and returns them for recovery. E9b, E9c.
+	//
+	// It exists because a claimed row cannot otherwise be told from a stalled
+	// one: ClaimBatch marks status and leaves NextAttemptAt at its pre-claim
+	// value, so a sweep driven off that column would reset rows that are still
+	// being delivered. Since E9a that is not merely a double delivery — it
+	// burns an attempt, and can dead-letter a row that was only slow.
+	//
+	// It does NOT apply the recovery. The caller runs each row through
+	// RecoverStalled and Saves it, because a set-based recovery UPDATE would be
+	// a second copy of the state machine, in SQL, that no domain test covers.
+	// This call decides only which rows a sweeper owns.
+	//
+	// Implementations must be exclusive in the same sense as ClaimBatch, and
+	// for a sharper reason: two sweepers recovering one row burn two attempts.
+	// They must also make a sweeper that dies before saving harmless — a row
+	// whose recovery never lands must not be immediately eligible again.
+	//
+	// stalledBefore is policy and belongs to the caller; this port has no
+	// opinion about how long a send may take. now is passed for the same reason
+	// as ClaimBatch's: one injected clock governs the whole cycle.
+	ClaimStalled(ctx context.Context, n int, stalledBefore, now time.Time) ([]*Notification, error)
+
 	// Save persists the settled state of a claimed row: status, attempts,
 	// next attempt, last error and sent-at. It does not create rows.
 	Save(ctx context.Context, n *Notification) error

@@ -639,3 +639,135 @@ func TestNotificationRepo_MarkAllRead(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, stillUnread, 1, "another recipient's mailbox was marked read")
 }
+
+// Integration tests for the stalled sweep — E9b and E9c.
+//
+// The property under test is not "the query filters correctly". It is that a
+// row still being delivered is never handed to a sweeper, because since E9a a
+// false positive does not merely deliver twice: RecoverStalled increments
+// Attempts, so it burns one and can dead-letter a row that was only slow.
+
+// TestNotificationRepo_ClaimStampsClaimedAt: the column exists so a claimed row
+// can be told from a stalled one, which is only true if the claim writes it.
+// NextAttemptAt keeps its pre-claim value on purpose — that is the whole reason
+// claimed_at had to be added rather than reused (E9b).
+func TestNotificationRepo_ClaimStampsClaimedAt(t *testing.T) {
+	repo, _ := newRepo(t)
+	ctx := context.Background()
+	claimAt := pgTime(time.Now())
+
+	n := newNotification(t, uuid.New(), claimAt.Add(-time.Hour))
+	require.NoError(t, repo.Enqueue(ctx, n))
+
+	claimed, err := repo.ClaimBatch(ctx, 10, claimAt)
+	require.NoError(t, err)
+	require.Len(t, claimed, 1)
+
+	// Claimed at claimAt, so it is stalled relative to any later threshold and
+	// not to an earlier one. Reading it back through ClaimStalled is the only
+	// observation of the column the domain offers.
+	notYet, err := repo.ClaimStalled(ctx, 10, claimAt, claimAt)
+	require.NoError(t, err)
+	require.Empty(t, notYet, "a row claimed at the threshold is not yet stalled")
+
+	stalled, err := repo.ClaimStalled(ctx, 10, claimAt.Add(time.Minute), claimAt.Add(time.Minute))
+	require.NoError(t, err)
+	require.Len(t, stalled, 1, "the claim did not record claimed_at")
+	require.Equal(t, n.ID, stalled[0].ID)
+}
+
+// TestNotificationRepo_ClaimStalledIgnoresRowsThatAreNotSending: a pending row
+// is the dispatcher's to claim, not the sweeper's. Recovering one would reset a
+// row that was never in flight.
+func TestNotificationRepo_ClaimStalledIgnoresRowsThatAreNotSending(t *testing.T) {
+	repo, _ := newRepo(t)
+	ctx := context.Background()
+	base := pgTime(time.Now())
+
+	pending := newNotification(t, uuid.New(), base.Add(-time.Hour))
+	require.NoError(t, repo.Enqueue(ctx, pending))
+
+	got, err := repo.ClaimStalled(ctx, 10, base.Add(time.Hour), base)
+	require.NoError(t, err)
+	require.Empty(t, got, "a pending row was handed to the stalled sweep")
+}
+
+// TestNotificationRepo_ClaimStalledLeavesTheStatusAlone is E9c's ruling as a
+// test: the sweep decides ownership, never the transition. A set-based recovery
+// UPDATE here would be a second copy of the state machine that no domain test
+// covers, so the row must come back still sending, for RecoverStalled to act on.
+func TestNotificationRepo_ClaimStalledLeavesTheStatusAlone(t *testing.T) {
+	repo, _ := newRepo(t)
+	ctx := context.Background()
+	base := pgTime(time.Now())
+
+	n := newNotification(t, uuid.New(), base.Add(-time.Hour))
+	require.NoError(t, repo.Enqueue(ctx, n))
+	_, err := repo.ClaimBatch(ctx, 10, base)
+	require.NoError(t, err)
+
+	stalled, err := repo.ClaimStalled(ctx, 10, base.Add(time.Minute), base.Add(time.Minute))
+	require.NoError(t, err)
+	require.Len(t, stalled, 1)
+	require.Equal(t, domain.StatusSending, stalled[0].Status,
+		"the sweep changed the status; the transition belongs to RecoverStalled")
+	require.Equal(t, 0, stalled[0].Attempts,
+		"the sweep spent an attempt; only RecoverStalled may")
+}
+
+// TestNotificationRepo_ClaimStalledRestampsSoACrashedSweeperDefers: the sweep
+// re-stamps claimed_at, so a sweeper that dies between claiming and saving
+// leaves the row deferred by another stall window rather than immediately
+// eligible. Without this, two passes in quick succession recover the same row
+// twice and burn two attempts.
+func TestNotificationRepo_ClaimStalledRestampsSoACrashedSweeperDefers(t *testing.T) {
+	repo, _ := newRepo(t)
+	ctx := context.Background()
+	base := pgTime(time.Now())
+
+	n := newNotification(t, uuid.New(), base.Add(-time.Hour))
+	require.NoError(t, repo.Enqueue(ctx, n))
+	_, err := repo.ClaimBatch(ctx, 10, base)
+	require.NoError(t, err)
+
+	sweepAt := base.Add(time.Minute)
+	first, err := repo.ClaimStalled(ctx, 10, sweepAt, sweepAt)
+	require.NoError(t, err)
+	require.Len(t, first, 1)
+
+	// Same threshold, immediately after: the row was re-stamped at sweepAt, so
+	// it is no longer stalled relative to it.
+	second, err := repo.ClaimStalled(ctx, 10, sweepAt, sweepAt)
+	require.NoError(t, err)
+	require.Empty(t, second, "the same row was handed to two sweeps; that burns two attempts")
+
+	// It becomes eligible again only after another full window.
+	later := sweepAt.Add(time.Minute)
+	third, err := repo.ClaimStalled(ctx, 10, later, later)
+	require.NoError(t, err)
+	require.Len(t, third, 1, "the row never became eligible again")
+}
+
+// TestNotificationRepo_ClaimStalledRespectsTheLimit: the sweep is a batch like
+// any other, and an unbounded one would hold locks over the whole outbox.
+func TestNotificationRepo_ClaimStalledRespectsTheLimit(t *testing.T) {
+	repo, _ := newRepo(t)
+	ctx := context.Background()
+	base := pgTime(time.Now())
+
+	for i := 0; i < 3; i++ {
+		n := newNotification(t, uuid.New(), base.Add(-time.Hour))
+		require.NoError(t, repo.Enqueue(ctx, n))
+	}
+	_, err := repo.ClaimBatch(ctx, 10, base)
+	require.NoError(t, err)
+
+	sweepAt := base.Add(time.Minute)
+	got, err := repo.ClaimStalled(ctx, 2, sweepAt, sweepAt)
+	require.NoError(t, err)
+	require.Len(t, got, 2)
+
+	none, err := repo.ClaimStalled(ctx, 0, sweepAt, sweepAt)
+	require.NoError(t, err)
+	require.Empty(t, none, "a non-positive limit must claim nothing")
+}

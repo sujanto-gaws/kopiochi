@@ -56,6 +56,15 @@ type NotificationRow struct {
 
 	CreatedAt time.Time `bun:"created_at,notnull,default:now()"`
 
+	// ClaimedAt is when the dispatcher took the row. NULL means never claimed.
+	//
+	// It is what makes a stalled send distinguishable from a healthy in-flight
+	// one: next_attempt_at holds its pre-claim value, so it cannot tell them
+	// apart, and a sweep run off it would reset rows that are still being
+	// delivered — a double delivery, and since E9a also a burnt attempt on a
+	// healthy row (E9b).
+	ClaimedAt *time.Time `bun:"claimed_at"`
+
 	// SentAt stays NULL until the row reaches the sent status.
 	SentAt *time.Time `bun:"sent_at"`
 }
