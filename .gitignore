@@ -19,7 +19,7 @@
 *.swp
 *.test
 *.tmp
-*.zipcoverage.out
+*.zip
 .coverage
 .dockerignore.local
 .env
