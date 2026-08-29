@@ -32,7 +32,7 @@ States: pending | dispatched | in-review | blocked | merged | escalated
 | **BL34b** | *(in-session, ungated)* | **merged** | #48 | **none — see PROCESS-7** |
 | **GITIGNORE** | *(in-session, ungated)* | **merged** | #49 | **none — see PROCESS-7** |
 | **E11-FIX** | *(in-session, ungated)* | **merged** | #51 (`8f82381`) | **none — see PROCESS-7** |
-| **E13/E14-FIX** | *(in-session, ungated)* | **in review** | **#53** (`0d0b02d`) — 7/7 green | **none** |
+| **E13/E14-FIX** | *(in-session, ungated)* | **merged** | #53 (`0d0b02d`) | **none — see PROCESS-7** |
 | D5  | platform-engineer | **UNBLOCKED 2026-08-29** — E11, E13, E14 all answered. Scope grew: `sender/inapp.go`, and its file list must say `domain/message.go`, not `application/ports.go` | - | - |
 | D6  | platform-engineer | **BLOCKED — E9b, E9c, E12** | - | - |
 | D7  | transport-engineer | **UNBLOCKED** — needs D6 | - | - |
@@ -114,12 +114,12 @@ board: #19/#21/#24/#27/#28/#32 → `ca397f1` · #41 board
 **2026-08-29:** #42 `799c861` T4 · #43 `66b69e1` C1 · #44 `cb020d6` **T6** ·
 #45 `cf7a4cb` **T7** · #46 `bc0cc2f` **E8** · #47 `7349edd` **E18+E7**
 #48 `2d8d529` **BL34b** · #49 `979df0f` **GITIGNORE** · #50 board · #51 `8f82381` **E11** ·
-#52 board · *(open: #53 E13+E14)*
+#52 board · #53 `0d0b02d` **E13+E14** · *(open: #54 board)*
 
 ## PROCESS-7 — six changes merged with NO arch-reviewer verdict
 T6 (#44), T7 (#45), E8-FIX (#46), E18-FIX (#47), BL34b (#48), GITIGNORE (#49), E11-FIX (#51),
-three board PRs and E13/E14-FIX (#53) were produced — and all but #53 merged — without passing
-the gate every earlier task passed.
+three board PRs and E13/E14-FIX (#53) were produced and merged without passing the gate every
+earlier task passed.
 
 **#51 and #53 are the two that most warrant a real review.** They are the only ones that change
 production Go, and both act on decisions that were the human's to make and were delegated:
