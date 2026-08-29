@@ -90,12 +90,19 @@ type fakeNotificationRepo struct {
 	// does not have to construct a claimable row.
 	listRows []*domain.Notification
 
-	enqueueErr  error
-	claimErr    error
-	listErr     error
-	markReadErr error
-	markAllErr  error
-	markAllN    int
+	// claimedAt mirrors the notifications.claimed_at column, which the domain
+	// entity deliberately does not carry: ClaimStalled filters on it and Save
+	// never touches it, so the fake keeps it beside the rows rather than on
+	// them (E9b).
+	claimedAt map[uuid.UUID]time.Time
+
+	enqueueErr      error
+	claimErr        error
+	claimStalledErr error
+	listErr         error
+	markReadErr     error
+	markAllErr      error
+	markAllN        int
 
 	// saveErrs and savePanics fail Save for one specific row.
 	saveErrs   map[uuid.UUID]error
@@ -140,6 +147,48 @@ func (r *fakeNotificationRepo) Enqueue(_ context.Context, n *domain.Notification
 	return nil
 }
 
+// stampClaim records claimed_at. Caller holds the lock.
+func (r *fakeNotificationRepo) stampClaim(id uuid.UUID, now time.Time) {
+	if r.claimedAt == nil {
+		r.claimedAt = map[uuid.UUID]time.Time{}
+	}
+	r.claimedAt[id] = now
+}
+
+// ClaimStalled mirrors the repository: it hands back sending rows claimed
+// before stalledBefore WITHOUT applying any transition, and re-stamps
+// claimed_at so a sweeper that dies before saving defers the row instead of
+// leaving it immediately eligible again.
+func (r *fakeNotificationRepo) ClaimStalled(
+	_ context.Context, n int, stalledBefore, now time.Time,
+) ([]*domain.Notification, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if r.claimStalledErr != nil {
+		return nil, r.claimStalledErr
+	}
+
+	var stalled []*domain.Notification
+	for _, row := range r.rows {
+		if len(stalled) >= n {
+			break
+		}
+		if row.Status != domain.StatusSending {
+			continue
+		}
+		at, ok := r.claimedAt[row.ID]
+		if !ok || !at.Before(stalledBefore) {
+			continue
+		}
+		r.stampClaim(row.ID, now)
+
+		handed := *row
+		stalled = append(stalled, &handed)
+	}
+	return stalled, nil
+}
+
 func (r *fakeNotificationRepo) ClaimBatch(_ context.Context, n int, now time.Time) ([]*domain.Notification, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -158,6 +207,7 @@ func (r *fakeNotificationRepo) ClaimBatch(_ context.Context, n int, now time.Tim
 			continue
 		}
 		row.Status = domain.StatusSending
+		r.stampClaim(row.ID, now)
 
 		handed := *row
 		claimed = append(claimed, &handed)

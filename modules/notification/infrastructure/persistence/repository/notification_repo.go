@@ -146,6 +146,7 @@ func (r *NotificationRepo) ClaimBatch(ctx context.Context, n int, now time.Time)
 	if _, err := r.db.NewUpdate().
 		Model((*models.NotificationRow)(nil)).
 		Set("status = ?", string(domain.StatusSending)).
+		Set("claimed_at = ?", now).
 		Where("id IN (?)", claimable).
 		Returning("*").
 		Exec(ctx, &rows); err != nil {
@@ -157,6 +158,63 @@ func (r *NotificationRepo) ClaimBatch(ctx context.Context, n int, now time.Time)
 		claimed = append(claimed, fromNotificationRow(&rows[i]))
 	}
 	return claimed, nil
+}
+
+// ClaimStalled takes ownership of rows that were claimed for delivery and never
+// settled, so the caller can run each one back through the domain's
+// RecoverStalled and Save it.
+//
+// It deliberately does NOT change status, and that is the whole point. E9c ruled
+// that recovering with one set-based UPDATE would be a second, untested copy of
+// the state machine; the transition stays in the domain, and this decides only
+// WHO may apply it.
+//
+// Exclusion matters more here than for an ordinary claim. RecoverStalled
+// increments Attempts, so two dispatchers recovering the same row burn two
+// attempts and can dead-letter a row that was merely slow. FOR UPDATE SKIP
+// LOCKED hands the rows to exactly one sweeper.
+//
+// Re-stamping claimed_at is what makes a crashed sweeper safe: a row whose
+// recovery never lands is deferred by another full stall window rather than
+// being immediately eligible again. It costs the original claim timestamp,
+// which nothing reads after the sweep has decided.
+//
+// stalledBefore is the policy — "claimed before this instant counts as
+// stalled" — and stays with the caller, so this method has no opinion about how
+// long a send may take.
+func (r *NotificationRepo) ClaimStalled(
+	ctx context.Context, n int, stalledBefore, now time.Time,
+) ([]*domain.Notification, error) {
+	if n <= 0 {
+		return nil, nil
+	}
+
+	// Unaliased for the same reason as ClaimBatch's subquery above.
+	stalled := r.db.NewSelect().
+		ColumnExpr("id").
+		TableExpr("notifications").
+		Where("status = ?", string(domain.StatusSending)).
+		Where("claimed_at IS NOT NULL").
+		Where("claimed_at < ?", stalledBefore).
+		OrderExpr("claimed_at").
+		Limit(n).
+		For("UPDATE SKIP LOCKED")
+
+	var rows []models.NotificationRow
+	if _, err := r.db.NewUpdate().
+		Model((*models.NotificationRow)(nil)).
+		Set("claimed_at = ?", now).
+		Where("id IN (?)", stalled).
+		Returning("*").
+		Exec(ctx, &rows); err != nil {
+		return nil, db.Translate(err)
+	}
+
+	out := make([]*domain.Notification, 0, len(rows))
+	for i := range rows {
+		out = append(out, fromNotificationRow(&rows[i]))
+	}
+	return out, nil
 }
 
 // Save writes back the settled state of a claimed row and nothing else.
