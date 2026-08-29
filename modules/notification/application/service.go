@@ -87,6 +87,16 @@ func NewService(
 	}, nil
 }
 
+// ErrChannelNotRoutable is returned by Enqueue for a channel that is valid in
+// the domain but has no sender wired into this Service.
+//
+// It is a configuration or contract error, never a user-facing one, and the two
+// causes want different responses from a caller that maps it: a producer asking
+// for a channel this deployment does not implement (webhook is a v1 non-goal)
+// is the producer's bug, while a channel that should be wired and is not is the
+// operator's. Both are worth failing loudly; neither is worth a dead row.
+var ErrChannelNotRoutable = errors.New("notification: no sender registered for channel")
+
 // Enqueue writes an intent to notify into the outbox. Nothing is sent here; the
 // dispatcher drains the row later.
 //
@@ -98,6 +108,8 @@ func NewService(
 //     already queued" is exactly the outcome the caller asked for, and the
 //     caller cannot distinguish the first enqueue from the second — which is
 //     the point of the key.
+//
+// An unroutable channel is NOT one of them: see ErrChannelNotRoutable.
 //
 // The preference gate goes through domain.Allowed rather than reading
 // Preference.Enabled here. Allowed applies the protected-pair override before
@@ -123,6 +135,25 @@ func (s *Service) Enqueue(ctx context.Context, req EnqueueRequest) error {
 	}, s.clock.Now())
 	if err != nil {
 		return err
+	}
+
+	// A channel nobody can deliver is refused HERE, at the producer, rather
+	// than accepted and killed later at the dispatch gate.
+	//
+	// domain.Channel accepts email, inapp and webhook, but only the channels
+	// with a registered sender can actually be delivered: deliver() treats an
+	// unrouted channel as non-retryable, so such a row goes pending -> dead
+	// having never been attempted, and the only trace is a LastError nobody is
+	// watching. That is a silent drop wearing the costume of a durable outbox.
+	// See E13 — it was found as "every in-app notification dies at the D6
+	// gate", but the shape is general and would have recurred verbatim for
+	// webhook.
+	//
+	// Checked before the preference lookup on purpose: an unroutable channel is
+	// a broken contract between this service and whoever wired it, and it stays
+	// broken whether or not this particular user wanted the message.
+	if _, routable := s.senders[n.Channel]; !routable {
+		return fmt.Errorf("%w: %q", ErrChannelNotRoutable, n.Channel)
 	}
 
 	prefs, err := s.preferences.ListForUser(ctx, n.RecipientID)

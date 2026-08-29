@@ -437,6 +437,37 @@ func newHarnessWith(t *testing.T, channels []domain.Channel, jitter domain.Jitte
 // enqueue puts one pending, immediately claimable row in the outbox and returns
 // it. It goes through the service so that a row under test is built the same
 // way a real one is.
+// seedRow puts a pending row straight into the outbox, bypassing Service.Enqueue.
+//
+// It exists for the one case Enqueue now refuses: a row whose channel has no
+// registered sender. Since E13 that is rejected at enqueue, but it remains
+// reachable in production — a row queued while a sender was wired, and drained
+// after it was removed — and the dispatcher's fail-closed handling of it is
+// exactly what the test using this asserts. Going through Enqueue would test
+// the new guard instead of the old behaviour, and silently stop covering it.
+func (h *harness) seedRow(t *testing.T, ch domain.Channel, cat domain.Category) *domain.Notification {
+	t.Helper()
+
+	n, err := domain.NewNotification(domain.NewNotificationParams{
+		ID:          uuid.New(),
+		RecipientID: testUser,
+		Channel:     ch,
+		Category:    cat,
+		TemplateKey: "security.password_changed",
+		Payload:     map[string]any{"ip": "203.0.113.7"},
+	}, h.clock.Now())
+	if err != nil {
+		t.Fatalf("NewNotification: %v", err)
+	}
+	if err := h.notifications.Enqueue(context.Background(), n); err != nil {
+		t.Fatalf("seed row: %v", err)
+	}
+
+	h.notifications.mu.Lock()
+	defer h.notifications.mu.Unlock()
+	return h.notifications.rows[len(h.notifications.rows)-1]
+}
+
 func (h *harness) enqueue(t *testing.T, ch domain.Channel, cat domain.Category, key string) *domain.Notification {
 	t.Helper()
 
