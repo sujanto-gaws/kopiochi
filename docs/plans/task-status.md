@@ -29,12 +29,13 @@ States: pending | dispatched | in-review | blocked | merged | escalated
 | **T7** | *(in-session, ungated)* | **merged** | #45 (`cf7a4cb`) | **none — see PROCESS-7** |
 | **E8-FIX** | *(in-session, ungated)* | **merged** | #46 (`bc0cc2f`) | **none — see PROCESS-7** |
 | **E18-FIX** | *(in-session, ungated)* | **merged** | #47 (`7349edd`) | **none — see PROCESS-7** |
-| **BL34b** | *(in-session, ungated)* | **in review** | **#48** (`2d8d529`) — 7/7 green | **none** |
-| **GITIGNORE** | *(in-session, ungated)* | **in review** | **#49** (`979df0f`) — 7/7 green | **none** |
-| D5  | platform-engineer | **BLOCKED — E11, E13, E14** | - | - |
+| **BL34b** | *(in-session, ungated)* | **merged** | #48 | **none — see PROCESS-7** |
+| **GITIGNORE** | *(in-session, ungated)* | **merged** | #49 | **none — see PROCESS-7** |
+| **E11-FIX** | *(in-session, ungated)* | **in review** | **#51** (`8f82381`) — 7/7 green | **none** |
+| D5  | platform-engineer | **BLOCKED — E13, E14** (E11 answered 2026-08-29) | - | - |
 | D6  | platform-engineer | **BLOCKED — E9b, E9c, E12** | - | - |
 | D7  | transport-engineer | **UNBLOCKED** — needs D6 | - | - |
-| D8  | platform-engineer | **BLOCKED — E15, E11** | - | - |
+| D8  | platform-engineer | **BLOCKED — E15** (E11 answered 2026-08-29) | - | - |
 | D9a/D9b, D10 | domain / platform | pending | - | - |
 | E16-P | test-guardian | **merged** | #37 (`1dc6aa7`) | **APPROVE-WITH-NOTES** |
 | E16-1 | persistence-engineer | **BLOCKED — E22 only** (E20 answered) | - | - |
@@ -49,7 +50,8 @@ States: pending | dispatched | in-review | blocked | merged | escalated
 history. #42 (T4) made the linter run at all; #44 (T6) cleared six stdlib advisories;
 #45 (T7) stopped the test binaries colliding in one database; #46 fixed E8, the two
 migration tests that had been killing the `build` job before it reached its own gates;
-#47 cleared E18's two floors. **Open: #48 and #49, both 7/7 green.**
+#47 cleared E18's two floors; #48 and #49 closed BL34's second half and the `.gitignore`
+fusion. **`main` carries all nine. Open: #50 (this board) and #51 (E11), both 7/7 green.**
 
 **Two CI steps executed for the first time ever**, both previously `skipped` because the
 job died at `go test -race`: **`architecture rules` — and it PASSED**, so B4's and T2's
@@ -69,10 +71,10 @@ as of 2026-08-29 every task that needed no answer from you has been done and mer
 | **E23** | E16-3's acceptance | Approve **E16-P2** (test-guardian, ~20 lines): capture `put_not_found`/`delete_not_found`? |
 | **E19** | E16-1 (as a review objection) | Confirm the E16-ARCH decision supersedes `migration-strategy.md:249-251`? |
 | **E21** | E16-5 | `cmd/generator` reproduces the defect into every future module — scope it, or accept it? |
-| **E11/E13/E14** | **D5**, and D6/D8 behind it | The Phase D blockers, unanswered since Phase B closed. |
-**D5–D10 have now been parked longer than the E16 chain.** E11 is a one-line amendment to R1
-plus one archtest rule; it is the cheapest unblock on this board and it releases the entire
-notification back half. If you answer one thing today, answer E11.
+| **E13/E14** | **D5**, and D6/D8 behind it | The Phase D blockers, unanswered since Phase B closed. **E11 is answered** — these two are what remain. |
+**D5–D10 have now been parked longer than the E16 chain.** **E11 is answered and implemented
+(#51)**, which unblocks D8 outright and leaves D5 waiting on E13 and E14 alone. Those two are
+now the cheapest unblock on this board and they release the notification back half.
 
 ## PROCESS-6 — RESOLVED, and PROCESS-3 recurred a third time
 The stray edit is **gone** — T4 reports `authn-spi-impact-analysis.md` was already clean when
@@ -108,10 +110,14 @@ that the baselines are current. Not verified this session.
 board: #19/#21/#24/#27/#28/#32 → `ca397f1` · #41 board
 **2026-08-29:** #42 `799c861` T4 · #43 `66b69e1` C1 · #44 `cb020d6` **T6** ·
 #45 `cf7a4cb` **T7** · #46 `bc0cc2f` **E8** · #47 `7349edd` **E18+E7**
+#48 `2d8d529` **BL34b** · #49 `979df0f` **GITIGNORE** · *(open: #50 board, #51 E11)*
 
 ## PROCESS-7 — six changes merged with NO arch-reviewer verdict
-T6 (#44), T7 (#45), E8-FIX (#46), E18-FIX (#47) and the two open PRs (#48, #49) were
-produced and merged without passing the gate every earlier task passed. They are
+T6 (#44), T7 (#45), E8-FIX (#46), E18-FIX (#47), BL34b (#48), GITIGNORE (#49) and the two
+open PRs (#50, #51) were produced — and seven of them merged — without passing the gate every
+earlier task passed. **#51 is the one that most warrants a real review**: it is the only one
+that changes production Go, moving two types between layers on a decision that was the
+human's to make. They are
 test/CI/config only — **no production Go file was modified by any of them** — and each
 carries its own in-PR verification (real Postgres 16, mutation tests on #46, the actual
 coverage gate on #47). But the gate is the gate, and the board must record that these six
@@ -203,9 +209,9 @@ against `main` rather than a fix on an open branch. The T2 review is being re-po
 
 ---
 
-# ESCALATIONS — OPEN (14)
-**Was 17. E7, E8 and E18 were resolved 2026-08-29** — see their entries below, each now
-headed RESOLVED. Nothing else changed state.
+# ESCALATIONS — OPEN (13)
+**Was 17. E7, E8, E18 and E11 were resolved 2026-08-29** — see their entries below, each now
+headed RESOLVED or ANSWERED. Nothing else changed state.
 
 Ordered by severity.
 
@@ -682,7 +688,44 @@ reachable through current app paths. `schemacheck` cannot catch this class (BL33
 **Fix:** `NOT NULL` migration after a data check; guard `ValidateCode` on an empty secret;
 extend schemacheck to assert `is_nullable == pointer-ness`. **Needs a task.**
 
-## E11 — `infrastructure` may not import `application`, but D5 and D8 must ⚠ blocks D5
+## E11 — **ANSWERED 2026-08-29 (human, delegated). Implemented in #51 (`8f82381`).**
+**Decision: move the shared port types into `domain`. R1 is NOT amended.**
+`RenderedMessage` and `ErrNonRetryable` now live in `modules/notification/domain`.
+**D8 is unblocked outright; D5 now waits on E13 and E14 only.**
+
+**Why not this entry's own proposal.** Amending R1 to permit
+`modules/X/infrastructure → modules/X/application` **would stop R1 preventing the thing it
+exists to prevent.** An import-level rule cannot distinguish *"names a port type it
+implements"* from *"calls a use case"*, so the amendment buys the sender its signature and in
+the same stroke legalises a sender re-entering the dispatch cycle that drove it. Neither
+archtest nor depguard could tell those apart afterwards — they see imports, not symbols. That
+trades an enforceable rule for an unenforceable convention, permanently, to solve a naming
+problem.
+
+**Why `domain`.** It is already how every other port in this tree works —
+`NotificationRepository` and `PreferenceRepository` are declared in `domain` and implemented
+in `infrastructure`. Senders are the same shape, and making them the exception is what created
+E11. `ErrNonRetryable` was arguably misplaced regardless: it decides dead-versus-pending, a
+**domain state transition**, while `domain/errors.go` already owns that vocabulary next to
+`ErrInvalidTransition`. The interfaces themselves did **not** move — Go satisfies interfaces
+structurally, so a sender never imports `ChannelSender`, only the parameter type.
+
+**Cost.** Eight references, all inside `modules/notification/application`, and no sender
+exists yet. After D5/D8 ship, the same decision costs a rewrite of every sender.
+
+**The concession, recorded not hidden.** `Subject` and `Body` are rendered presentation data,
+and `domain` now holds a type it never constructs. Judged smaller than making R1
+unenforceable; `domain.Channel` already lives there. **Reversible** — the original amendment
+is one commit away if this is judged wrong.
+
+**The gap this entry found is now closed.** R1's `infrastructure` row was written down and
+enforced by **nothing** — `TestApplicationLayerDoesNotTouchInfrastructure` guards only the
+opposite direction. `TestInfrastructureLayerDoesNotTouchApplication` now enforces it, and it
+was **proven to fire**: an `application` import planted in
+`modules/notification/infrastructure/persistence/repository` fails it with the expected
+message, green again once reverted. (Reported twice per violation — BL35, pre-existing.)
+
+### E11 (original entry, kept) — `infrastructure` may not import `application`, but D5 and D8 must
 Blueprint §5 puts the sender ports in `application/ports.go`, so every sender must import it
 **to spell its own method signature** — which R1 forbids and **neither archtest nor depguard
 catches**. Amend R1 to `infrastructure → domain, own application's ports, …` and add an
