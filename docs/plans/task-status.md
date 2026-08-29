@@ -31,8 +31,9 @@ States: pending | dispatched | in-review | blocked | merged | escalated
 | **E18-FIX** | *(in-session, ungated)* | **merged** | #47 (`7349edd`) | **none — see PROCESS-7** |
 | **BL34b** | *(in-session, ungated)* | **merged** | #48 | **none — see PROCESS-7** |
 | **GITIGNORE** | *(in-session, ungated)* | **merged** | #49 | **none — see PROCESS-7** |
-| **E11-FIX** | *(in-session, ungated)* | **in review** | **#51** (`8f82381`) — 7/7 green | **none** |
-| D5  | platform-engineer | **BLOCKED — E13, E14** (E11 answered 2026-08-29) | - | - |
+| **E11-FIX** | *(in-session, ungated)* | **merged** | #51 (`8f82381`) | **none — see PROCESS-7** |
+| **E13/E14-FIX** | *(in-session, ungated)* | **in review** | **#53** (`0d0b02d`) — 7/7 green | **none** |
+| D5  | platform-engineer | **UNBLOCKED 2026-08-29** — E11, E13, E14 all answered. Scope grew: `sender/inapp.go`, and its file list must say `domain/message.go`, not `application/ports.go` | - | - |
 | D6  | platform-engineer | **BLOCKED — E9b, E9c, E12** | - | - |
 | D7  | transport-engineer | **UNBLOCKED** — needs D6 | - | - |
 | D8  | platform-engineer | **BLOCKED — E15** (E11 answered 2026-08-29) | - | - |
@@ -71,10 +72,12 @@ as of 2026-08-29 every task that needed no answer from you has been done and mer
 | **E23** | E16-3's acceptance | Approve **E16-P2** (test-guardian, ~20 lines): capture `put_not_found`/`delete_not_found`? |
 | **E19** | E16-1 (as a review objection) | Confirm the E16-ARCH decision supersedes `migration-strategy.md:249-251`? |
 | **E21** | E16-5 | `cmd/generator` reproduces the defect into every future module — scope it, or accept it? |
-| **E13/E14** | **D5**, and D6/D8 behind it | The Phase D blockers, unanswered since Phase B closed. **E11 is answered** — these two are what remain. |
-**D5–D10 have now been parked longer than the E16 chain.** **E11 is answered and implemented
-(#51)**, which unblocks D8 outright and leaves D5 waiting on E13 and E14 alone. Those two are
-now the cheapest unblock on this board and they release the notification back half.
+| **E15** | **D8** | Nobody owns address resolution. **The last Phase D blocker** — E11, E13 and E14 are all answered. |
+**Phase D's dependency wall is down.** E11 (#51), E13 and E14 (#53) are answered and
+implemented, and **D5 is dispatchable now**. What remains in front of the rest is not a
+question for you but ordinary work: **D6** still needs **E9b/E9c/E12**, and **D8** still needs
+**E15** — the only Phase D ask left. Note D6's and D8's blockers were never E11/E13/E14, so
+"D5 is unblocked" does not by itself release D6 or D8.
 
 ## PROCESS-6 — RESOLVED, and PROCESS-3 recurred a third time
 The stray edit is **gone** — T4 reports `authn-spi-impact-analysis.md` was already clean when
@@ -110,14 +113,20 @@ that the baselines are current. Not verified this session.
 board: #19/#21/#24/#27/#28/#32 → `ca397f1` · #41 board
 **2026-08-29:** #42 `799c861` T4 · #43 `66b69e1` C1 · #44 `cb020d6` **T6** ·
 #45 `cf7a4cb` **T7** · #46 `bc0cc2f` **E8** · #47 `7349edd` **E18+E7**
-#48 `2d8d529` **BL34b** · #49 `979df0f` **GITIGNORE** · *(open: #50 board, #51 E11)*
+#48 `2d8d529` **BL34b** · #49 `979df0f` **GITIGNORE** · #50 board · #51 `8f82381` **E11** ·
+#52 board · *(open: #53 E13+E14)*
 
 ## PROCESS-7 — six changes merged with NO arch-reviewer verdict
-T6 (#44), T7 (#45), E8-FIX (#46), E18-FIX (#47), BL34b (#48), GITIGNORE (#49) and the two
-open PRs (#50, #51) were produced — and seven of them merged — without passing the gate every
-earlier task passed. **#51 is the one that most warrants a real review**: it is the only one
-that changes production Go, moving two types between layers on a decision that was the
-human's to make. They are
+T6 (#44), T7 (#45), E8-FIX (#46), E18-FIX (#47), BL34b (#48), GITIGNORE (#49), E11-FIX (#51),
+three board PRs and E13/E14-FIX (#53) were produced — and all but #53 merged — without passing
+the gate every earlier task passed.
+
+**#51 and #53 are the two that most warrant a real review.** They are the only ones that change
+production Go, and both act on decisions that were the human's to make and were delegated:
+#51 moves two types between layers, and #53 adds a refusal to a public method (`Enqueue` now
+errors where it previously returned nil) and a field to a domain type. **#53 also changes an
+existing test's setup** — justified in its entry under E13, but exactly the kind of change a
+gate exists to look at. They are
 test/CI/config only — **no production Go file was modified by any of them** — and each
 carries its own in-PR verification (real Postgres 16, mutation tests on #46, the actual
 coverage gate on #47). But the gate is the gate, and the board must record that these six
@@ -209,9 +218,9 @@ against `main` rather than a fix on an open branch. The T2 review is being re-po
 
 ---
 
-# ESCALATIONS — OPEN (13)
-**Was 17. E7, E8, E18 and E11 were resolved 2026-08-29** — see their entries below, each now
-headed RESOLVED or ANSWERED. Nothing else changed state.
+# ESCALATIONS — OPEN (11)
+**Was 17. E7, E8, E18, E11, E13 and E14 were resolved 2026-08-29** — see their entries below,
+each now headed RESOLVED or ANSWERED. Nothing else changed state.
 
 Ordered by severity.
 
@@ -738,12 +747,70 @@ dead-letter** are all computed in `settle` and discarded. Prefer a
 `DispatchObserver.Settled(n, outcome, err)` port — optional, nil ⇒ no-op — which also fixes
 BL25's panic-visibility gap.
 
-## E13 — no task ships an in-app sender ⚠
+## E13 — **ANSWERED 2026-08-29 (human, delegated). Implemented in #53 (`0d0b02d`).**
+**Decision: ship `sender/inapp.go` in D5 AND refuse unroutable channels at `Enqueue`.
+Webhook stays a v1 non-goal.**
+
+**The entry's diagnosis was exact, and verified:** `AllChannels()` returns all three channels
+and `Valid()` accepts all three, so an in-app enqueue is legitimate; `dispatch.go:148` then
+finds no sender and returns `ErrNonRetryable`, so the row goes **`pending` → `dead` having
+never been attempted**. D7's mailbox would have been permanently empty.
+
+**Why the fix is bigger than the entry asked for.** Shipping only `sender/inapp.go` fixes that
+instance and leaves the *shape*: webhook is a v1 non-goal, and **a non-goal that `Valid()`
+accepts is the same trap one channel over.** Worse, `Enqueue` reported **success** while the
+row died — a silent drop wearing the costume of a durable outbox. So the guard is general:
+`Enqueue` returns `ErrChannelNotRoutable` for any channel with no registered sender, which
+turns a dead row nobody watches into a loud error at the producer.
+
+**Checked before the preference lookup**, deliberately: an unroutable channel is a broken
+contract between the service and whoever wired it, and it stays broken whether or not this
+user wanted the message. Reporting "delivered nothing, successfully" because the recipient had
+it switched off would hide a misconfiguration behind a user's setting.
+
+**The in-app sender is still D5's**, and is the ~10-line no-op the design implies — the row
+*is* the notification, as `RenderedMessage`'s own doc says. Note dispatch renders *before*
+calling the sender, so an in-app row with a broken template dies with `LastError` set rather
+than reaching the mailbox broken. Kept deliberately: a free template smoke-test, at the cost
+of rendering in-app content twice (the dispatch-time render is discarded).
+
+**One existing test changed and NOT weakened.**
+`TestDispatchBatchDeadLettersWithoutRetrying/"no sender is registered for the channel"` asserts
+the *dispatcher's* fail-closed handling, which is still correct and still reachable — a row
+queued while a sender was wired and drained after it was removed, exactly what its own comment
+describes. It reached that state through `Enqueue`, which now refuses, so it seeds the row
+directly via a new `harness.seedRow`. Relaxing it would have dropped coverage of the
+fail-closed path while looking like a fix.
+
+### E13 (original entry, kept) — no task ships an in-app sender ⚠
 `inapp`/`webhook` appear **nowhere** in the task list. With D3's fail-closed behaviour, at
 the D6 gate **every in-app notification goes straight to `dead`** — the channel D7 exists to
 serve. Add `sender/inapp.go` to D5; record webhook as a v1 non-goal.
 
-## E14 — template shape: two documents, orthogonal axes, both incomplete
+## E14 — **ANSWERED 2026-08-29 (human, delegated). Implemented in #53 (`0d0b02d`).**
+**Decision: accept E14's shape — `HTMLBody` is added — with one invariant E14 did not state.**
+
+**`Body`'s doc comment was wrong and is rewritten, not merely supplemented.** It claimed *"one
+body per channel, not one per MIME type: a channel that needs several representations is a
+channel that names several templates"*. That answers **email versus in-app**. It cannot answer
+**the HTML part versus the text part of one email**, because those are two representations of
+a *single* message and cannot be two notifications.
+
+**The addition: plain `Body` is MANDATORY and `HTMLBody` is OPTIONAL, never the reverse.**
+E14 argued deliverability — correctly — but did not say which field is required, and that is
+the half that delivers the benefit. An email sent HTML-only is penalised by spam filters and
+unreadable to a text client, and the notification most likely to be filtered is the security
+mail, the one that must arrive. Making the plain part the required one means **no template can
+produce an HTML-only message even by omission**. Senders emit `multipart/alternative` when
+`HTMLBody` is set, text-only when it is not, and must never send HTML alone; in-app and
+webhook ignore it.
+
+**E14's file-list amendment is STALE and D5's must be corrected with it.** It says to amend
+`application/ports.go`; **#51 moved `RenderedMessage` to `modules/notification/domain/message.go`**.
+This also compounds #51's recorded concession: `domain` now holds a second piece of rendered
+presentation data. Same trade, same reasoning — it is a field a sender must name.
+
+### E14 (original entry, kept) — template shape: two documents, orthogonal axes, both incomplete
 Plan D5 = channel axis; blueprint §3 = MIME-part axis. **You need both.** Single-body is
 wrong for v1 (no `text/plain` alternative is a deliverability penalty, and the mail it costs
 is the security mail). Add `HTMLBody string` to `RenderedMessage`; amend D5's file list to
