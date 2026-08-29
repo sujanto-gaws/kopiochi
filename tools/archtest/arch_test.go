@@ -389,6 +389,51 @@ func TestDomainLayerStaysPure(t *testing.T) {
 	}
 }
 
+// TestInfrastructureLayerDoesNotTouchApplication enforces the infrastructure row
+// of R1, which until now was written down and checked by nothing —
+// TestApplicationLayerDoesNotTouchInfrastructure guards the OPPOSITE direction,
+// and E11 found the gap.
+//
+// The rule is not symmetry for its own sake. Infrastructure holds the adapters:
+// repositories, senders, external clients. Each one implements a port declared
+// by an inner layer, and the whole point of that inversion is that the adapter
+// knows nothing about the use cases driving it. An adapter that can import
+// application can call a use case, which turns the dependency ring into a cycle
+// at runtime even while every file still compiles — a sender that reacts to a
+// failure by re-entering the dispatch cycle is the shape to fear.
+//
+// This is checked at the import level, so it cannot distinguish "names a port
+// type" from "calls a service". That is precisely why the ports an adapter must
+// name live in domain rather than application: see domain.RenderedMessage and
+// domain.ErrNonRetryable, and E11 for the decision. If this rule is ever
+// relaxed, nothing mechanical replaces it.
+func TestInfrastructureLayerDoesNotTouchApplication(t *testing.T) {
+	pkgs := loadPackages(t, modulePrefix+"...")
+
+	var checked int
+	for _, p := range pkgs {
+		if !isLayer(p.PkgPath, "infrastructure") {
+			continue
+		}
+		checked++
+
+		owner := moduleOf(p.PkgPath)
+		if owner == "" {
+			continue
+		}
+		appPrefix := modulePrefix + owner + "/application"
+		for imp := range p.Imports {
+			if imp == appPrefix || strings.HasPrefix(imp, appPrefix+"/") {
+				t.Errorf("%s imports %s: infrastructure implements ports declared in domain and must not depend on application (R1, E11)", p.PkgPath, imp)
+			}
+		}
+	}
+
+	if checked == 0 {
+		t.Fatal("no modules/*/infrastructure package was inspected; the layer detection is broken and this test proves nothing")
+	}
+}
+
 // TestApplicationLayerDoesNotTouchInfrastructure enforces the application row
 // of R1: application services talk to the domain interfaces, and the
 // composition root decides which implementations satisfy them. An application

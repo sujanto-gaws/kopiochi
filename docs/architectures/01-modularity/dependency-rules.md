@@ -75,7 +75,7 @@ transport ──▶ application ──▶ domain ◀── infrastructure
 |---|---|---|
 | `domain` | stdlib, `internal/platform` | bun, chi, viper, zerolog, any sibling layer |
 | `application` | `domain`, stdlib, `internal/platform` | bun, chi, `infrastructure`, `transport` |
-| `infrastructure` | `domain`, bun, pgx, external clients | `application`, `transport` |
+| `infrastructure` | `domain` (**including the ports it implements**), bun, pgx, external clients | `application`, `transport` |
 | `transport` | `application`, chi, stdlib, `internal/authn`, `internal/httpx` | `infrastructure`, `domain` models directly, the rest of `internal/**` |
 
 `transport`'s two shared-kernel imports are the exception that proves the ring,
@@ -90,6 +90,23 @@ every module rejects a request identically instead of inventing its own error
 body. Everything else in `internal/**` stays out: a transport package that can
 import `internal/db` can query the database from a handler, which is the
 layering R1 exists to prevent.
+
+Every port an adapter implements is declared in `domain`, and that is what makes
+the `infrastructure` row affordable rather than merely aspirational. A sender has
+to *name* the type in its own `Send` signature, so a port declared in
+`application` would leave only two options: an adapter that cannot be written, or
+a rule amended to let `infrastructure` import `application`. The second is worse
+than it looks — an import-level rule cannot tell "names a port type" from "calls
+a use case", so relaxing it legalises an adapter re-entering the very use case
+that drove it, and nothing mechanical could catch that afterwards.
+`domain.RenderedMessage` and `domain.ErrNonRetryable` live in `domain` for this
+reason (E11), alongside `NotificationRepository` and `PreferenceRepository`,
+which were always there.
+
+Both directions are now enforced by `tools/archtest`:
+`TestApplicationLayerDoesNotTouchInfrastructure` and, since E11,
+`TestInfrastructureLayerDoesNotTouchApplication`. Until the latter existed the
+`infrastructure` row was written down and checked by nothing.
 
 Transport `_test.go` files are exempt from that rule and governed by a sibling
 one, `transport-test-kernel-access`, which allows the same two packages plus

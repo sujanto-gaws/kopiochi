@@ -194,7 +194,7 @@ func TestDispatchBatchDeadLettersOnAttemptExhaustion(t *testing.T) {
 func TestDispatchBatchDeadLettersWithoutRetrying(t *testing.T) {
 	t.Run("the sender says the failure is permanent", func(t *testing.T) {
 		h := newHarness(t)
-		h.senders[domain.ChannelEmail].err = fmt.Errorf("%w: 550 mailbox unavailable", ErrNonRetryable)
+		h.senders[domain.ChannelEmail].err = fmt.Errorf("%w: 550 mailbox unavailable", domain.ErrNonRetryable)
 		row := h.enqueue(t, domain.ChannelEmail, domain.CategorySecurity, "")
 
 		if _, err := h.svc.DispatchBatch(context.Background()); err != nil {
@@ -416,7 +416,7 @@ func TestDispatchBatchSurvivesAMalformedClaim(t *testing.T) {
 			name: "a dead row, on the non-retryable path",
 			arm: func(h *harness) {
 				h.notifications.injectRows = []*domain.Notification{terminal(domain.StatusDead)}
-				h.senders[domain.ChannelInApp].errs = []error{fmt.Errorf("%w: gone", ErrNonRetryable)}
+				h.senders[domain.ChannelInApp].errs = []error{fmt.Errorf("%w: gone", domain.ErrNonRetryable)}
 			},
 			inErr: "mark dead",
 		},
