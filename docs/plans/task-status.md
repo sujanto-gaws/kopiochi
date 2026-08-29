@@ -33,14 +33,14 @@ States: pending | dispatched | in-review | blocked | merged | escalated
 | **GITIGNORE** | *(in-session, ungated)* | **merged** | #49 | **none — see PROCESS-7** |
 | **E11-FIX** | *(in-session, ungated)* | **merged** | #51 (`8f82381`) | **none — see PROCESS-7** |
 | **E13/E14-FIX** | *(in-session, ungated)* | **merged** | #53 (`0d0b02d`) | **none — see PROCESS-7** |
-| **E15-PRE** | *(in-session, ungated)* | **in review** | **#55** (`0400560`) | **none** |
+| **E15-PRE** | *(in-session, ungated)* | **merged** | #55 (`ee9bbd9`) | **none — see PROCESS-7** |
 | D5  | platform-engineer | **UNBLOCKED 2026-08-29** — E11, E13, E14 all answered. Scope grew: `sender/inapp.go`, and its file list must say `domain/message.go`, not `application/ports.go` | - | - |
 | D6  | platform-engineer | **BLOCKED — E9b, E9c, E12** | - | - |
 | D7  | transport-engineer | **UNBLOCKED** — needs D6 | - | - |
 | D8  | platform-engineer | **UNBLOCKED 2026-08-29** — E15 answered; precursor #55. Port declared by the sender, adapter in `cmd/api` | - | - |
 | D9a/D9b, D10 | domain / platform | pending | - | - |
 | E16-P | test-guardian | **merged** | #37 (`1dc6aa7`) | **APPROVE-WITH-NOTES** |
-| E16-1 | persistence-engineer | **BLOCKED — E22 only** (E20 answered) | - | - |
+| E16-1 | persistence-engineer | **BLOCKED — E22 only** (E20 answered, E19 ruled 2026-08-29) | - | - |
 | E16-2 | domain-engineer | **BLOCKED — E24** (empty DTOs) | - | - |
 | E16-3 | transport-engineer | **BLOCKED — E24**; byte-identity on GET/PUT/DELETE (E23) | - | - |
 | E16-4 | docs-scribe | pending — needs E16-3 merged; carries **E19**, BL40 | - | - |
@@ -63,15 +63,17 @@ fences had never actually been enforced by CI until 2026-08-29 and they hold; an
 `gh pr merge` and pushes to `main` are blocked by the sandbox classifier, so a human
 merges; branch pushes and PR creation work.
 
-## WAITING ON YOU — six answers, and what each one unblocks
-Nothing below is mine to decide. **These six are now the ONLY thing blocking this board** —
-as of 2026-08-29 every task that needed no answer from you has been done and merged.
+## WAITING ON YOU — five answers, and what each one unblocks
+Nothing below is mine to decide. **These five are the ONLY thing blocking this board** — as of
+2026-08-29 every task that needed no answer from you has been done and merged.
+
+**Four of the five are the E16 chain**, which is the confirmed IDOR. **E22 and E24 are the two
+that matter**: E22 alone now blocks E16-1, and E24 blocks E16-2 and E16-3 behind it.
 | Ask | Blocks | One-line question |
 | --- | --- | --- |
 | **E22** | E16-1, and the whole E16 chain behind it | Does **any** environment have rows in `users`? (`make migrate-status`) |
 | **E24** | E16-2, E16-3 | Dropping `name`/`email` empties the write API — option (a), (b) or (c)? |
 | **E23** | E16-3's acceptance | Approve **E16-P2** (test-guardian, ~20 lines): capture `put_not_found`/`delete_not_found`? |
-| **E19** | E16-1 (as a review objection) | Confirm the E16-ARCH decision supersedes `migration-strategy.md:249-251`? |
 | **E21** | E16-5 | `cmd/generator` reproduces the defect into every future module — scope it, or accept it? |
 | **E9b/E9c/E12** | **D6** | The last Phase D asks. D5 and D8 are both unblocked; D6 is the only one still waiting. |
 **Phase D's dependency wall is down.** E11 (#51), E13/E14 (#53) and E15 (#55 + decision) are
@@ -114,7 +116,8 @@ board: #19/#21/#24/#27/#28/#32 → `ca397f1` · #41 board
 **2026-08-29:** #42 `799c861` T4 · #43 `66b69e1` C1 · #44 `cb020d6` **T6** ·
 #45 `cf7a4cb` **T7** · #46 `bc0cc2f` **E8** · #47 `7349edd` **E18+E7**
 #48 `2d8d529` **BL34b** · #49 `979df0f` **GITIGNORE** · #50 board · #51 `8f82381` **E11** ·
-#52 board · #53 `0d0b02d` **E13+E14** · #54 board · *(open: #55 E15 precursor, #56 board)*
+#52 board · #53 `0d0b02d` **E13+E14** · #54 board · #55 `ee9bbd9` **E15 precursor** ·
+#56 board · *(open: #57 board)*
 
 ## PROCESS-7 — six changes merged with NO arch-reviewer verdict
 T6 (#44), T7 (#45), E8-FIX (#46), E18-FIX (#47), BL34b (#48), GITIGNORE (#49), E11-FIX (#51),
@@ -218,9 +221,9 @@ against `main` rather than a fix on an open branch. The T2 review is being re-po
 
 ---
 
-# ESCALATIONS — OPEN (10)
-**Was 17. E7, E8, E18, E11, E13, E14 and E15 were resolved 2026-08-29** — see their entries
-below, each now headed RESOLVED or ANSWERED. Nothing else changed state.
+# ESCALATIONS — OPEN (9)
+**Was 17. E7, E8, E18, E11, E13, E14, E15 and E19 were resolved 2026-08-29** — see their
+entries below, each now headed RESOLVED or ANSWERED. Nothing else changed state.
 
 Ordered by severity.
 
@@ -323,7 +326,48 @@ is already paused on E20/E22 — so approving it costs nothing, and declining it
 on two of the three vulnerable verbs. **E16-3's acceptance criteria are amended on this board to
 require byte-identity on all three verbs regardless of how E23 is answered.**
 
-## E19 — a MERGED doc contradicts the settled decision ⚠ needs a ruling before E16-1
+## E19 — **ANSWERED 2026-08-29 (human, delegated). RULING: the decision supersedes `:249-251`.**
+**E16-1's last documentary objection is gone. It is now blocked on E22 alone.**
+
+**Why the ruling goes this way — three reasons, and the third is the strongest.**
+1. **It is not a rule.** The sentence sits inside **Path B** of a conditional "Recovering from
+   the current state" section — advice for one branch of a question, not an architectural
+   commitment.
+2. **The section defers to a later decision by its own terms**, closing with *"Confirm which
+   applies before writing any new migration."* **E16-ARCH is that confirmation.** The doc asked
+   to be superseded.
+3. **The same file already states the constraint that forces the reshape** — `:220-221`, that
+   the `BIGSERIAL`/uuid mismatch means *"any table backing them must use uuid to match"*. The
+   file contradicts itself, and the half agreeing with the decision is the half stating the
+   technical constraint. **A reviewer citing `:249` should be pointed at `:220` in the same
+   file.**
+
+**E19 under-reports the damage, and E16-4 must repair more than the paragraph.**
+**Path A — the branch the doc calls "most likely" — says "Delete both files and start the
+module chains at `0001`."** That directly contradicts **ADR-010's binding immutability rule**,
+which E16-ARCH already verified is the actual practice (`git log --diff-filter=MRD --
+migrations/` returns empty; no migration has ever been modified, renamed or deleted).
+Rewriting only `:249-251` would correct the sentence E19 spotted and **leave an instruction to
+delete applied migration files standing four lines above it** — the more dangerous of the two.
+**E16-4 rewrites the whole "Recovering from the current state" section, not the paragraph.**
+
+**Two further factual errors in that section, verified while ruling on it:**
+- `:249` cites `internal/infrastructure/persistence/models/user.go` as a live bun model backing
+  `users`. **That file does not exist** — Phase 3.6b moved it. The sentence's supporting
+  evidence is gone independently of the decision.
+- `:230`'s index SQL does not match what shipped: it shows
+  `idx_auth_users_email_lower ... WHERE deleted_at IS NULL`, but `00007` created it with **no**
+  `WHERE` clause, and **`deleted_at` exists in no migration in this repo** — there is no
+  soft-delete column at all, so the "Soft delete" convention at `:217` describes something the
+  schema does not implement.
+
+Neither blocks E16-1; both belong to E16-4's scope, and together they are why the section needs
+rewriting rather than patching.
+
+**Not done here, deliberately:** the doc rewrite itself is docs-scribe's file set and should
+land **with** the migration it documents, not ahead of it. E16-4 carries it.
+
+### E19 (original entry, kept) — a MERGED doc contradicts the settled decision
 `docs/architectures/05-data/migration-strategy.md:249-251` states that `users` *"moves with
 the profile-user module **rather than being reshaped**"* — the opposite of the decision. The
 same file already knows the problem (`:220-221`: the `BIGSERIAL`/uuid mismatch means *"any
