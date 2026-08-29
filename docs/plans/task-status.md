@@ -33,10 +33,11 @@ States: pending | dispatched | in-review | blocked | merged | escalated
 | **GITIGNORE** | *(in-session, ungated)* | **merged** | #49 | **none — see PROCESS-7** |
 | **E11-FIX** | *(in-session, ungated)* | **merged** | #51 (`8f82381`) | **none — see PROCESS-7** |
 | **E13/E14-FIX** | *(in-session, ungated)* | **merged** | #53 (`0d0b02d`) | **none — see PROCESS-7** |
+| **E15-PRE** | *(in-session, ungated)* | **in review** | **#55** (`0400560`) | **none** |
 | D5  | platform-engineer | **UNBLOCKED 2026-08-29** — E11, E13, E14 all answered. Scope grew: `sender/inapp.go`, and its file list must say `domain/message.go`, not `application/ports.go` | - | - |
 | D6  | platform-engineer | **BLOCKED — E9b, E9c, E12** | - | - |
 | D7  | transport-engineer | **UNBLOCKED** — needs D6 | - | - |
-| D8  | platform-engineer | **BLOCKED — E15** (E11 answered 2026-08-29) | - | - |
+| D8  | platform-engineer | **UNBLOCKED 2026-08-29** — E15 answered; precursor #55. Port declared by the sender, adapter in `cmd/api` | - | - |
 | D9a/D9b, D10 | domain / platform | pending | - | - |
 | E16-P | test-guardian | **merged** | #37 (`1dc6aa7`) | **APPROVE-WITH-NOTES** |
 | E16-1 | persistence-engineer | **BLOCKED — E22 only** (E20 answered) | - | - |
@@ -72,12 +73,11 @@ as of 2026-08-29 every task that needed no answer from you has been done and mer
 | **E23** | E16-3's acceptance | Approve **E16-P2** (test-guardian, ~20 lines): capture `put_not_found`/`delete_not_found`? |
 | **E19** | E16-1 (as a review objection) | Confirm the E16-ARCH decision supersedes `migration-strategy.md:249-251`? |
 | **E21** | E16-5 | `cmd/generator` reproduces the defect into every future module — scope it, or accept it? |
-| **E15** | **D8** | Nobody owns address resolution. **The last Phase D blocker** — E11, E13 and E14 are all answered. |
-**Phase D's dependency wall is down.** E11 (#51), E13 and E14 (#53) are answered and
-implemented, and **D5 is dispatchable now**. What remains in front of the rest is not a
-question for you but ordinary work: **D6** still needs **E9b/E9c/E12**, and **D8** still needs
-**E15** — the only Phase D ask left. Note D6's and D8's blockers were never E11/E13/E14, so
-"D5 is unblocked" does not by itself release D6 or D8.
+| **E9b/E9c/E12** | **D6** | The last Phase D asks. D5 and D8 are both unblocked; D6 is the only one still waiting. |
+**Phase D's dependency wall is down.** E11 (#51), E13/E14 (#53) and E15 (#55 + decision) are
+all answered, so **D5 and D8 are both dispatchable now**. **D6 alone still waits**, on
+E9b/E9c/E12 — and those are the only Phase D asks left. Nothing in Phase D is blocked on
+anything the human has not already been asked.
 
 ## PROCESS-6 — RESOLVED, and PROCESS-3 recurred a third time
 The stray edit is **gone** — T4 reports `authn-spi-impact-analysis.md` was already clean when
@@ -114,12 +114,12 @@ board: #19/#21/#24/#27/#28/#32 → `ca397f1` · #41 board
 **2026-08-29:** #42 `799c861` T4 · #43 `66b69e1` C1 · #44 `cb020d6` **T6** ·
 #45 `cf7a4cb` **T7** · #46 `bc0cc2f` **E8** · #47 `7349edd` **E18+E7**
 #48 `2d8d529` **BL34b** · #49 `979df0f` **GITIGNORE** · #50 board · #51 `8f82381` **E11** ·
-#52 board · #53 `0d0b02d` **E13+E14** · *(open: #54 board)*
+#52 board · #53 `0d0b02d` **E13+E14** · #54 board · *(open: #55 E15 precursor, #56 board)*
 
 ## PROCESS-7 — six changes merged with NO arch-reviewer verdict
 T6 (#44), T7 (#45), E8-FIX (#46), E18-FIX (#47), BL34b (#48), GITIGNORE (#49), E11-FIX (#51),
-three board PRs and E13/E14-FIX (#53) were produced and merged without passing the gate every
-earlier task passed.
+four board PRs, E13/E14-FIX (#53) and the E15 precursor (#55) were produced without passing the
+gate every earlier task passed.
 
 **#51 and #53 are the two that most warrant a real review.** They are the only ones that change
 production Go, and both act on decisions that were the human's to make and were delegated:
@@ -218,9 +218,9 @@ against `main` rather than a fix on an open branch. The T2 review is being re-po
 
 ---
 
-# ESCALATIONS — OPEN (11)
-**Was 17. E7, E8, E18, E11, E13 and E14 were resolved 2026-08-29** — see their entries below,
-each now headed RESOLVED or ANSWERED. Nothing else changed state.
+# ESCALATIONS — OPEN (10)
+**Was 17. E7, E8, E18, E11, E13, E14 and E15 were resolved 2026-08-29** — see their entries
+below, each now headed RESOLVED or ANSWERED. Nothing else changed state.
 
 Ordered by severity.
 
@@ -816,7 +816,55 @@ wrong for v1 (no `text/plain` alternative is a deliverability penalty, and the m
 is the security mail). Add `HTMLBody string` to `RenderedMessage`; amend D5's file list to
 include `application/ports.go`.
 
-## E15 — nobody owns address resolution ⚠ blocks D8
+## E15 — **ANSWERED 2026-08-29 (human, delegated).** Precursor in #55; the rest is D8's.
+**Decision, four parts. D8 is unblocked.**
+
+**1. Resolve at dispatch, on every attempt. Never snapshot.** E15's rejection stands, and its
+reason is stronger than staleness: **the message most likely to be diverted by an address
+change is the one announcing the address change.** A snapshot mails "your email was changed"
+to the address the attacker just replaced. `modules/notification/domain`'s own doc already
+says resolution is *"the sender's job at dispatch time"*.
+
+**2. The port is declared by its CONSUMER — the email sender — in
+`modules/notification/infrastructure/sender`, NOT in `domain`.**
+This deliberately differs from E11's outcome, and the difference is real: E11 put
+`RenderedMessage` in `domain` because a sender must *name* it to spell a method it
+**implements**. Here the sender **consumes** the interface, so Go's convention and R2 agree —
+*"cross-module needs are expressed as an interface declared by the consumer and satisfied at
+the composition root."* Declaring it in `domain` would put a third piece of foreign data there
+after `RenderedMessage` and `HTMLBody`, and this module's doc explicitly disclaims knowing
+what a user is.
+
+**3. The stated blocker DISSOLVES — `identity.New` does not change.** E15 says *"`identity.New`
+exposes nothing resolvable"*, and `module.Module` does expose only Name/Routes/Migrations/Close.
+But the composition root does not need it to: **`cmd/api/container.go:95` already builds its own
+`token.NewJWTService`** rather than extracting one from the module. Same move —
+`identityrepo.NewUserRepo(deps.DB)`, wrapped in an adapter. The repo is stateless over
+`*bun.DB`, so a second instance costs nothing. **This matters because E25 settled
+`(*module.Module, error)` as the constructor shape: no exception to it is needed.**
+Per E16-ARCH there is no `users`/profile involvement — `RecipientID` is already an identity
+uuid, so it is `auth_users.email` via `FindByID`, no mapping.
+
+**4. The error contract E15 did not specify, which D8 needs:** recipient not found (deleted
+user) wraps `domain.ErrNonRetryable` and dead-letters the row; a transient failure returns a
+plain error and retries. Backwards one way it retries a ghost until the budget is spent;
+backwards the other it destroys a security mail on a blip.
+
+**Part 4 was not implementable as stated, and #55 fixes that.** `UserRepo`'s lookups returned
+`errors.New("not found")` — a fresh value per call, classifiable only by matching text — so
+the adapter could not have told the two cases apart. `refresh_token_store.go` was already
+using `db.ErrNotFound`/`db.Translate`; `user_repo.go` was the outlier. #55 converts it and
+pins the behaviour with `errors.Is` assertions.
+
+**What remains is D8's**: the port declaration, the sender, and the `cmd/api` adapter. No
+further answer is needed from the human.
+
+**Found while answering, NOT changed:** `modules/identity/application/login.go:13-19` collapses
+a database outage into `ErrInvalidCredentials` and audits it as `ReasonUnknownUser` — an outage
+is recorded as though the account did not exist. Pre-existing, outside E15, and it touches
+authentication behaviour, so it wants its own task rather than a drive-by.
+
+### E15 (original entry, kept) — nobody owns address resolution ⚠ blocks D8
 Proposed **D8a**: `AddressResolver` in `infrastructure/sender/`, adapter in `cmd/api` over
 identity's `UserRepository.FindByID`. Needs no `users` involvement. **Blocker inside:**
 `identity.New` exposes nothing resolvable. **Rejected:** snapshotting the address at enqueue
