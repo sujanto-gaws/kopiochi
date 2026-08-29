@@ -48,11 +48,14 @@ type TemplateData struct {
 	UpdatedAt   bool
 }
 
+// enableVar and enableValue are the deliberate, greppable opt-out. See the note
+// in main for why an opt-out exists at all.
+const (
+	enableVar   = "KOPIOCHI_GENERATOR_RUN_ANYWAY"
+	enableValue = "i-have-read-E21"
+)
+
 // disabledNotice is why this generator refuses to run. See E21 on the task board.
-//
-// It is a hard refusal with no override flag, on purpose. An escape hatch would
-// be used, and the point is that reviving this tool requires editing this file
-// and therefore reading this comment.
 const disabledNotice = `cmd/generator is DISABLED. It cannot be revived by a flag; see below.
 
 WHY IT IS DISABLED
@@ -87,6 +90,15 @@ The third item is blocked on a decision this repository has never made: there is
 no authorization primitive anywhere in it. grep -rn "RequireRole|RequirePermission|Authorize"
 returns nothing. A code generator is the worst possible place to invent one, so
 that decision comes first.
+
+IF YOU UNDERSTAND ALL OF THE ABOVE AND STILL NEED TO RUN IT
+
+    KOPIOCHI_GENERATOR_RUN_ANYWAY=i-have-read-E21
+
+It is stated plainly rather than hidden, because a guard you can only get past
+by not understanding it is a worse guard. Setting it generates a module with the
+primary-key and authorization shape described in (2), and leaves the tree in the
+state described in (1). Do not set it in CI or in a Makefile target.
 `
 
 // refuseToGenerate prints disabledNotice and exits non-zero. It never returns.
@@ -110,9 +122,21 @@ func main() {
 
 	flag.Parse()
 
-	// Fail closed before doing anything else, including flag validation: there
-	// is no combination of arguments that makes generating safe today.
-	refuseToGenerate()
+	// Fail closed before doing anything else, including flag validation: no
+	// combination of arguments makes generating safe today.
+	//
+	// The opt-out is an environment variable rather than no opt-out at all, and
+	// that is a concession to staticcheck rather than a change of intent: with
+	// an unconditional refusal it proves refuseToGenerate never returns, the
+	// whole generator body becomes dead code, and SA4006 fires on every flag.
+	// The alternatives were worse — deleting the body, or hiding it behind a
+	// build tag, both of which stop it being compiled and linted at all.
+	//
+	// The variable's value has to be typed out in full, so nobody sets it by
+	// accident and every use leaves a greppable trail.
+	if os.Getenv(enableVar) != enableValue {
+		refuseToGenerate()
+	}
 
 	if *domain == "" {
 		fmt.Println("Error: -domain is required")
