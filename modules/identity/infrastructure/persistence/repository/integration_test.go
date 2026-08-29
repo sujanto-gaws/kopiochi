@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/uptrace/bun"
 
+	"github.com/sujanto-gaws/kopiochi/internal/db"
 	"github.com/sujanto-gaws/kopiochi/internal/testsupport"
 	domain "github.com/sujanto-gaws/kopiochi/modules/identity/domain"
 	"github.com/sujanto-gaws/kopiochi/modules/identity/infrastructure/hasher"
@@ -123,11 +124,11 @@ func TestUserRepo_PreservesStoredCasing(t *testing.T) {
 // refuses to create the second row — otherwise FindByUsername picks an
 // arbitrary one of two accounts, which decides whose password is checked.
 func TestUserRepo_RejectsCaseVariantDuplicates(t *testing.T) {
-	db := newDB(t)
-	repo := NewUserRepo(db)
+	dbc := newDB(t)
+	repo := NewUserRepo(dbc)
 	ctx := context.Background()
 
-	seedUser(t, db, "alice")
+	seedUser(t, dbc, "alice")
 
 	err := repo.Save(ctx, &domain.User{
 		ID:          uuid.New(),
@@ -136,7 +137,8 @@ func TestUserRepo_RejectsCaseVariantDuplicates(t *testing.T) {
 		Roles:       []string{"user"},
 		Permissions: []string{},
 	})
-	require.Error(t, err, "a second account was created for username ALICE")
+	require.ErrorIs(t, err, db.ErrConflict,
+		"a second account was created for username ALICE, or the violation did not arrive as a conflict")
 
 	err = repo.Save(ctx, &domain.User{
 		ID:          uuid.New(),
@@ -145,23 +147,51 @@ func TestUserRepo_RejectsCaseVariantDuplicates(t *testing.T) {
 		Roles:       []string{"user"},
 		Permissions: []string{},
 	})
-	require.Error(t, err, "a second account was created for email ALICE@EXAMPLE.COM")
+	require.ErrorIs(t, err, db.ErrConflict,
+		"a second account was created for email ALICE@EXAMPLE.COM, or the violation did not arrive as a conflict")
 }
 
 // TestUserRepo_FindMissingIsAnError: unlike the user module's repository,
 // these return an error for a missing row, and Login relies on that to map to
 // ErrInvalidCredentials. The two modules differ here; both are recorded so
 // neither is "fixed" into the other by accident.
-func TestUserRepo_FindMissingIsAnError(t *testing.T) {
-	db := newDB(t)
-	repo := NewUserRepo(db)
+// TestUserRepo_FindMissingReportsNotFound: "no such user" must be matchable with
+// errors.Is, not by reading the message.
+//
+// These returned errors.New("not found") — a fresh value per call, comparable
+// only as text. No caller noticed, because every one of them collapses any
+// lookup failure into the same response. E15 is what needs the distinction: a
+// sender resolving a recipient's address has to tell a deleted user (permanent,
+// dead-letter the row) from an unreachable database (transient, retry), and
+// guessing wrong either retries a ghost until its budget is spent or destroys a
+// security mail on a blip.
+func TestUserRepo_FindMissingReportsNotFound(t *testing.T) {
+	dbc := newDB(t)
+	repo := NewUserRepo(dbc)
 	ctx := context.Background()
 
 	_, err := repo.FindByUsername(ctx, "nobody")
-	require.Error(t, err)
+	require.ErrorIs(t, err, db.ErrNotFound)
 
 	_, err = repo.FindByID(ctx, uuid.New().String())
+	require.ErrorIs(t, err, db.ErrNotFound)
+
+	_, err = repo.FindByEmail(ctx, "nobody@example.com")
+	require.ErrorIs(t, err, db.ErrNotFound)
+}
+
+// TestUserRepo_MalformedIDIsNotNotFound: a bad uuid is the caller's bug, and it
+// must not arrive as "no such user". For E15 the two settle differently —
+// not-found is a fact about the world that dead-letters the row, a malformed id
+// is a defect in whatever built it.
+func TestUserRepo_MalformedIDIsNotNotFound(t *testing.T) {
+	dbc := newDB(t)
+	repo := NewUserRepo(dbc)
+
+	_, err := repo.FindByID(context.Background(), "not-a-uuid")
 	require.Error(t, err)
+	require.NotErrorIs(t, err, db.ErrNotFound)
+	require.Contains(t, err.Error(), "parse user id")
 }
 
 // TestUserRepo_SaveRoundTripsLockoutState is the persistence half of the

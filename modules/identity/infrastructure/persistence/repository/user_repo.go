@@ -5,12 +5,32 @@ import (
 	"database/sql"
 	"errors"
 
+	"fmt"
+
 	"github.com/google/uuid"
+
+	"github.com/sujanto-gaws/kopiochi/internal/db"
 	domain "github.com/sujanto-gaws/kopiochi/modules/identity/domain"
 	"github.com/sujanto-gaws/kopiochi/modules/identity/infrastructure/persistence/models"
 	"github.com/uptrace/bun"
 )
 
+// Errors leave this package as an internal/db sentinel — db.ErrNotFound,
+// db.ErrConflict — via db.Translate, never as a bare errors.New or a raw
+// *pgconn.PgError. That is what makes them classifiable with errors.Is by a
+// caller that has to decide something on them.
+//
+// The lookups used to return errors.New("not found"): a distinct value on every
+// call, matchable only by comparing text. Nothing in this module noticed,
+// because every caller collapses any error from a lookup into the same
+// response. E15 is what needed the distinction — a notification sender resolving
+// a recipient's address must tell "this user is gone", which is permanent and
+// must dead-letter the row, from "the database is unreachable", which is
+// transient and must be retried. Guessing wrong either retries a deleted user
+// until its budget is spent, or destroys a security mail on a network blip.
+//
+// The sibling refresh_token_store.go was already written this way; this file was
+// the outlier.
 type UserRepo struct {
 	db bun.IDB
 }
@@ -31,9 +51,9 @@ func (r *UserRepo) FindByEmail(ctx context.Context, email string) (*domain.User,
 		Scan(ctx)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return nil, errors.New("not found")
+			return nil, db.ErrNotFound
 		}
-		return nil, err
+		return nil, db.Translate(err)
 	}
 	return toDomainUser(row), nil
 }
@@ -41,14 +61,14 @@ func (r *UserRepo) FindByEmail(ctx context.Context, email string) (*domain.User,
 func (r *UserRepo) FindByID(ctx context.Context, id string) (*domain.User, error) {
 	uid, err := uuid.Parse(id)
 	if err != nil {
-		return nil, errors.New("invalid id")
+		return nil, fmt.Errorf("parse user id: %w", err)
 	}
 	row := new(models.BunUser)
 	if err := r.db.NewSelect().Model(row).Where("id = ?", uid).Scan(ctx); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return nil, errors.New("not found")
+			return nil, db.ErrNotFound
 		}
-		return nil, err
+		return nil, db.Translate(err)
 	}
 	return toDomainUser(row), nil
 }
@@ -66,9 +86,9 @@ func (r *UserRepo) FindByUsername(ctx context.Context, username string) (*domain
 		Scan(ctx)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return nil, errors.New("not found")
+			return nil, db.ErrNotFound
 		}
-		return nil, err
+		return nil, db.Translate(err)
 	}
 	return toDomainUser(row), nil
 }
@@ -92,7 +112,7 @@ func (r *UserRepo) Save(ctx context.Context, user *domain.User) error {
 		Set("locked_until = EXCLUDED.locked_until").
 		Set("updated_at = now()").
 		Exec(ctx)
-	return err
+	return db.Translate(err)
 }
 
 // Map domain User to BunUser
