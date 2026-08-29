@@ -15,7 +15,9 @@ import (
 	"github.com/uptrace/bun"
 )
 
-// Errors leave this package as an internal/db sentinel — db.ErrNotFound,
+// UserRepo is the bun-backed store for auth_users.
+//
+// Errors leave it as an internal/db sentinel — db.ErrNotFound,
 // db.ErrConflict — via db.Translate, never as a bare errors.New or a raw
 // *pgconn.PgError. That is what makes them classifiable with errors.Is by a
 // caller that has to decide something on them.
