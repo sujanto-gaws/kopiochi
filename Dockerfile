@@ -5,9 +5,14 @@
 # not silently ship different toolchains. Keep this in step with the `go`
 # directive in go.mod — CI resolves its toolchain from that file, so letting the
 # two drift means a green pipeline can still bake a vulnerable stdlib into the
-# image. 1.25.12 carries the fix for GO-2026-5856 (crypto/tls, reachable from
-# httpx.Serve).
-FROM golang:1.25.12-alpine AS builder
+# image. Six reachable stdlib advisories are cleared here — GO-2026-6218
+# (net/url), GO-2026-6090 (crypto/tls), GO-2026-6089 and GO-2026-5026
+# (net/http), GO-2026-6088 (encoding/xml), GO-2026-5972 (encoding/asn1).
+# govulncheck names 1.25.13 as the fix version; 1.25.14 is the newest patch in
+# the 1.25 line and contains it. Take the newest, not merely the sufficient:
+# this pin is a floor that fails closed, so the further it lags the line, the
+# sooner an unrelated pull request goes red for a CVE its author never touched.
+FROM golang:1.25.14-alpine AS builder
 
 WORKDIR /src
 
