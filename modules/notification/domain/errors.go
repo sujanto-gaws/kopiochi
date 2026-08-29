@@ -41,4 +41,34 @@ var (
 	// combination that is not the user's to disable — see protected() in
 	// preference.go.
 	ErrPreferenceProtected = errors.New("notification: preference is protected and cannot be disabled")
+
+	// ErrNonRetryable marks a delivery failure that another attempt cannot fix,
+	// and is the whole of the error contract between the dispatch cycle and the
+	// senders in infrastructure.
+	//
+	// The classification has one rule and one default:
+	//
+	//   - A sender error that wraps this sentinel settles the row as dead
+	//     immediately, with the error text kept as LastError for the operator.
+	//   - Anything else is retryable, and the row goes back to pending with the
+	//     backoff schedule until its attempt budget runs out.
+	//
+	// Retryable is the default because the two mistakes are not symmetric.
+	// Misclassifying a permanent failure as retryable wastes a bounded number of
+	// attempts and still ends at dead; misclassifying a transient one as
+	// permanent destroys the notification on the first network blip — and the
+	// notification most likely to be sent during an outage is a security mail.
+	//
+	// A sender opts out by wrapping:
+	//
+	//	return fmt.Errorf("%w: smtp 550 mailbox unavailable", domain.ErrNonRetryable)
+	//
+	// A sentinel plus errors.Is rather than an interface with a Retryable() bool
+	// method: wrapping composes with %w through every layer an SMTP or HTTP
+	// client puts in the way, and it needs no new type in either package.
+	//
+	// It is declared here rather than in application because it decides a
+	// DOMAIN state transition — dead versus pending — and because a sender must
+	// reference it, and senders may not import application (R1). See E11.
+	ErrNonRetryable = errors.New("notification: non-retryable delivery failure")
 )

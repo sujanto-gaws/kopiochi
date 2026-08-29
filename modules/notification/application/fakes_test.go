@@ -326,7 +326,7 @@ type fakeRenderer struct {
 	panicWith string
 }
 
-func (r *fakeRenderer) Render(key string, channel domain.Channel, payload map[string]any) (RenderedMessage, error) {
+func (r *fakeRenderer) Render(key string, channel domain.Channel, payload map[string]any) (domain.RenderedMessage, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -336,13 +336,13 @@ func (r *fakeRenderer) Render(key string, channel domain.Channel, payload map[st
 		panic(r.panicWith)
 	}
 	if err, ok := r.errFor[key]; ok {
-		return RenderedMessage{}, err
+		return domain.RenderedMessage{}, err
 	}
 	if r.err != nil {
-		return RenderedMessage{}, r.err
+		return domain.RenderedMessage{}, r.err
 	}
 
-	return RenderedMessage{
+	return domain.RenderedMessage{
 		// Deliberately filled in: the routing fields are the dispatcher's to
 		// stamp, and a renderer that guesses them must be overruled.
 		NotificationID: uuid.MustParse("99999999-9999-4999-8999-999999999999"),
@@ -359,7 +359,7 @@ type fakeSender struct {
 	mu sync.Mutex
 
 	ch   domain.Channel
-	sent []RenderedMessage
+	sent []domain.RenderedMessage
 
 	// err is returned by every Send. errs, when non-empty, is consumed one
 	// entry per call and takes precedence, which is how a test makes the first
@@ -372,7 +372,7 @@ type fakeSender struct {
 
 func (s *fakeSender) Channel() domain.Channel { return s.ch }
 
-func (s *fakeSender) Send(_ context.Context, msg RenderedMessage) error {
+func (s *fakeSender) Send(_ context.Context, msg domain.RenderedMessage) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 

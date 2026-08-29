@@ -145,12 +145,12 @@ func (s *Service) attemptDelivery(ctx context.Context, n *domain.Notification) (
 
 	sender, ok := s.senders[n.Channel]
 	if !ok {
-		return false, fmt.Errorf("%w: no sender registered for channel %q", ErrNonRetryable, n.Channel)
+		return false, fmt.Errorf("%w: no sender registered for channel %q", domain.ErrNonRetryable, n.Channel)
 	}
 
 	msg, err := s.renderer.Render(n.TemplateKey, n.Channel, n.Payload)
 	if err != nil {
-		return false, fmt.Errorf("%w: render %q for channel %q: %w", ErrNonRetryable, n.TemplateKey, n.Channel, err)
+		return false, fmt.Errorf("%w: render %q for channel %q: %w", domain.ErrNonRetryable, n.TemplateKey, n.Channel, err)
 	}
 
 	// Routing is the row's, not the template's. Stamped after rendering so a
