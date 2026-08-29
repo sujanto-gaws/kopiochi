@@ -185,6 +185,26 @@ func routeCases() []routeCase {
 			path:    "/api/v1/users/999",
 			subject: subjectA,
 		},
+		{
+			name: "put_not_found",
+			note: "the comparison baseline for PUT: the same write by the same caller, " +
+				"aimed at an id that genuinely does not exist. Caller, method and body " +
+				"match put_cross_user exactly, so once the ownership check lands, path " +
+				"is the ONLY field these two goldens may differ in.",
+			method:  http.MethodPut,
+			path:    "/api/v1/users/999",
+			subject: subjectA,
+			body:    domain.UpdateUserRequest{Name: "Overwritten By A", Email: "attacker@example.test"},
+		},
+		{
+			name: "delete_not_found",
+			note: "the comparison baseline for DELETE. 204-versus-404 enumerates the id " +
+				"space exactly as well as 200-versus-404 does, and this verb had no " +
+				"baseline at all until E16-P2.",
+			method:  http.MethodDelete,
+			path:    "/api/v1/users/999",
+			subject: subjectA,
+		},
 	}
 }
 
@@ -258,8 +278,57 @@ func TestIDORIsPresentToday(t *testing.T) {
 
 		require.Equal(t, http.StatusOK, existing.Code)
 		require.Equal(t, http.StatusNotFound, missing.Code)
+		// E16: invert to require.Equal when the ownership check lands
 		require.NotEqual(t, missing.Body.String(), existing.Body.String(),
 			"the two answers differ, so the id space is enumerable")
+	})
+
+	// The same oracle on the other two vulnerable verbs. E23: the obligation
+	// applies to all three, and until E16-P2 only GET had a recorded baseline
+	// to check the fix against — so a fix could have closed the read oracle,
+	// left PUT and DELETE announcing existence, and passed.
+	t.Run("cross_user_write_differs_from_not_found", func(t *testing.T) {
+		body := domain.UpdateUserRequest{Name: "Overwritten By A", Email: "attacker@example.test"}
+
+		repoExisting := newMemoryRepo()
+		existing := testsupport.Do(t, userRouter(repoExisting, subjectA),
+			testsupport.JSONRequest(t, http.MethodPut, "/api/v1/users/2", body))
+
+		repoMissing := newMemoryRepo()
+		missing := testsupport.Do(t, userRouter(repoMissing, subjectA),
+			testsupport.JSONRequest(t, http.MethodPut, "/api/v1/users/999", body))
+
+		// E16: invert to require.Equal when the ownership check lands
+		require.NotEqual(t, missing.Code, existing.Code,
+			"200 against B's row versus 404 against a free id: the write path announces "+
+				"which ids exist")
+		// E16: invert to require.Equal when the ownership check lands
+		require.NotEqual(t, missing.Body.String(), existing.Body.String())
+
+		// The response is only half of it. A refused write that still wrote
+		// would be byte-identical to a refusal and would still have destroyed
+		// the row — see StoreAfter's note above.
+		// E16: invert to require.Equal when the ownership check lands
+		require.NotEqual(t, repoMissing.snapshot(), repoExisting.snapshot(),
+			"B's row was overwritten; the not-found probe left the store intact")
+	})
+
+	t.Run("cross_user_delete_differs_from_not_found", func(t *testing.T) {
+		repoExisting := newMemoryRepo()
+		existing := testsupport.Do(t, userRouter(repoExisting, subjectA),
+			testsupport.JSONRequest(t, http.MethodDelete, "/api/v1/users/2", nil))
+
+		repoMissing := newMemoryRepo()
+		missing := testsupport.Do(t, userRouter(repoMissing, subjectA),
+			testsupport.JSONRequest(t, http.MethodDelete, "/api/v1/users/999", nil))
+
+		// E16: invert to require.Equal when the ownership check lands
+		require.NotEqual(t, missing.Code, existing.Code,
+			"204 against B's row versus 404 against a free id: deleting enumerates just "+
+				"as well as reading")
+		// E16: invert to require.Equal when the ownership check lands
+		require.NotEqual(t, repoMissing.snapshot(), repoExisting.snapshot(),
+			"B's row is gone; the not-found probe left the store intact")
 	})
 }
 
