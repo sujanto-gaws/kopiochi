@@ -446,7 +446,43 @@ type harness struct {
 	renderer      *fakeRenderer
 	senders       map[domain.Channel]*fakeSender
 	clock         *fixedClock
-	svc           *Service
+
+	// observer is wired into every harness, so the dispatch tests assert what
+	// was reported as well as what was stored. A nil observer is also a
+	// supported configuration and has its own test.
+	observer *fakeObserver
+
+	svc *Service
+}
+
+// fakeObserver records every Settled call in order.
+type fakeObserver struct {
+	mu   sync.Mutex
+	seen []settledCall
+}
+
+type settledCall struct {
+	id      uuid.UUID
+	channel domain.Channel
+	outcome domain.Status
+	took    time.Duration
+	err     error
+}
+
+func (o *fakeObserver) Settled(
+	_ context.Context, n domain.Notification, outcome domain.Status, took time.Duration, err error,
+) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.seen = append(o.seen, settledCall{
+		id: n.ID, channel: n.Channel, outcome: outcome, took: took, err: err,
+	})
+}
+
+func (o *fakeObserver) calls() []settledCall {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return append([]settledCall(nil), o.seen...)
 }
 
 // newHarness wires a service with a sender for every known channel and no
@@ -462,6 +498,7 @@ func newHarnessWith(t *testing.T, channels []domain.Channel, jitter domain.Jitte
 	t.Helper()
 
 	h := &harness{
+		observer:      &fakeObserver{},
 		notifications: newFakeNotificationRepo(),
 		preferences:   &fakePreferenceRepo{},
 		renderer:      &fakeRenderer{},
@@ -476,7 +513,7 @@ func newHarnessWith(t *testing.T, channels []domain.Channel, jitter domain.Jitte
 		senders = append(senders, s)
 	}
 
-	svc, err := NewService(h.notifications, h.preferences, h.renderer, senders, h.clock, jitter, cfg)
+	svc, err := NewService(h.notifications, h.preferences, h.renderer, senders, h.clock, jitter, h.observer, cfg)
 	if err != nil {
 		t.Fatalf("NewService: %v", err)
 	}

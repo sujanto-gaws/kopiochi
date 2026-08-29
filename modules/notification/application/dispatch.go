@@ -77,15 +77,44 @@ func (s *Service) DispatchBatch(ctx context.Context) (int, error) {
 func (s *Service) settleSafely(ctx context.Context, n *domain.Notification) (err error) {
 	defer func() {
 		if r := recover(); r != nil {
-			err = fmt.Errorf("panic settling notification: %v", r)
+			err = fmt.Errorf("%w: %v", ErrPanicked, r)
+
+			// Reported here and nowhere else. settle never returned, so it did
+			// not observe, and a panic that shows up only as one entry in a
+			// joined error is BL25's visibility gap. The row's status is
+			// whatever it was when the panic happened, which is the honest
+			// thing to report.
+			s.observe(ctx, n, 0, err)
 		}
 	}()
 
 	return s.settle(ctx, n)
 }
 
+// ErrPanicked marks a failure that came from a panic below settle rather than
+// from a delivery. An observer distinguishes the two with errors.Is; without a
+// sentinel the only difference is prose in a message.
+//
+// Its text is the message settleSafely already produced, deliberately: adding a
+// sentinel should not change what an operator reads in a log, and rewording it
+// would have meant editing the assertion that pins it rather than the code.
+var ErrPanicked = errors.New("panic settling notification")
+
+// observe reports one settled row, and is the only place the nil check lives.
+//
+// It passes the entity by value: an observer is a bystander, and handing it the
+// pointer the dispatch loop is still using would let a careless implementation
+// mutate a row mid-cycle.
+func (s *Service) observe(ctx context.Context, n *domain.Notification, took time.Duration, err error) {
+	if s.observer == nil || n == nil {
+		return
+	}
+	s.observer.Settled(ctx, *n, n.Status, took, err)
+}
+
 // settle attempts one delivery and writes the outcome back.
 func (s *Service) settle(ctx context.Context, n *domain.Notification) error {
+	started := s.clock.Now()
 	worthRetrying, failure := s.attemptDelivery(ctx, n)
 	now := s.clock.Now()
 
@@ -116,6 +145,11 @@ func (s *Service) settle(ctx context.Context, n *domain.Notification) error {
 	if err := s.notifications.Save(ctx, n); err != nil {
 		return fmt.Errorf("save notification: %w", err)
 	}
+
+	// After the Save, never before: a row whose Save failed has not settled,
+	// and an audit event for a dead-letter that did not happen is worse than
+	// no event at all.
+	s.observe(ctx, n, now.Sub(started), failure)
 	return nil
 }
 
