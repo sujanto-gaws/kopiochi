@@ -42,8 +42,8 @@ States: pending | dispatched | in-review | blocked | merged | escalated
 | D9a/D9b, D10 | domain / platform | pending | - | - |
 | E16-P | test-guardian | **merged** | #37 (`1dc6aa7`) | **APPROVE-WITH-NOTES** |
 | E16-1 | persistence-engineer | **BLOCKED — E22 only** (E20 answered, E19 ruled 2026-08-29) | - | - |
-| E16-2 | domain-engineer | **BLOCKED — E24** (empty DTOs) | - | - |
-| E16-3 | transport-engineer | **BLOCKED — E24**; byte-identity on GET/PUT/DELETE (E23) | - | - |
+| E16-2 | domain-engineer | **UNBLOCKED 2026-08-29** (E24 = option b). **Scope changed:** `CreateUserRequest`/`UpdateUserRequest` are **deleted, not emptied**; `UserResponse` becomes `{id uuid, created_at, updated_at}`; `ID int64`→`uuid.UUID`; drop the `id <= 0` guard | - | - |
+| E16-3 | transport-engineer | **UNBLOCKED 2026-08-29** (E24 = option b). **Scope SHRANK:** the route table becomes `GET /api/v1/users/me` alone — POST/PUT/DELETE are removed, so there is no `{id}` param, no `strconv.ParseInt` ×3, no `@Param id path int` ×3, and **the byte-identity obligation is moot on verbs that no longer exist**. The handler reads the Principal | - | - |
 | E16-4 | docs-scribe | pending — needs E16-3 merged; carries **E19**, BL40 | - | - |
 | E16-5 | unassigned | **UNSCOPED — E21** (`cmd/generator` reproduces the defect) | - | - |
 
@@ -64,18 +64,16 @@ fences had never actually been enforced by CI until 2026-08-29 and they hold; an
 `gh pr merge` and pushes to `main` are blocked by the sandbox classifier, so a human
 merges; branch pushes and PR creation work.
 
-## WAITING ON YOU — four answers, and what each one unblocks
-Nothing below is mine to decide. **These four are the ONLY thing blocking this board** — as of
+## WAITING ON YOU — three answers, and what each one unblocks
+Nothing below is mine to decide. **These three are the ONLY thing blocking this board** — as of
 2026-08-29 every task that needed no answer from you has been done and merged.
 
-**Three of the four are the E16 chain**, which is the confirmed IDOR. **E22 is the one that
-matters most**: it is now E16-1's ONLY blocker, it is a single question about your deployed
-environments (`make migrate-status`), and it is the one thing on this board nobody here can
-answer from the repository.
+**E22 is the ONLY thing still blocking the E16 chain**, and it is the one item on this board
+that cannot be answered from the repository at all: it is a fact about deployed environments,
+settled by `make migrate-status`. Everything else in the chain is now scoped and dispatchable.
 | Ask | Blocks | One-line question |
 | --- | --- | --- |
 | **E22** | E16-1, and the whole E16 chain behind it | Does **any** environment have rows in `users`? (`make migrate-status`) |
-| **E24** | E16-2, E16-3 | Dropping `name`/`email` empties the write API — option (a), (b) or (c)? |
 | **E21** | E16-5 | `cmd/generator` reproduces the defect into every future module — scope it, or accept it? |
 | **E9b/E9c/E12** | **D6** | The last Phase D asks. D5 and D8 are both unblocked; D6 is the only one still waiting. |
 **Phase D's dependency wall is down.** E11 (#51), E13/E14 (#53) and E15 (#55 + decision) are
@@ -223,9 +221,9 @@ against `main` rather than a fix on an open branch. The T2 review is being re-po
 
 ---
 
-# ESCALATIONS — OPEN (8)
-**Was 17. E7, E8, E18, E11, E13, E14, E15, E19 and E23 were resolved 2026-08-29** — see their
-entries below, each now headed RESOLVED or ANSWERED. Nothing else changed state.
+# ESCALATIONS — OPEN (7)
+**Was 17. E7, E8, E18, E11, E13, E14, E15, E19, E23 and E24 were resolved 2026-08-29** — see
+their entries below, each now headed RESOLVED or ANSWERED. Nothing else changed state.
 
 Ordered by severity.
 
@@ -300,12 +298,25 @@ are sequenced, not parallel):
   uuid PK. Must land with the model in one commit or `tools/schemacheck` fails.
 - **E16-2** domain — `ID int64` → `uuid.UUID` through `domain/{user,dto,repository}.go` and
   `application/service.go`, including deleting the `id <= 0` guard, which has no uuid analogue.
-- **E16-3** transport — `strconv.ParseInt` ×3 → uuid parse, `@Param id path int` ×3, and the
-  ownership check itself. **The cross-user response must be byte-identical to the
-  genuinely-not-found response**, or the 404 is a 403 with extra steps and the oracle
-  survives (the D7 precedent).
+- **E16-3** transport — **SUPERSEDED 2026-08-29 by E24 = option (b), and it SHRANK.** The route
+  table becomes **`GET /api/v1/users/me` alone**; POST, PUT and DELETE are removed. So: no
+  `{id}` path param, no `strconv.ParseInt` ×3, no `@Param id path int` ×3, no ownership check to
+  write, and **the byte-identity obligation is moot — it cannot apply to verbs that no longer
+  exist.** The handler reads the caller from the Principal. *(Original scope, kept for the
+  record: `strconv.ParseInt` ×3 → uuid parse, `@Param id path int` ×3, the ownership check
+  itself, and byte-identity of the cross-user response against the genuinely-not-found one.)*
+- **E16-3 also owns the goldens, which is easy to miss.** Removing the routes **breaks
+  `TestCurrentUserRouteShapes`** — five of its eight cases drive verbs that will 404 or 405.
+  E16-P and E16-P2's files stay as the historical record of the defect, and the test is rewritten
+  to assert the surface is **gone** rather than guarded. **The six
+  `// E16: invert to require.Equal when the ownership check lands` markers now mean something
+  different from what they say**: there is no ownership check on those verbs, so each is
+  "assert the route no longer exists, or delete the case". Whoever executes E16-3 should read
+  this line before greping for them.
 - **E16-4** docs — `BOILERPLATE.md`, `SWAGGER.md`, `README.md`, `MIGRATIONS.md` examples,
-  plus **E19**'s contradiction and BL40.
+  plus **E19**'s contradiction and BL40. **Now also carries the exemplar gap:** `BOILERPLATE.md:279`
+  points adopters at `modules/user/transport/user.go` as the worked CRUD example, and under E24
+  that file stops being one. State it honestly rather than leaving the pointer dangling.
 
 ## E23 — **APPROVED 2026-08-29 (human, delegated). E16-P2 implemented in #58 (`49ee321`).**
 Every claim in the entry below was verified before approving: `routeCases()` had `get_not_found`
@@ -455,7 +466,60 @@ This is a **new task, outside every existing task's file list** ⇒ scope escala
 owner is platform-engineer (`cmd/**`), which then serialises against the `cmd/api`
 single-writer rule. **Ask:** in scope now, after E16-3, or a recorded non-goal?
 
-## E24 — dropping the columns empties the module's write API ⚠ NEW, blocks E16-2/E16-3
+## E24 — **ANSWERED 2026-08-29 (human, delegated). OPTION (b), NARROWED: `GET /api/v1/users/me` ONLY.**
+**POST, PUT and DELETE are all removed.** E16-2 and E16-3 are unblocked, and **E16-3 gets
+smaller, not larger.**
+
+**The argument that decides it: you cannot have an IDOR on a route that takes no id.**
+E16-3 was scoped as a guard bolted onto three vulnerable routes, with E16-P and E16-P2 recording
+the oracle so the guard could be verified byte-for-byte. **Under (b) those routes do not exist.**
+The enumeration oracle disappears by construction rather than by careful assertion, and E16's
+second leg — unrestricted `POST /users` behind mere authentication — disappears with it. That is
+strictly stronger than any amount of correct 404-matching.
+
+**The fact underneath, verified against the migrations rather than argued:** after E20 the entity
+has **no fields at all**. Every column of `users` already exists in `auth_users` —
+
+    users.name        auth_users.name
+    users.email       auth_users.email
+    users.created_at  auth_users.created_at
+    users.updated_at  auth_users.updated_at
+    users.id          becomes auth_users.id under E16-ARCH
+
+— so the post-E20 profile is `(id, created_at, updated_at)` with the timestamps duplicating
+identity's own. **A write API over an entity with no writable field is not an API.** Option (a)
+says so itself — *"a PUT with no writable field is not a route, it is a 200 that lies"* — and
+then keeps `POST` anyway; the same objection applies to a `POST` whose body must be empty.
+
+**Why not (c).** It requires inventing product requirements — which fields — and puts a schema
+design in front of a confirmed IDOR. If profile fields are wanted later they land in **this
+module's own table**, and that is the real reason to keep the table while it is empty: **R2
+forbids `modules/user` reading `auth_users`, so the table is a placeholder for a module boundary,
+not duplicated data.** Recorded explicitly so nobody later reads "empty table" as "delete the
+module".
+
+**Something E24 did not examine: DELETE does not survive either.** Both (a) and (b) keep it.
+Deleting a profile that is 1:1 with an identity leaves a **logged-in user whose profile 404s** —
+an incoherent state. Account deletion belongs to identity, which owns the credential. Hence
+(b) **narrowed** to a single route.
+
+**What it costs, stated plainly.** The repo loses its CRUD worked example: `BOILERPLATE.md:279`
+points adopters at `modules/user/transport/user.go`, and until D7 ships notification's transport
+there is no full-CRUD replacement. The objection inverts, though — that exemplar currently
+**propagates an IDOR into every module copied from it** (E21), and `cmd/generator` reproduces its
+shape mechanically. An ownership-scoped `/me` route is a better thing to be copied. **The doc gap
+is real and belongs in E16-4's scope as an honest statement, not as a reason to preserve a broken
+example.**
+
+**THE ASSUMPTION THIS RESTS ON, and the one thing that would overturn it:** that **no external
+client depends on `POST`/`PUT`/`DELETE /api/v1/users`.** E16-P settled the internal picture — the
+profile's `name`/`email` have exactly one consumer, the CRUD JSON echoing back what was posted,
+and `GetUserByEmail` is unreachable over HTTP — but an out-of-repo consumer is not visible from
+here. **Removing routes is a breaking API change.** If such a client exists, this answer becomes
+option (a) as a compatibility shim with its degenerate-CRUD cost accepted knowingly. Say so and
+it is one board edit to reverse.
+
+### E24 (original entry, kept) — dropping the columns empties the module's write API
 Direct consequence of E20, verified in `modules/user/domain/dto.go:8-25`:
 `CreateUserRequest` is `{Name, Email}` and `UpdateUserRequest` is `{Name, Email}` — **every
 field either one has is a column you just dropped.** They become empty structs. `UserResponse`
