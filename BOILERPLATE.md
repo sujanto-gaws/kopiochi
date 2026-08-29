@@ -312,6 +312,82 @@ where `newProductModule` returns a `*module.Module{Name: "product", Routes: prod
 `cmd/api/routes_test.go` (`TestRouteTable`) walks the real router and is the
 place to assert your new paths.
 
+#### The module constructor's shape
+
+Every module's constructor has the same shape, and the sameness is the point —
+`BuildApp` wires them all the same way:
+
+```go
+func New(deps module.Deps, cfg Config) (*module.Module, error)
+```
+
+`modules/user/module.go:75` and `modules/identity/module.go:88` are both exactly
+that. `Config` is the module's own struct, even when the module has no settings
+of its own yet, so a later requirement has somewhere to grow
+(`modules/user/module.go:24-31`). Give it a `Validate() error` and call it as
+the first statement of `New`: a module whose configuration would make it unsafe
+must fail to construct, not construct and serve.
+
+#### Where `h.authMW` comes from — consumer modules take `authn.Middleware`
+
+A module that protects routes does **not** import the module that authenticates.
+It declares the dependency in its own `Config`, typed as `authn.Middleware`, and
+the composition root supplies it. `modules/user` is the template:
+
+```go
+import "github.com/sujanto-gaws/kopiochi/internal/authn"       // module.go:17
+
+type Config struct {
+    // Required, not optional: New refuses to build a module that would
+    // serve records unauthenticated.
+    AuthMiddleware authn.Middleware                            // module.go:53
+}
+
+func (c Config) Validate() error {                             // module.go:58
+    if c.AuthMiddleware == nil {
+        return errors.New("product: auth middleware is required")
+    }
+    return nil
+}
+```
+
+and the composition root satisfies it (`cmd/api/container.go:103-105`):
+
+```go
+authMW := identitytransport.AuthRequired(jwtSvc)
+return user.New(deps, user.Config{AuthMiddleware: authMW})
+```
+
+Four rules that fall out of this. The last two are enforced by `make arch`; the
+first two are conventions this recipe asks you to keep — no check in the repo
+constrains what a `Config` may hold, or where a middleware gets applied:
+
+- **Take a middleware, never a token verifier.** The module then never learns how
+  authentication is implemented, and swapping the implementation is a one-line
+  change in `BuildApp`.
+- **Pass it down to the handler and let the handler apply it**, as
+  `NewUserHandler(svc, authMW)` does (`modules/user/transport/user.go:41`,
+  applied at `:199`). Routing and protection are declared together, so an
+  unprotected route is visible in the diff.
+- **Read the caller through the contract**, not through another module's context
+  key: `authn.MustFromContext(r.Context()).Subject` in a handler that is only
+  ever routed behind the middleware, `authn.FromContext` where the route is
+  reachable both ways.
+- **`internal/authn` belongs in `transport` (and the module root), never in
+  `domain` or `application`.** `tools/archtest` denies it in both inner layers —
+  a use case that reads a `Principal` is taking its caller identity from the HTTP
+  request instead of from its own arguments.
+
+In tests, use `testsupport.FakeAuth("u-123")` rather than minting a token; it
+returns an `authn.Middleware` and assigns straight into `Config`.
+
+Full contract, the canonical 401 it produces, and the recipe for replacing the
+authentication provider: [`docs/architectures/08-authn/README.md`](docs/architectures/08-authn/README.md).
+
+> **Client-visible:** every 401 from that middleware is
+> `application/problem+json` with an invariant `detail`. Clients key off
+> `status`, never `detail`. See [`CHANGELOG.md`](CHANGELOG.md).
+
 ### 4. Configure security middleware
 
 Edit `config/default.yaml`:

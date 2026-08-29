@@ -18,11 +18,12 @@ read on its own; cross-references are relative links.
 | [`05-data/`](05-data/) | Persistence, pooling, migrations | You change the schema or the data access layer |
 | [`06-quality/`](06-quality/) | Testing, observability, repo hygiene | You are setting up CI, tests, or cleaning the repo |
 | [`07-roadmap/`](07-roadmap/) | Sequenced remediation plan | You are planning the next sprint |
+| [`08-authn/`](08-authn/) | The `internal/authn` contract, the canonical 401, replacing the auth provider | You are protecting a module's routes, parsing a 401, or swapping the authentication implementation |
 | [`adr/`](adr/) | Architecture Decision Records | You need the *why* behind a binding decision |
 
 ## Document types
 
-- **Topic documents** (`00-` … `07-`) describe the current problem, the target
+- **Topic documents** (`00-` … `08-`) describe the current problem, the target
   design, and the migration path. They are living documents — update them as the
   system changes.
 - **ADRs** (`adr/`) record a single decision at a point in time. They are
