@@ -35,9 +35,10 @@ States: pending | dispatched | in-review | blocked | merged | escalated
 | **E13/E14-FIX** | *(in-session, ungated)* | **merged** | #53 (`0d0b02d`) | **none — see PROCESS-7** |
 | **E15-PRE** | *(in-session, ungated)* | **merged** | #55 (`ee9bbd9`) | **none — see PROCESS-7** |
 | **E16-P2** | *(in-session, ungated)* | **merged** | #58 (`49ee321`) | **none — see PROCESS-7** |
-| **E21-1** | *(in-session, ungated)* | **in review** | **#61** (`7723cba`) | **none** |
+| **E21-1** | *(in-session, ungated)* | **in review** | **#61** (`af83214`) | **none** |
+| **E9b/E9c-FIX** | *(in-session, ungated)* | **in review** | **#63** (`aa784a1`) | **none** |
 | D5  | platform-engineer | **UNBLOCKED 2026-08-29** — E11, E13, E14 all answered. Scope grew: `sender/inapp.go`, and its file list must say `domain/message.go`, not `application/ports.go` | - | - |
-| D6  | platform-engineer | **BLOCKED — E9b, E9c, E12** | - | - |
+| D6  | platform-engineer | **UNBLOCKED 2026-08-29** — E9b/E9c answered and implemented (#63); E12 answered and additive, not a dependency | - | - |
 | D7  | transport-engineer | **UNBLOCKED** — needs D6 | - | - |
 | D8  | platform-engineer | **UNBLOCKED 2026-08-29** — E15 answered; precursor #55. Port declared by the sender, adapter in `cmd/api` | - | - |
 | D9a/D9b, D10 | domain / platform | pending | - | - |
@@ -65,9 +66,10 @@ fences had never actually been enforced by CI until 2026-08-29 and they hold; an
 `gh pr merge` and pushes to `main` are blocked by the sandbox classifier, so a human
 merges; branch pushes and PR creation work.
 
-## WAITING ON YOU — two answers, and what each one unblocks
-Nothing below is mine to decide. **These two are the ONLY thing blocking this board** — as of
-2026-08-29 every task that needed no answer from you has been done and merged.
+## WAITING ON YOU — one answer
+Nothing below is mine to decide. **E22 is now the ONLY thing blocking this board.** Every other
+escalation has been answered, and every task that needed no answer from you has been done and
+merged. **Phase D is fully unblocked: D5, D6 and D8 are all dispatchable.**
 
 **E22 is the ONLY thing still blocking the E16 chain**, and it is the one item on this board
 that cannot be answered from the repository at all: it is a fact about deployed environments,
@@ -75,7 +77,6 @@ settled by `make migrate-status`. Everything else in the chain is now scoped and
 | Ask | Blocks | One-line question |
 | --- | --- | --- |
 | **E22** | E16-1, and the whole E16 chain behind it | Does **any** environment have rows in `users`? (`make migrate-status`) |
-| **E9b/E9c/E12** | **D6** | The last Phase D asks. D5 and D8 are both unblocked; D6 is the only one still waiting. |
 **Phase D's dependency wall is down.** E11 (#51), E13/E14 (#53) and E15 (#55 + decision) are
 all answered, so **D5 and D8 are both dispatchable now**. **D6 alone still waits**, on
 E9b/E9c/E12 — and those are the only Phase D asks left. Nothing in Phase D is blocked on
@@ -221,9 +222,12 @@ against `main` rather than a fix on an open branch. The T2 review is being re-po
 
 ---
 
-# ESCALATIONS — OPEN (6)
-**Was 17. E7, E8, E18, E11, E13, E14, E15, E19, E21, E23 and E24 were resolved 2026-08-29** —
-see their entries below, each now headed RESOLVED or ANSWERED. Nothing else changed state.
+# ESCALATIONS — OPEN (3)
+**Was 17. Fourteen were resolved on 2026-08-29** — E7, E8, E9b, E9c, E11, E12, E13, E14, E15,
+E18, E19, E21, E23 and E24 — each now headed RESOLVED or ANSWERED below.
+
+**What remains: E22** (the human's, and the only board item unanswerable from the repository),
+**E10** and **E17**.
 
 **One NEW question surfaced and deliberately not numbered by me: this repository has no
 authorization primitive at all.** It is why the IDOR was expressible, it blocks E21 part 2, and
@@ -944,7 +948,33 @@ catches**. Amend R1 to `infrastructure → domain, own application's ports, …`
 archtest rule permitting `modules/X/infrastructure → modules/X/application` only.
 **Must land before D5.**
 
-## E12 — `DispatchBatch (int, error)` cannot support D10's metrics or audit
+## E12 — **ANSWERED 2026-08-29 (human, delegated): approved, with one binding constraint. NOT yet implemented.**
+`DispatchObserver`, optional, nil ⇒ no-op, as proposed. Confirmed in code: `settle` computes the
+outcome and channel per row and discards both, and `DispatchBatch` returns only `len(claimed)`.
+
+**The constraint, carried from E11's ruling: every parameter must be a DOMAIN type**, so a
+metrics adapter in `infrastructure` can satisfy the port without importing `application` (R1):
+
+    Settled(ctx context.Context, n domain.Notification, outcome domain.Status, err error)
+
+`domain.Status` already carries the vocabulary — sent, dead, pending. **If `outcome` were an
+application-defined enum the adapter would have to import `application`, which is exactly what
+E11 forbade.** The interface itself can stay in `application`: Go satisfies interfaces
+structurally, so the implementer never names it — the same reasoning as the E15 ruling.
+
+**`DispatchBatch`'s signature does not need to change.** This entry's title says `(int, error)`
+"cannot support" metrics; the answer is that it does not have to. The observer carries what the
+return value cannot, and the change stays additive with no breaking edit to a merged signature.
+
+**For BL25, the observer must be able to tell a panic from a failure**, or the visibility gap
+survives in a new form. `settleSafely` currently wraps a recovered panic in a bare
+`fmt.Errorf`; it should wrap a sentinel the observer can `errors.Is`.
+
+**Not implemented in #63**, deliberately: E12 is independent of D6's chain and touches the
+application layer rather than persistence. **`claimed_at` (E9b) has already landed the durable
+half of its latency measurement.**
+
+### E12 (original entry, kept) — `DispatchBatch (int, error)` cannot support D10's metrics or audit
 Per-channel counters, a latency histogram, and an audit event on **security-category
 dead-letter** are all computed in `settle` and discarded. Prefer a
 `DispatchObserver.Settled(n, outcome, err)` port — optional, nil ⇒ no-op — which also fixes
@@ -1074,7 +1104,24 @@ identity's `UserRepository.FindByID`. Needs no `users` involvement. **Blocker in
 — mails a **stale address after an email change**, i.e. the breach alert goes to the
 attacker's new address.
 
-## E9b — D6's sweep has no column to run on; the cheap window CLOSED
+## E9b — **ANSWERED 2026-08-29 (human, delegated): option (a), `claimed_at`. Implemented in #63.**
+Not (b). Four reasons, and the fourth decided it:
+1. **(b) writes to the very column the claim predicate reads.** A mistake there changes *which
+   rows are deliverable*, not merely which are reported. A new column cannot touch delivery.
+2. **(b) gives one column two meanings selected by another** — "not before this" while pending,
+   "claimed at this" while sending. This tree has been bitten by that shape: **D4's
+   `default:true` tag, which made `false` unrepresentable.**
+3. **The migration this entry regretted is cheap here.** ADR-010 makes additive migrations the
+   norm and notification's is the newest, so nothing reorders.
+4. **`claimed_at` is exactly what E12's latency histogram needs** — `sent_at - claimed_at`,
+   durable and queryable rather than an in-process timer. **(b) could never provide it**, because
+   it overwrites the value on every retry. **One migration serves both escalations**, which is
+   why the two were answered together.
+
+Nullable, no default, no backfill: NULL means "never claimed", true of every existing row, and
+a `DEFAULT now()` would have claimed the whole outbox at migration time.
+
+### E9b (original entry, kept) — D6's sweep has no column to run on; the cheap window CLOSED
 `next_attempt_at` holds its **pre-claim** value, so a freshly claimed row is
 indistinguishable from a stalled one and resetting it is a **double delivery**. D1 merged
 before this was decided, so it now costs a **new migration** — my error. Options: (a) add
@@ -1082,7 +1129,29 @@ before this was decided, so it now costs a **new migration** — my error. Optio
 semantics written into its doc comment. **E9a raised the stakes:** a false positive now also
 burns an attempt and can dead-letter a healthy in-flight row.
 
-## E9c — the domain has no port to FIND stalled rows
+## E9c — **ANSWERED 2026-08-29 (human, delegated). Implemented in #63.**
+`ClaimStalled(ctx, n, stalledBefore, now)` on `domain.NotificationRepository`, with the
+`FOR UPDATE SKIP LOCKED` shape `ClaimBatch` already establishes. This entry's correction is
+upheld: the sweep is select → `RecoverStalled` → `Save` per row.
+
+**Two things it deliberately does not do.** It **does not change status** — a set-based recovery
+UPDATE would be a second, untested copy of the state machine, so the transition stays in
+`RecoverStalled` and this decides only which rows a sweeper owns. And it **does not trust the
+caller to hold a lock**: since E9a, `RecoverStalled` increments `Attempts`, so two sweepers on
+one row burn two attempts and can dead-letter a row that was merely slow.
+
+**It re-stamps `claimed_at`**, which is what makes a crashed sweeper safe — a row whose recovery
+never lands is deferred by another full stall window rather than being immediately eligible
+again. That costs the original claim timestamp, which nothing reads once the sweep has decided.
+
+**Deviation from this entry's proposed signature:** it carries `now` as well as `stalledBefore`.
+The re-stamp needs it, and it keeps the caller's injected clock governing the whole cycle exactly
+as `ClaimBatch`'s does.
+
+**The domain entity does NOT carry `ClaimedAt`** — `Save` writes a fixed five-column list that
+excludes it, so nothing in the domain needs to see it, and the column survives a save untouched.
+
+### E9c (original entry, kept) — the domain has no port to FIND stalled rows
 Needs `ClaimStalled(ctx, n, stalledBefore)` in `repository.go` — a **D2 file**, so neither D4
 nor D6 may add it. Blocked behind E9b. **Correction:** the sweep can **no longer** be one
 set-based UPDATE — that would be a second, untested copy of the state machine. D6 must do
