@@ -48,6 +48,69 @@ type TemplateData struct {
 	UpdatedAt   bool
 }
 
+// enableVar and enableValue are the deliberate, greppable opt-out. See the note
+// in main for why an opt-out exists at all.
+const (
+	enableVar   = "KOPIOCHI_GENERATOR_RUN_ANYWAY"
+	enableValue = "i-have-read-E21"
+)
+
+// disabledNotice is why this generator refuses to run. See E21 on the task board.
+const disabledNotice = `cmd/generator is DISABLED. It cannot be revived by a flag; see below.
+
+WHY IT IS DISABLED
+
+1. It already leaves the repository non-compiling, and has since Phase 1.5.
+   It writes to internal/infrastructure/http/routes/routes.go, which was
+   deleted. Documented in three places and never fixed:
+     docs/architectures/00-overview/current-state.md:260
+     docs/architectures/07-roadmap/remediation-plan.md:72
+     BOILERPLATE.md:195
+   Until now it reported those failures as warnings and exited 0, so a broken
+   run looked like a successful one.
+
+2. It reproduces a CONFIRMED IDOR into every module it generates (E16, E21).
+   The template hardcodes an int64 primary key, an "if id <= 0" guard, a
+   "@Param id path int" annotation and a strconv.ParseInt on every id route,
+   and emits CRUD handlers that never read the caller. modules/user shipped
+   exactly that shape, where any valid token reads, overwrites or deletes any
+   other user's row.
+
+WHAT MUST HAPPEN BEFORE IT COMES BACK  (E21 part 2, after E16-3)
+
+  - Default the primary key to uuid. auth_users and notifications already do;
+    only the legacy users/products tables use BIGSERIAL.
+  - Drop strconv.ParseInt and "@Param id path int" with it.
+  - Emit handlers that FAIL CLOSED — 501 and an explicit TODO — rather than
+    working CRUD with no authorization. A generated module must not be able to
+    ship an unauthorized surface that merely looks finished.
+  - Repoint route and wiring updates at httpx.Mount and cmd/api/container.go.
+
+The third item is blocked on a decision this repository has never made: there is
+no authorization primitive anywhere in it. grep -rn "RequireRole|RequirePermission|Authorize"
+returns nothing. A code generator is the worst possible place to invent one, so
+that decision comes first.
+
+IF YOU UNDERSTAND ALL OF THE ABOVE AND STILL NEED TO RUN IT
+
+    KOPIOCHI_GENERATOR_RUN_ANYWAY=i-have-read-E21
+
+It is stated plainly rather than hidden, because a guard you can only get past
+by not understanding it is a worse guard. Setting it generates a module with the
+primary-key and authorization shape described in (2), and leaves the tree in the
+state described in (1). Do not set it in CI or in a Makefile target.
+`
+
+// refuseToGenerate prints disabledNotice and exits non-zero. It never returns.
+//
+// It is a function rather than an inline os.Exit so that the generator body
+// below it stays ordinary, reachable-looking code: whoever revives this tool
+// deletes one call, rather than reconstructing a main that was gutted.
+func refuseToGenerate() {
+	fmt.Fprint(os.Stderr, disabledNotice)
+	os.Exit(2)
+}
+
 func main() {
 	domain := flag.String("domain", "", "Domain name (e.g., Product, Order)")
 	fields := flag.String("fields", "", "Fields as name:type pairs (e.g., name:string,price:float64). Optional if -table is provided")
@@ -58,6 +121,22 @@ func main() {
 	configFile := flag.String("config", "config/default.yaml", "Path to config file for DB connection")
 
 	flag.Parse()
+
+	// Fail closed before doing anything else, including flag validation: no
+	// combination of arguments makes generating safe today.
+	//
+	// The opt-out is an environment variable rather than no opt-out at all, and
+	// that is a concession to staticcheck rather than a change of intent: with
+	// an unconditional refusal it proves refuseToGenerate never returns, the
+	// whole generator body becomes dead code, and SA4006 fires on every flag.
+	// The alternatives were worse — deleting the body, or hiding it behind a
+	// build tag, both of which stop it being compiled and linted at all.
+	//
+	// The variable's value has to be typed out in full, so nobody sets it by
+	// accident and every use leaves a greppable trail.
+	if os.Getenv(enableVar) != enableValue {
+		refuseToGenerate()
+	}
 
 	if *domain == "" {
 		fmt.Println("Error: -domain is required")
@@ -264,17 +343,19 @@ func generate(config Config) error {
 	}
 
 	// Auto-update routes
+	// Fatal, not a warning. Reporting success while leaving the tree
+	// non-compiling is the defect current-state.md:260 records; if the refusal
+	// in main is ever removed, this must not come back with it.
 	if err := updateRoutes(baseDir, config.Domain, config.DomainLower); err != nil {
-		fmt.Printf("  ⚠ Warning: Could not update routes: %v\n", err)
-		fmt.Printf("  You may need to manually add routes to internal/infrastructure/http/routes/routes.go\n")
+		return fmt.Errorf("update routes: %w (the generated tree does not compile without this; see E21)", err)
 	} else {
 		fmt.Printf("  ✓ Routes updated in internal/infrastructure/http/routes/routes.go\n")
 	}
 
 	// Auto-update main.go for dependency injection
+	// Fatal for the same reason as updateRoutes above.
 	if err := updateMainGo(baseDir, config.Domain, config.DomainLower, config.ModulePath); err != nil {
-		fmt.Printf("  ⚠ Warning: Could not update main.go: %v\n", err)
-		fmt.Printf("  You may need to manually wire the handler/service in cmd/api/main.go\n")
+		return fmt.Errorf("update dependency injection: %w (the generated module is unreachable without this; see E21)", err)
 	} else {
 		fmt.Printf("  ✓ Dependency injection updated in cmd/api/main.go\n")
 	}
