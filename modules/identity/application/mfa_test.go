@@ -375,3 +375,60 @@ func TestLogout_UnknownUserIsNotAnError(t *testing.T) {
 		t.Errorf("Logout() error = %v, want nil", err)
 	}
 }
+
+// TestVerifyMFASetup_RefusesWhenSetupWasNeverStarted — E10, the reachable half.
+//
+// SetupMFA is what stores the secret. Nothing here required it to have run, so
+// a caller who posted to /auth/mfa/setup/verify WITHOUT calling
+// /auth/mfa/setup arrived with an empty MFASecret — and the TOTP code derived
+// from the empty secret is computable by anyone with a clock.
+//
+// That path ended at `user.MFAEnabled = true`: an account advertising a second
+// factor that any attacker holding the password could then satisfy with a
+// public constant. The board recorded this as "not reachable through current
+// app paths"; it was reachable by calling one endpoint out of order.
+func TestVerifyMFASetup_RefusesWhenSetupWasNeverStarted(t *testing.T) {
+	t.Parallel()
+
+	u := testUser("alice")
+	u.MFASecret = "" // never ran setup — the default for every account
+	h := newHarness(u)
+
+	_, err := h.svc.VerifyMFASetup(context.Background(), u.ID.String(), "123456")
+	if !errors.Is(err, ErrMFANotStarted) {
+		t.Fatalf("VerifyMFASetup() error = %v, want ErrMFANotStarted", err)
+	}
+	if u.MFAEnabled {
+		t.Error("MFA was enabled for an account that never held a secret: the " +
+			"second factor would be a public constant (E10)")
+	}
+}
+
+// TestVerifyMFASetup_ReportsNotStartedDistinctlyFromABadCode: the two are
+// different problems and a user can act on only one of them.
+//
+// "Your code is wrong" tells someone with no secret to check their
+// authenticator, which has nothing in it. Collapsing the two would also hide
+// the E10 state from anyone reading logs, since every occurrence would look
+// like an ordinary mistyped code.
+func TestVerifyMFASetup_ReportsNotStartedDistinctlyFromABadCode(t *testing.T) {
+	t.Parallel()
+
+	noSecret := testUser("alice")
+	noSecret.MFASecret = ""
+	_, notStarted := newHarness(noSecret).svc.VerifyMFASetup(
+		context.Background(), noSecret.ID.String(), "123456")
+
+	withSecret := testUser("bob")
+	withSecret.MFASecret = "SECRET"
+	// A code the fake will not accept: it matches on one fixed value.
+	_, badCode := newHarness(withSecret).svc.VerifyMFASetup(
+		context.Background(), withSecret.ID.String(), "000000")
+
+	if errors.Is(notStarted, badCode) || errors.Is(badCode, notStarted) {
+		t.Fatalf("the two refusals are the same error: %v vs %v", notStarted, badCode)
+	}
+	if !errors.Is(badCode, ErrInvalidMFACode) {
+		t.Errorf("a wrong code reported %v, want ErrInvalidMFACode", badCode)
+	}
+}

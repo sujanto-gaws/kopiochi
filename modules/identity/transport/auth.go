@@ -168,6 +168,16 @@ func (h *AuthHandler) MFAVerifySetup(w http.ResponseWriter, r *http.Request) {
 	}
 	resp, err := h.svc.VerifyMFASetup(r.Context(), subject, req.Code)
 	if err != nil {
+		// Confirming a setup that was never begun is the caller's sequencing
+		// mistake, not a server fault, so it is a 400 and not the 500 it would
+		// otherwise fall through to. Told apart from a wrong code because only
+		// one of the two is something the user can fix with their
+		// authenticator — see E10.
+		if errors.Is(err, app.ErrMFANotStarted) {
+			writeProblemDetails(w, "mfa_not_started",
+				"Call /auth/mfa/setup before confirming", http.StatusBadRequest, "")
+			return
+		}
 		if err == app.ErrInvalidMFACode {
 			writeProblemDetails(w, "invalid_code", "Invalid TOTP code", http.StatusBadRequest, "")
 			return
