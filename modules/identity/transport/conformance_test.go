@@ -62,7 +62,7 @@ func TestAuthRequiredConformsToTheMiddlewareContract(t *testing.T) {
 // is covered by all three the moment it is added to it. The set is a superset
 // of the plan's (valid, expired, malformed, wrong-alg) — it also carries the
 // missing-header and refresh-class cases, which cost nothing here and are two
-// more chances for the detail-invariance check to catch a leak.
+// more chances for the indistinguishability check to catch a leak.
 func invalidCredentialMinters(kp testsupport.Keypair, subject string) map[string]func(t *testing.T) *http.Request {
 	cases := rejectionCases(kp, subject)
 
