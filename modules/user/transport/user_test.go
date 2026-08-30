@@ -173,6 +173,44 @@ func TestGetReportsNotFoundForACallerWithNoProfile(t *testing.T) {
 	}
 }
 
+// TestAMiddlewareThatSetsNoPrincipalIs401 covers caller()'s other rejection: the
+// middleware ran, allowed the request through, and put no principal in the
+// context at all.
+//
+// This is a misconfigured or half-written middleware rather than a hostile
+// client, which is exactly why it is worth pinning. The failure mode if caller()
+// did not check is not a 500 — it is uuid.Nil flowing into the service as though
+// it were an authenticated subject, and a profile belonging to nobody being
+// created or returned. That is the E16 class of bug arriving through the door
+// E16 did not close.
+//
+// The existing tests could not reach this branch: FakeAuth always sets a
+// principal, and the middleware in TestRoutesAreUnreachableWithoutAuth rejects
+// before the handler runs. Only a middleware that says yes and supplies nothing
+// gets here.
+func TestAMiddlewareThatSetsNoPrincipalIs401(t *testing.T) {
+	for _, method := range []string{http.MethodGet, http.MethodPost} {
+		t.Run(method, func(t *testing.T) {
+			svc := &fakeService{}
+
+			r := chi.NewRouter()
+			h := NewUserHandler(svc, func(next http.Handler) http.Handler {
+				// Says yes, supplies nothing.
+				return next
+			})
+			r.Route("/api/v1", h.Routes)
+
+			rec := do(t, r, method, "/api/v1/users/me")
+			if rec.Code != http.StatusUnauthorized {
+				t.Fatalf("status = %d, want 401", rec.Code)
+			}
+			if svc.calls != 0 {
+				t.Errorf("the service ran %d times with no principal in the context", svc.calls)
+			}
+		})
+	}
+}
+
 // TestEveryFailureIsProblemJSON is E32: this module answered its 404 and its
 // two 500s with {"error": "..."} under application/json, the only failures in
 // the tree that were not problem+json.
