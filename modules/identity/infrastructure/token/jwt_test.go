@@ -200,3 +200,88 @@ func TestValidate_AcceptsGenuineAccessToken(t *testing.T) {
 	require.Equal(t, domain.ClassAccess, claims.Class)
 	require.Equal(t, user.ID.String(), claims.Subject)
 }
+
+// TestAccessTokenCarriesNoUnenforcedPrivilegeClaims — E26.
+//
+// This is the assertion whose absence let the claims sit there. Every existing
+// test in this package passed unchanged when `roles` and `permissions` were
+// removed, because nothing had ever asserted they were minted. A claim nobody
+// tests and nobody enforces is a claim nobody has decided to have.
+//
+// The property is not "these two strings are gone". It is that this service
+// does not sign a privilege assertion it will not act on. A signed claim
+// travels: a downstream reader can trust it without ever asking this service,
+// which turns it into an authorization decision made on data nobody checks.
+//
+// When an authorization primitive lands (E26), these come back — alongside the
+// code that enforces them, and with this test inverted deliberately rather than
+// deleted quietly.
+func TestAccessTokenCarriesNoUnenforcedPrivilegeClaims(t *testing.T) {
+	svc := newTestService(t)
+
+	u := testUser()
+	u.Roles = []string{"admin", "operator"}
+	u.Permissions = []string{"users:delete", "billing:write"}
+
+	tokenStr, err := svc.IssueAccessToken(u, time.Minute)
+	require.NoError(t, err)
+
+	// Read the raw claims rather than the parsed domain.Claims: the point is
+	// what was SIGNED, not what the validator chooses to surface.
+	parsed, _, err := jwt.NewParser().ParseUnverified(tokenStr, jwt.MapClaims{})
+	require.NoError(t, err)
+	claims, ok := parsed.Claims.(jwt.MapClaims)
+	require.True(t, ok)
+
+	for _, name := range []string{"roles", "permissions"} {
+		if v, present := claims[name]; present {
+			t.Errorf("the access token signs a %q claim (%v) that nothing in this service "+
+				"enforces; a downstream reader would trust it (E26)", name, v)
+		}
+	}
+
+	// The control: the token is still a usable access token. This must fail
+	// because a privilege claim is absent, never because minting broke.
+	require.Equal(t, u.ID.String(), claims["sub"])
+	require.Equal(t, string(domain.ClassAccess), claims["cls"])
+
+	got, err := svc.Validate(tokenStr, domain.ClassAccess)
+	require.NoError(t, err, "the token no longer validates; this test is about claims, not minting")
+	require.Equal(t, u.ID.String(), got.Subject)
+	require.Empty(t, got.Roles, "roles surfaced from a token that never carried them")
+	require.Empty(t, got.Permissions)
+}
+
+// TestValidateStillReadsPrivilegeClaimsFromOlderTokens: the parse side keeps
+// reading `roles`/`permissions` on purpose.
+//
+// Tokens minted before E26 stay valid until they expire. A validator that
+// dropped the fields would return a different Claims for the same token
+// depending on when it was issued — a difference no caller could see coming.
+// Reading a claim commits to nothing; minting one does.
+func TestValidateStillReadsPrivilegeClaimsFromOlderTokens(t *testing.T) {
+	svc := newTestService(t)
+	u := testUser()
+
+	// Mint by hand, the way this service did before E26.
+	now := time.Now()
+	legacy, err := svc.sign(jwt.MapClaims{
+		"sub":         u.ID.String(),
+		"email":       u.Email,
+		"name":        u.Name,
+		"roles":       []string{"admin"},
+		"permissions": []string{"users:delete"},
+		"scope":       "access",
+		"cls":         string(domain.ClassAccess),
+		"iss":         testIssuer,
+		"aud":         testAudience,
+		"iat":         now.Unix(),
+		"exp":         now.Add(time.Minute).Unix(),
+	})
+	require.NoError(t, err)
+
+	got, err := svc.Validate(legacy, domain.ClassAccess)
+	require.NoError(t, err, "a token issued before E26 stopped validating")
+	require.Equal(t, []string{"admin"}, got.Roles)
+	require.Equal(t, []string{"users:delete"}, got.Permissions)
+}
