@@ -5,6 +5,8 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"time"
+
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -50,5 +52,9 @@ func (s *Service) VerifyMFASetup(ctx context.Context, userID string, code string
 	if err := s.userRepo.Save(ctx, user); err != nil {
 		return nil, err
 	}
+	// After Save succeeds, not before: reporting an enablement that failed to
+	// persist would notify about a second factor the account does not
+	// actually have yet.
+	s.notifier.MFAEnabled(ctx, userID, time.Now())
 	return &MfaVerifySetupResponse{BackupCodes: backupCodes}, nil
 }

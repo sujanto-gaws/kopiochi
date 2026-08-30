@@ -40,6 +40,19 @@ type Config struct {
 	// token's exp (and iat/nbf, if present). Kept small and non-zero: see
 	// docs/architectures/04-security/token-architecture.md.
 	TokenLeeway time.Duration `mapstructure:"token_leeway"`
+
+	// Notifier reports security-relevant events — account lockouts, MFA
+	// enrollment — to a downstream channel. It is a dependency and not a
+	// setting, and it is on Config anyway for the same reason
+	// notification.Config carries EmailAddressResolver: Config is already
+	// this module's whole contract with whoever builds it, and a second
+	// constructor parameter would still need somewhere for a nil default to
+	// live. The interface is declared in application/notifier.go, by the
+	// consumer of the notification the composition root eventually sends
+	// (R2); nothing here imports modules/notification. A nil value is
+	// replaced with application.NopNotifier by application.NewService — the
+	// same treatment Auditor gets.
+	Notifier application.SecurityNotifier `mapstructure:"-"`
 }
 
 // Validate rejects configuration that would silently produce an unusable or
@@ -130,6 +143,11 @@ func New(deps module.Deps, cfg Config) (*module.Module, error) {
 		// Security events go to the audit stream, not the request log: rare,
 		// never sampled, and read months later during an incident review.
 		auditlog.New(audit.New(deps.Logger)),
+		// cfg.Notifier may be nil — a deployment with notifications off, or a
+		// caller (a test) with nothing to wire — and NewService's own nil
+		// check replaces it with NopNotifier rather than this package
+		// choosing a default value.
+		cfg.Notifier,
 	)
 
 	// authMW is derived from the same jwtSvc used to mint tokens, so it is

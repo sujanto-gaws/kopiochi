@@ -9,13 +9,14 @@
 // the notification lose nothing.
 //
 // The constructor returns (*module.Module, error) — two values, like every
-// other module in this tree. The plan and the blueprint each describe a third
-// return value carrying the service, and nothing consumes one: module.Module
-// already carries the Close the dispatcher needs, and when a cross-module
-// producer arrives it will declare the narrow interface it needs on its own
-// side and be satisfied at the composition root (R2). Adding a return value
-// then is one line at one call site; publishing one now is a contract nobody
-// asked for.
+// other module in this tree, and unchanged by D9. The plan and the blueprint
+// each described a third return value carrying the service; that shape was
+// never built (E25) and still is not. When identity — the first cross-module
+// producer — needed to reach Enqueue, R2's answer turned out not to touch
+// this signature at all: NewEnqueuer, in enqueuer.go, builds a second,
+// non-dispatching Enqueuer from the same Config this function takes, over the
+// same repositories and the same routing table buildSenders assembles here.
+// module.Module still carries only Name/Routes/Migrations/Close.
 package notification
 
 import (

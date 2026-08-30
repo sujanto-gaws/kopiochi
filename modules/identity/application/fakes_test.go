@@ -354,6 +354,7 @@ type harness struct {
 	mfaSvc   fakeMFAService
 	mfaStore *fakeMFAStore
 	audit    *recordingAuditor
+	notifier *recordingNotifier
 }
 
 func newHarness(users ...*domain.User) *harness {
@@ -364,8 +365,9 @@ func newHarness(users ...*domain.User) *harness {
 		mfaSvc:   fakeMFAService{validCode: "123456"},
 		mfaStore: &fakeMFAStore{backupCode: "backup-code-1"},
 		audit:    &recordingAuditor{},
+		notifier: &recordingNotifier{},
 	}
-	h.svc = NewService(h.users, fakeHasher{}, h.issuer, h.tokens, testConfig(), h.mfaSvc, h.mfaStore, h.audit)
+	h.svc = NewService(h.users, fakeHasher{}, h.issuer, h.tokens, testConfig(), h.mfaSvc, h.mfaStore, h.audit, h.notifier)
 	return h
 }
 
@@ -452,4 +454,61 @@ func (a *recordingAuditor) count(action string) int {
 		}
 	}
 	return n
+}
+
+// recordingNotifier captures emitted security notifications so a test can
+// assert one was actually raised, the same way recordingAuditor does for the
+// audit port and for the same reason: "was the notifier invoked?" is what the
+// D9 acceptance criteria ask for, and a concrete adapter would make that
+// untestable at this layer.
+type recordingNotifier struct {
+	mu     sync.Mutex
+	events []notifierEvent
+}
+
+type notifierEvent struct {
+	Action string
+	UserID string
+	At     time.Time
+}
+
+func (n *recordingNotifier) record(e notifierEvent) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	n.events = append(n.events, e)
+}
+
+func (n *recordingNotifier) AccountLocked(_ context.Context, userID string, lockedUntil time.Time) {
+	n.record(notifierEvent{Action: "account.locked", UserID: userID, At: lockedUntil})
+}
+
+func (n *recordingNotifier) MFAEnabled(_ context.Context, userID string, enabledAt time.Time) {
+	n.record(notifierEvent{Action: "mfa.enabled", UserID: userID, At: enabledAt})
+}
+
+// find returns the first event with the given action, and whether one existed.
+func (n *recordingNotifier) find(action string) (notifierEvent, bool) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+
+	for _, e := range n.events {
+		if e.Action == action {
+			return e, true
+		}
+	}
+	return notifierEvent{}, false
+}
+
+// count returns how many events with the given action were raised.
+func (n *recordingNotifier) count(action string) int {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+
+	c := 0
+	for _, e := range n.events {
+		if e.Action == action {
+			c++
+		}
+	}
+	return c
 }

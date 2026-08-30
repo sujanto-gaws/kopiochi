@@ -207,7 +207,13 @@ func TestBuildApp_FailsOnIncompleteNotificationEmailConfig(t *testing.T) {
 	app, err := BuildApp(cfg, lazyDB(t), zerolog.Nop())
 	require.Error(t, err)
 	require.Nil(t, app)
-	require.Contains(t, err.Error(), "build notification module")
+	// D9: BuildApp now validates notificationCfg once, up front, via
+	// newSecurityNotifier -> notification.NewEnqueuer -> cfg.Validate — ahead
+	// of building the identity module, so an invalid Notification section
+	// fails there and never reaches notification.New at all. The boot still
+	// fails closed with the same underlying settings named; only the wrapping
+	// prefix moved.
+	require.Contains(t, err.Error(), "build security notifier")
 	require.Contains(t, err.Error(), "email.smtp_host is required")
 	require.Contains(t, err.Error(), "APP_NOTIFICATION_EMAIL_PASSWORD")
 }

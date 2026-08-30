@@ -21,6 +21,7 @@ import (
 
 	"github.com/sujanto-gaws/kopiochi/internal/db"
 	"github.com/sujanto-gaws/kopiochi/modules/identity"
+	identityapp "github.com/sujanto-gaws/kopiochi/modules/identity/application"
 	identityrepo "github.com/sujanto-gaws/kopiochi/modules/identity/infrastructure/persistence/repository"
 	"github.com/sujanto-gaws/kopiochi/modules/identity/infrastructure/token"
 	identitytransport "github.com/sujanto-gaws/kopiochi/modules/identity/transport"
@@ -47,6 +48,21 @@ func BuildApp(cfg *config.Config, db bun.IDB, log zerolog.Logger) (*App, error) 
 
 	var mods []*module.Module
 
+	// Built once, ahead of both modules that need it: identity's
+	// SecurityNotifier is derived from it below, and the notification module
+	// itself is built from this same value further down. One Config, mapped
+	// once, is what keeps the two from ever seeing a different notification
+	// configuration for the same deployment.
+	notificationCfg, err := notificationConfig(deps, cfg)
+	if err != nil {
+		return nil, fmt.Errorf("build notification config: %w", err)
+	}
+
+	securityNotifier, err := newSecurityNotifier(deps, notificationCfg, log)
+	if err != nil {
+		return nil, fmt.Errorf("build security notifier: %w", err)
+	}
+
 	identityMod, err := identity.New(deps, identity.Config{
 		PrivateKeyPath:        cfg.Auth.PrivateKeyPath,
 		PublicKeyPath:         cfg.Auth.PublicKeyPath,
@@ -59,6 +75,7 @@ func BuildApp(cfg *config.Config, db bun.IDB, log zerolog.Logger) (*App, error) 
 		MaxFailedAttempts:     cfg.Auth.MaxFailedAttempts,
 		LockDuration:          cfg.Auth.LockDuration,
 		TokenLeeway:           cfg.Auth.TokenLeeway,
+		Notifier:              securityNotifier,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("build identity module: %w", err)
@@ -80,7 +97,7 @@ func BuildApp(cfg *config.Config, db bun.IDB, log zerolog.Logger) (*App, error) 
 	// goroutine. serve pushes every module's Close onto the lifecycle stack,
 	// which is what stops it; a caller that builds an App and drops it — a
 	// test — must call Close itself.
-	notificationMod, err := newNotificationModule(deps, cfg)
+	notificationMod, err := notification.New(deps, notificationCfg)
 	if err != nil {
 		return nil, fmt.Errorf("build notification module: %w", err)
 	}
@@ -155,8 +172,13 @@ func newAuthMiddleware(cfg *config.Config) (func(http.Handler) http.Handler, err
 	return identitytransport.AuthRequired(jwtSvc), nil
 }
 
-// newNotificationModule maps the host's notification config onto the module's
-// own Config and builds it.
+// notificationConfig maps the host's notification config onto the module's
+// own Config. It builds the Config only — not the module — so BuildApp can
+// hand the identical value to both notification.NewEnqueuer (identity's
+// SecurityNotifier) and notification.New (the module itself), rather than
+// mapping cfg.Notification twice and risking the two drift apart the way a
+// single mapping already can (E29: a field added to the module's Config and
+// not mirrored here is silently dropped, not a compile error).
 //
 // The mapping is written out field by field, like identity's, rather than
 // handing the module the host's struct: the module's Config is its contract
@@ -165,11 +187,12 @@ func newAuthMiddleware(cfg *config.Config) (func(http.Handler) http.Handler, err
 // module. The cost is this function; the benefit is that a renamed field here
 // is a compile error rather than a silently-zeroed setting.
 //
-// Validation belongs to the module and runs inside New (fail closed: email
-// enabled without a host, a from address or APP_NOTIFICATION_EMAIL_PASSWORD is
-// a boot failure, not a default). internal/config cannot do it, because the
-// shared kernel must not import a business module.
-func newNotificationModule(deps module.Deps, cfg *config.Config) (*module.Module, error) {
+// Validation belongs to the module and runs inside New and NewEnqueuer alike
+// (fail closed: email enabled without a host, a from address or
+// APP_NOTIFICATION_EMAIL_PASSWORD is a boot failure, not a default).
+// internal/config cannot do it, because the shared kernel must not import a
+// business module.
+func notificationConfig(deps module.Deps, cfg *config.Config) (notification.Config, error) {
 	n := cfg.Notification
 
 	// The address resolver is the cross-module edge, and it is built here for
@@ -199,11 +222,11 @@ func newNotificationModule(deps module.Deps, cfg *config.Config) (*module.Module
 	if n.Enabled {
 		var err error
 		if authMW, err = newAuthMiddleware(cfg); err != nil {
-			return nil, err
+			return notification.Config{}, err
 		}
 	}
 
-	return notification.New(deps, notification.Config{
+	return notification.Config{
 		Enabled:              n.Enabled,
 		Auth:                 authMW,
 		EmailAddressResolver: resolver,
@@ -233,7 +256,34 @@ func newNotificationModule(deps module.Deps, cfg *config.Config) (*module.Module
 			Enabled: n.LogSender.Enabled,
 			Channel: n.LogSender.Channel,
 		},
-	})
+	}, nil
+}
+
+// newSecurityNotifier builds identity's SecurityNotifier over the
+// notification module's outbox.
+//
+// It uses notification.NewEnqueuer, not the *application.Service the
+// notification module builds for itself inside New: module.Module exposes
+// nothing but Name/Routes/Migrations/Close (R2), so by the time notification.
+// New has returned one there is no handle left to reach Enqueue through.
+// NewEnqueuer is the module's own answer to that — a second, non-dispatching
+// build from the same Config — documented at modules/notification/
+// enqueuer.go and modules/notification/module.go.
+//
+// A disabled notification module gets identity's own NopNotifier directly,
+// rather than an adapter wrapping NewEnqueuer's no-op Enqueuer: both behave
+// identically, but skipping the adapter means "notifications are off" has one
+// obvious shape to read here instead of two equivalent ones.
+func newSecurityNotifier(deps module.Deps, notificationCfg notification.Config, log zerolog.Logger) (identityapp.SecurityNotifier, error) {
+	if !notificationCfg.Enabled {
+		return identityapp.NopNotifier(), nil
+	}
+
+	enqueue, err := notification.NewEnqueuer(deps, notificationCfg)
+	if err != nil {
+		return nil, fmt.Errorf("build notification enqueuer: %w", err)
+	}
+	return newSecurityNotifierAdapter(enqueue, log), nil
 }
 
 // identityEmailResolver answers "what is this recipient's email address" out of
