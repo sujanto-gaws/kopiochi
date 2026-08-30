@@ -256,10 +256,24 @@ guardrail 4). Also: idempotency-key conflict handled as no-op at the SQL level.
 **Files:** `modules/notification/infrastructure/sender/log.go`,
 `modules/notification/infrastructure/template/renderer.go`,
 `modules/notification/infrastructure/template/templates/*.tmpl` + tests (new).
-**Do:** Renderer over `embed.FS`, resolving `<key>.<channel>.tmpl` naming (document
-the convention in a package comment); missing template ⇒ typed error the dispatcher
-maps to dead. Log sender: writes rendered message summary to zerolog at info, always
-succeeds — the dev/test channel implementation.
+**Do:** Renderer over `embed.FS`, resolving **`<key>.<channel>.<part>.tmpl`** naming
+(document the convention in a package comment); missing template ⇒ typed error. Log
+sender: writes rendered message summary to zerolog at info, always succeeds — the
+dev/test channel implementation.
+
+> **Corrected 2026-08-30, delivered as #80.** This line said `<key>.<channel>.tmpl`,
+> which stopped being executable when E14 gave `RenderedMessage` an `HTMLBody`: a family
+> then has three parts (`subject`, `text`, `html`) and one name can carry one. Blueprint
+> §3 held the complementary half — `*.subject/*.text/*.html`, with no channel — so
+> neither document's convention worked alone. The shipped name is the union, parsed
+> right-to-left because the key is the segment allowed to contain dots.
+>
+> **"the dispatcher maps to dead" describes a mapping that already exists and does not
+> depend on the type.** `application/dispatch.go`'s `attemptDelivery` wraps *every*
+> renderer error in `domain.ErrNonRetryable` by construction. The sentinels are still
+> worth having — they separate a deployment bug from a producer bug — and #80 wraps
+> `ErrNonRetryable` into them so the classification travels with the failure instead of
+> depending on the one caller that currently applies it.
 **Accept:** renderer tests for found/missing/malformed-payload; ship at least the
 `security.password_changed` template family as the working example.
 
@@ -271,11 +285,42 @@ section), `config/default.yaml`, `.env.example`, `cmd/api/container.go` + tests.
 **Do:** Config per blueprint §8, `Validate()` fails closed (email enabled ⇒
 host/from/password required; backoff_base ≤ backoff_cap; positive batch/workers).
 Dispatcher: ticker at `poll_interval`, `workers` concurrent `DispatchBatch` calls,
-plus the stuck-`sending` sweep — rows in `sending` older than a threshold (config,
-default 5m) reset to `pending`; context-aware `Stop()` that finishes in-flight sends.
-`New(deps module.Deps, cfg Config) (*module.Module, Service, error)` where `Service`
-is a root-level interface (the settled constructor decision); `enabled: false` ⇒
-routeless module, nil-safe no-op Service, no dispatcher. Wire into `BuildApp`;
+plus the stuck-`sending` sweep — **already built, do not write a new one:** call
+`domain.NotificationRepository.ClaimStalled(ctx, n, stalledBefore, now)` (landed in #63),
+then run each returned row through `RecoverStalled` and `Save` it, per row. `ClaimStalled`
+takes ownership under `FOR UPDATE SKIP LOCKED` and **deliberately does not change
+status** — a set-based recovery `UPDATE` would be a second, untested copy of the state
+machine (E9c) — and re-stamps `claimed_at`, so a sweeper that dies defers the row by
+another window rather than leaving it instantly eligible again; context-aware `Stop()` that finishes in-flight sends.
+**`New(deps module.Deps, cfg Config) (*module.Module, error)`** — two values, matching
+`modules/identity/module.go:88` and `modules/user/module.go:75`; `enabled: false` ⇒
+routeless module, no dispatcher, `Close` still safe to call.
+
+> **Corrected 2026-08-30. This line called a three-value shape "the settled constructor
+> decision", and no such constructor exists anywhere in the tree.** Four documents
+> described this and only one matched the code:
+>
+> | Source | Shape |
+> |---|---|
+> | `modules/identity/module.go:88`, `modules/user/module.go:75` | **`(*module.Module, error)`** |
+> | this line, before the correction | `(*module.Module, Service, error)` |
+> | blueprint §3 | `(*module.Module, *application.Service, error)` |
+> | `.claude/agents/docs-scribe.md:33` | `(*module.Module, RootInterface, error)` |
+>
+> `RootInterface` appears **nowhere in the Go tree** — one hit, in an agent definition.
+> That is **E25**, still open, and it is the human's to close. Two agents refused to build
+> on it independently: C1 would not document it, and D5 flagged it unprompted.
+>
+> **Why two values, beyond "the code says so".** `module.Module` already carries
+> `Close func() error`, which is where a dispatcher's shutdown belongs — the need that
+> made a third value look necessary. And nothing consumes a returned `Service` today;
+> `internal/authn`'s package doc states the rule this repo runs on: *"What is absent is
+> absent on purpose, and stays absent until a second consumer asks for it."*
+>
+> **The blueprint's need is real but is D9's, not D6's** — see the note under §10 there.
+> When identity needs to enqueue, R2 makes that an interface declared by the **consumer**
+> and satisfied at the composition root, which may not change this signature at all.
+> Adding a return value later is one line at one call site. Wire into `BuildApp`;
 register `Close` per existing lifecycle pattern.
 **Accept:** boot with module enabled+disabled both clean; dispatcher shutdown test
 (start, enqueue, stop, assert no goroutine leak via the repo's pattern or
