@@ -14,7 +14,7 @@ func TestNewService_NilAuditorIsReplaced(t *testing.T) {
 
 	users := newFakeUserRepo(testUser("alice"))
 	svc := NewService(users, fakeHasher{}, &fakeTokenIssuer{}, newFakeTokenStore(),
-		testConfig(), fakeMFAService{validCode: "123456"}, &fakeMFAStore{}, nil)
+		testConfig(), fakeMFAService{validCode: "123456"}, &fakeMFAStore{}, nil, nil)
 
 	// Any path that audits will panic if the nil was kept.
 	_, _ = svc.Login(context.Background(), LoginRequest{Username: "nobody", Password: "x"})

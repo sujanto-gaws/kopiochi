@@ -29,9 +29,12 @@ func (s *Service) Login(ctx context.Context, req LoginRequest) (*TokenResponse, 
 		s.audit.LoginFailed(ctx, req.Username, ReasonBadPassword)
 		// Emitted only on the transition, so the event means "this account
 		// just locked" rather than repeating once per subsequent attempt —
-		// which is what makes it alertable.
+		// which is what makes it alertable. The notifier gets the same
+		// guard, for the same reason, and user.LockedUntil is guaranteed
+		// non-nil here: IsLocked() just returned true from it.
 		if !wasLocked && user.IsLocked() {
 			s.audit.AccountLocked(ctx, user.ID.String())
+			s.notifier.AccountLocked(ctx, user.ID.String(), *user.LockedUntil)
 		}
 		return nil, ErrInvalidCredentials
 	}
