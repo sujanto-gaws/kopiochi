@@ -335,6 +335,48 @@ costing anything.
 
 Ordered by severity.
 
+## E33 — MFA ENABLEMENT WILL BE NOTIFIED BUT NOT AUDITED ⚠ NEW, one line
+**Found by the D9 agent (#95), outside its own scope; sharpened here.** `Auditor.MFAEnrolled`
+is declared (`modules/identity/application/audit.go:23`), implemented against the real audit sink
+(`modules/identity/infrastructure/auditlog/auditlog.go:60`, emitting `audit.ActionMFAEnrolled`),
+and **called from nowhere**. Activating a second factor goes unaudited today.
+
+**#95 makes it conspicuous rather than merely absent.** D9 adds
+`s.notifier.MFAEnabled(ctx, userID, ...)` to `modules/identity/application/mfa_verify_setup.go`,
+at exactly the point where `s.audit.MFAEnrolled` should already have been. Once #95 merges, that
+function **tells the user their second factor was enabled and leaves no audit record of it** —
+with the audit method fully built, one line away, on a port the same Service already holds.
+
+Of the two ports, audit is the one whose absence matters in an incident review: the notification
+is a courtesy to the account holder, the audit row is the evidence.
+
+**Not fixed here, deliberately.** The one-line fix belongs immediately beside the line #95 adds,
+and #95 is open against that exact function — fixing it now would conflict with a green PR to
+save nothing. **Do it after #95 merges.** Nothing blocks in the meantime.
+
+## E34 — **FIXED 2026-08-30 in #96.** The documented idempotency key silently dropped a channel
+**Found by the D9 agent (#95).** Two places specified `<event>:<userID>:<eventID>` — the comment
+on the field itself (`modules/notification/application/dto.go:37`, calling it "the natural form")
+and task D9's own spec in the plan.
+
+`idx_notifications_idem` is `ON (idempotency_key) WHERE idempotency_key IS NOT NULL`: **one
+partial-unique index over the whole outbox, not scoped by channel.** So for any event that fans
+out to more than one channel, a shared key does not deduplicate a retry — it makes the second
+channel's `Enqueue` collide with the first channel's row and vanish through
+`ON CONFLICT DO NOTHING`. The caller is told the enqueue succeeded, no dead row is written, and
+that channel is never delivered. Silent, and invisible to the dead-letter path that exists to
+catch exactly this class of loss.
+
+**The agent caught it by reading the migration rather than trusting the comment**, and shipped a
+four-segment key with tests for per-channel distinctness and per-episode idempotency. Both
+documents corrected in #96, stating the mechanism rather than only the new format so the reason
+survives the next edit.
+
+**Worth noting as a dispatch lesson:** the brief I gave told it to justify its key choice in a
+comment. It went further and checked the index the key is enforced by. The instruction that paid
+off was "if something in this brief turns out to be wrong, say so directly" — the spec it was
+handed was the thing that was wrong.
+
 ## E27 — `module.Module`'s OPTIONAL FIELDS ARE HALF-GUARDED, AND THE UNGUARDED ONE PANICS ⚠ NEW
 **Found building D6 (#82), verified independently.** `internal/httpx/routes.go:63` calls
 `m.Routes(v1)` with **no nil check**, inside the `/api/v1` route walk. A module whose `Routes`
