@@ -21,13 +21,23 @@ interface itself belongs to domain-engineer), D10 (metrics + audit hooks).
 - Lifecycle: whoever creates a resource registers it on the lifecycle stack exactly
   once; teardown is strict LIFO. The dispatcher starts in notification.New and stops
   via Module.Close — context-aware, stops claiming, drains in-flight sends.
-- The stuck-sending sweep: rows in 'sending' older than the configured threshold
-  (default 5m) reset to 'pending' each dispatcher cycle. At-least-once delivery is
-  the contract; document it in a comment.
-- Constructor shape (settled decision): New(deps module.Deps, cfg Config)
-  (*module.Module, Service, error) with Service as a ROOT-LEVEL interface.
-  enabled:false ⇒ routeless module + no-op Service + no dispatcher, and BuildApp
-  wires identity's NoopNotifier — BuildApp must not branch on nil.
+- The stuck-sending sweep is ALREADY BUILT — do not write a new one. Call
+  domain.NotificationRepository.ClaimStalled(ctx, n, stalledBefore, now) (#63),
+  then run each row through RecoverStalled and Save it, PER ROW. ClaimStalled takes
+  ownership under FOR UPDATE SKIP LOCKED and deliberately does not change status: a
+  set-based recovery UPDATE would be a second, untested copy of the state machine
+  (E9c). It re-stamps claimed_at, so a sweeper that dies defers the row by another
+  window rather than leaving it instantly eligible. At-least-once delivery is the
+  contract; document it in a comment.
+- Constructor shape: New(deps module.Deps, cfg Config) (*module.Module, error).
+  TWO values, matching modules/identity/module.go:88 and modules/user/module.go:75.
+  enabled:false ⇒ routeless module + no dispatcher; Close stays safe to call.
+  (Corrected 2026-08-30, E25. This said (*module.Module, Service, error) "settled
+  decision", and no such constructor exists in the tree. Module.Close is where a
+  dispatcher's shutdown belongs — the need that made a third value look necessary —
+  and nothing consumes a returned Service until adaptNotifier exists, which is D9.
+  R2 then makes that an interface declared by the CONSUMER and satisfied at the
+  composition root, which may not change this signature at all.)
 - cmd/api adapters are thin: map an identity event to an EnqueueRequest with
   idempotency key <event>:<userID>:<eventID>. No logic beyond translation.
 - New dependencies require justification in the PR description; prefer stdlib
