@@ -226,7 +226,7 @@ Derived from the repository queries that exist today
 (`modules/identity/infrastructure/persistence/repository/`):
 
 ```sql
-CREATE UNIQUE INDEX idx_auth_users_email_lower  ON auth_users (lower(email)) WHERE deleted_at IS NULL;
+CREATE UNIQUE INDEX idx_auth_users_email_lower  ON auth_users (lower(email));
 CREATE INDEX idx_refresh_token_user_id          ON auth_refresh_tokens (user_id);
 CREATE UNIQUE INDEX idx_refresh_token_hash      ON auth_refresh_tokens (token_hash);
 CREATE INDEX idx_refresh_token_expires_at       ON auth_refresh_tokens (expires_at);   -- cleanup sweeps
@@ -235,22 +235,72 @@ CREATE INDEX idx_refresh_token_expires_at       ON auth_refresh_tokens (expires_
 The `lower(email)` unique index matters: `FindByEmail` is on the login path, and
 without it `User@example.com` and `user@example.com` become two accounts.
 
+> **Corrected 2026-08-30 (E19).** The first index above carried
+> `WHERE deleted_at IS NULL` until now. Migration `00007` created it **without**
+> that clause, and **`deleted_at` exists in no migration in this repository** —
+> there is no soft-delete column anywhere, so the "Soft delete" convention in the
+> table above describes something the schema does not implement. A partial index
+> in a doc that is a full index in the database is the kind of difference nobody
+> notices until a query plan does.
+
 ### Recovering from the current state
 
-The existing `users`/`products` migrations cannot be edited in place if any
-environment has applied them. Two paths:
+> **Rewritten 2026-08-30 (E19, E22).** The two paths this section used to offer
+> were both wrong, and the wronger of the two was the one it called most likely.
+> They are quoted at the end so the correction is checkable.
 
-**Path A — no environment has applied them (most likely).** Delete both files and
-start the module chains at `0001`. Simplest; verify with
-`make migrate-status` against every environment first.
+**There is one path, and it does not depend on what any environment has
+applied.** Migrations are append-only: ADR-010 makes a mistake something you
+correct with a *new* migration, never by editing or deleting an existing one,
+and this repository has never done otherwise — `git log --diff-filter=MRD --
+migrations/` returns nothing. `00001` and `00002` stay exactly where they are,
+applied or not.
 
-**Path B — some environment has applied them.** Keep them as the global chain's
-history and add a migration dropping `products`, then start module chains fresh.
-`users` itself is still backed by a live bun model
-(`internal/infrastructure/persistence/models/user.go`) and moves with the
-profile-user module rather than being reshaped.
+Everything after them is an ordinary forward migration:
 
-Confirm which applies before writing any new migration.
+- **`users` was reshaped**, not moved and not deleted, by
+  `20260830090000_users_becomes_identity_profile.sql`. It is now the profile of
+  an identity, keyed by `auth_users.id`. The `BIGSERIAL`/uuid mismatch noted
+  above is exactly why it had to be: a profile whose key is unrelated to any
+  identity gives a handler nothing to compare a caller against, which is how the
+  same table carried an IDOR (E16).
+- **`products` remains**, unused, and removing it is an ordinary migration
+  whenever someone wants it gone. It is a boilerplate leftover with no bun model
+  and no Go code referencing it anywhere.
+
+**Write the migration so the answer to "has any environment applied this?" does
+not change it.** The reshape back-fills by joining `lower(email)` against
+`auth_users` and *raises* on any row it cannot map, naming the values. On an
+empty table the back-fill is a no-op and the result is indistinguishable from
+starting clean; on a populated one it refuses to discard a profile it cannot
+attach to an identity. `make migrate-status` against every environment is still
+worth running before you ship — as a pre-deploy check, not as a decision you are
+blocked on.
+
+<details>
+<summary>What this section said before, and why both paths were wrong</summary>
+
+> **Path A — no environment has applied them (most likely).** Delete both files
+> and start the module chains at `0001`.
+>
+> **Path B — some environment has applied them.** Keep them as the global
+> chain's history and add a migration dropping `products`, then start module
+> chains fresh. `users` itself is still backed by a live bun model
+> (`internal/infrastructure/persistence/models/user.go`) and moves with the
+> profile-user module rather than being reshaped.
+
+**Path A contradicted ADR-010 outright** — it told you to delete applied
+migration files, which is the one thing the immutability rule forbids, and it
+was labelled the likely case.
+
+**Path B's claim that `users` "moves rather than being reshaped"** is the
+opposite of what happened, and it cited
+`internal/infrastructure/persistence/models/user.go` as a live model — **a file
+that does not exist**; Phase 3.6b moved it. E19 raised the contradiction, and it
+was ruled on rather than resolved locally: the same file already stated, two
+paragraphs above, the `BIGSERIAL`/uuid constraint that forces the reshape.
+
+</details>
 
 ---
 

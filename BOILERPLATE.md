@@ -276,8 +276,20 @@ routes and its own protection through a `Routes(chi.Router)` method, and
 `httpx.Mount` mounts each module's `Routes` under `/api/v1`.
 
 Give your handler a `Routes` method (see
-`modules/user/transport/user.go` or
-`modules/identity/transport/auth.go` for working examples):
+`modules/identity/transport/auth.go` for a working example):
+
+> **`modules/user/transport/user.go` is no longer the CRUD example to copy, and
+> this pointer used to send you there.** That module now exposes two routes over
+> the caller's own profile and nothing addressed by id, because its entity has
+> no field a caller supplies. What it *is* still worth reading for is the shape
+> of a route that cannot be asked for somebody else's record: the handler takes
+> its id from the `authn.Principal` and there is no path parameter to take one
+> from. Copying its previous shape is how a generated module inherited an IDOR
+> — see E16 and E21 on the task board.
+>
+> **This repository currently has no full-CRUD worked example.** Saying so is
+> better than pointing at one that teaches the wrong thing; `modules/notification`
+> will carry a richer read/write surface when its transport lands.
 
 ```go
 // Mounted under /api/v1, so these serve at /api/v1/products, etc.

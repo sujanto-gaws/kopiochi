@@ -55,11 +55,16 @@ checked in are:
 
 ```
 migrations/
-├── 00001_create_users.sql                  # users
-├── 00002_create_products.sql               # products
-├── 00003_create_auth_users.sql             # auth_users (identity module)
-├── 00004_create_auth_refresh_tokens.sql    # auth_refresh_tokens (identity module)
-└── 00005_create_auth_mfa_backup_codes.sql  # auth_mfa_backup_codes (identity module)
+├── 00001_create_users.sql                       # users
+├── 00002_create_products.sql                    # products (unused; no model, no code)
+├── 00003_create_auth_users.sql                  # auth_users (identity module)
+├── 00004_create_auth_refresh_tokens.sql         # auth_refresh_tokens (identity module)
+├── 00005_create_auth_mfa_backup_codes.sql       # auth_mfa_backup_codes (identity module)
+├── 00006_refresh_token_families.sql             # reuse detection (identity module)
+├── 00007_case_insensitive_identifiers.sql       # lower(email)/lower(username) uniqueness
+├── 20260808170025_create_notifications.sql      # notifications, preferences (notification module)
+├── 20260829120000_notifications_claimed_at.sql  # stalled-send detection (E9b)
+└── 20260830090000_users_becomes_identity_profile.sql  # users becomes a profile keyed by auth_users.id (E16)
 ```
 
 A migration created with `make migrate-create` is timestamp-named instead, e.g.
@@ -135,7 +140,10 @@ Edit the file with your SQL:
 -- +goose StatementBegin
 CREATE TABLE orders (
     id BIGSERIAL PRIMARY KEY,
-    user_id BIGINT NOT NULL REFERENCES users(id),
+    -- uuid, referencing the identity. `users` is the PROFILE of an identity and
+    -- is keyed by auth_users.id since E16; it has no key of its own, so there is
+    -- no integer here to point at. A BIGINT FK to users(id) will not apply.
+    user_id uuid NOT NULL REFERENCES auth_users(id),
     total DECIMAL(10, 2) NOT NULL DEFAULT 0.00,
     status VARCHAR(50) NOT NULL DEFAULT 'pending',
     created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
@@ -231,9 +239,9 @@ DROP TABLE IF EXISTS products;
 #### 1. **Use IF EXISTS / IF NOT EXISTS**
 
 ```sql
-CREATE TABLE IF NOT EXISTS users (...);
-DROP TABLE IF EXISTS users;
-CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
+CREATE TABLE IF NOT EXISTS orders (...);
+DROP TABLE IF EXISTS orders;
+CREATE INDEX IF NOT EXISTS idx_orders_user_id ON orders(user_id);
 DROP INDEX IF EXISTS idx_users_email;
 ```
 
@@ -246,7 +254,7 @@ Use `-- +goose StatementBegin` and `-- +goose StatementEnd` for multi-line state
 -- +goose StatementBegin
 CREATE TABLE orders (
     id BIGSERIAL PRIMARY KEY,
-    user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE
+    user_id uuid NOT NULL REFERENCES auth_users(id) ON DELETE CASCADE
 );
 -- +goose StatementEnd
 

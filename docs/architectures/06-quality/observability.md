@@ -225,8 +225,12 @@ var (
 )
 ```
 
-Label with the **chi route pattern** (`/api/v1/users/{id}`), never the raw path —
-raw paths create unbounded cardinality.
+Label with the **chi route pattern** (`/api/v1/notifications/{id}`), never the
+raw path — raw paths create unbounded cardinality. The pattern is what bounds
+the label set; the ids in it may be integers or uuids and it makes no difference,
+since cardinality follows the number of distinct values, not their shape (BL40).
+
+(This named `/api/v1/users/{id}` until E16 removed that route.)
 
 Database pool metrics from `pool.Stat()`, collected periodically:
 `acquired_conns`, `idle_conns`, `total_conns`, `acquire_duration`. Pool

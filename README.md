@@ -263,14 +263,23 @@ unversioned. The authoritative list is `TestRouteTable` in
 | `POST` | `/api/v1/auth/mfa/setup` | `Bearer <access_token>` | Start MFA enrolment; returns a TOTP secret and QR code URL |
 | `POST` | `/api/v1/auth/mfa/setup/verify` | `Bearer <access_token>` | Confirm enrolment with a TOTP code; returns backup codes |
 
-**Users** — every user route requires a valid access token.
+**Profile** — the profile of the authenticated caller. Both routes require a
+valid access token, and neither takes an id.
 
 | Method | Endpoint | Auth | Description |
 |--------|----------|------|-------------|
-| `POST` | `/api/v1/users` | `Bearer <access_token>` | Create a new user |
-| `GET` | `/api/v1/users/{id}` | `Bearer <access_token>` | Get user by ID |
-| `PUT` | `/api/v1/users/{id}` | `Bearer <access_token>` | Update a user |
-| `DELETE` | `/api/v1/users/{id}` | `Bearer <access_token>` | Delete a user |
+| `POST` | `/api/v1/users/me` | `Bearer <access_token>` | Create the caller's own profile. No body. Idempotent |
+| `GET` | `/api/v1/users/me` | `Bearer <access_token>` | Get the caller's own profile |
+
+> **There is no route that names another user, and that is the design.** A
+> profile is keyed by the identity it belongs to (`auth_users.id`), so the id a
+> handler acts on is the one in the caller's own token — there is nothing else
+> to pass. Earlier versions exposed `POST /api/v1/users` and
+> `GET|PUT|DELETE /api/v1/users/{id}`, where any valid token could read,
+> overwrite or delete any other user's record.
+>
+> The profile carries an id and timestamps and nothing else. A name and an email
+> live on the identity, which is their single source of truth.
 
 > The refresh token is returned as an HttpOnly cookie, not in the JSON body —
 > `access_token` is the only token in the response payload.
@@ -312,21 +321,24 @@ curl -X POST http://localhost:8080/api/v1/auth/login \
 # The refresh token is set as an HttpOnly `refresh_token` cookie.
 ```
 
-**Create User:**
+**Create your profile** (no body, and it is the caller's own — there is no id
+to supply):
 ```bash
-curl -X POST http://localhost:8080/api/v1/users \
-  -H "Authorization: Bearer $ACCESS_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"name":"John Doe","email":"john@example.com"}'
+curl -X POST http://localhost:8080/api/v1/users/me \
+  -H "Authorization: Bearer $ACCESS_TOKEN"
+# => {"id":"3f1b8a54-...","created_at":"...","updated_at":"..."}
 ```
 
-**Get User:**
+Calling it twice is not an error: it returns the same profile.
+
+**Get your profile:**
 ```bash
-curl http://localhost:8080/api/v1/users/1 \
+curl http://localhost:8080/api/v1/users/me \
   -H "Authorization: Bearer $ACCESS_TOKEN"
 ```
 
-Omitting the `Authorization` header on a user route returns `401`.
+Omitting the `Authorization` header on a profile route returns `401`. There is
+no request that fetches somebody else's — the id comes from the token.
 
 **Liveness / readiness:**
 ```bash
@@ -500,7 +512,7 @@ Two modules ship today:
 | Module | Routes | Notes |
 |--------|--------|-------|
 | `modules/identity` | `/api/v1/auth/*` | Login, refresh, logout, MFA. Owns RS256 token issuance and the auth middleware protecting its own routes |
-| `modules/user` | `/api/v1/users*` | Profile CRUD. Takes its auth middleware as a dependency rather than importing identity |
+| `modules/user` | `/api/v1/users/me` | The caller's own profile, keyed by their identity. Takes its auth middleware as a dependency rather than importing identity |
 
 `modules/ofbiz` is an Apache OFBiz `UserLogin` compatibility layer with no
 transport and no wiring — it is carried, not served.

@@ -276,12 +276,18 @@ LIFO stops it first — a scrape landing mid-drain would otherwise report a
 process that is already going away. A failure to bind it is logged, not fatal:
 losing observability is bad, losing the service is worse.
 
-Requests are labelled with the chi **route pattern** (`/api/v1/users/{id}`),
+Requests are labelled with the chi **route pattern** (`/api/v1/notifications/{id}`),
 never the raw path. A raw path makes one time series per distinct URL, so a
-crawler walking `/api/v1/users/1` … `/9999999` creates millions of series and
-takes the Prometheus server down — an availability incident caused by the
-monitoring, from traffic nobody had to authenticate to send. Unmatched paths
+crawler walking `/api/v1/notifications/1` … `/9999999` creates millions of
+series and takes the Prometheus server down — an availability incident caused by
+the monitoring, from traffic nobody had to authenticate to send. Unmatched paths
 collapse to a single `unmatched` label for the same reason.
+
+(This example named `/api/v1/users/{id}` until E16 removed that route. The
+hazard is unchanged and is not about user ids: **any** id-bearing pattern is
+enough, and an attacker does not need the ids to be sequential — a million
+random uuids costs a Prometheus server exactly as much as a million integers.
+BL40.)
 
 Database pool statistics are collected at scrape time rather than on a ticker,
 so there is no goroutine to own and no staleness in a saturation signal.
