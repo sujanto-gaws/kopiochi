@@ -142,23 +142,35 @@ func (h *Handler) MyEndpoint() http.HandlerFunc {
 }
 ```
 
+> **The examples below are a hypothetical `Product` resource, not this
+> repository's code.** They used to be `modules/user`, which made them look like
+> a description of something real — and then E16 removed those routes, because a
+> profile keyed by its own id gave a handler nothing to compare a caller against
+> and any valid token could read or delete any other user's record.
+>
+> `modules/user` now exposes `POST /api/v1/users/me` and `GET /api/v1/users/me`,
+> takes its id from the `authn.Principal`, and has no `@Param id path` anywhere.
+> **If you are annotating a route that takes an id, prefer `string` with a uuid
+> and read `modules/user/transport/user.go` for why an id-bearing route needs an
+> ownership story before it needs a swagger comment.**
+
 ### HTTP Methods
 
 #### GET Endpoint
 
 ```go
-// GetUser handles GET /users/{id}
-// @Summary Get a user by ID
-// @Description Retrieve a user by their unique ID
-// @Tags users
+// GetProduct handles GET /products/{id}
+// @Summary Get a product by ID
+// @Description Retrieve a product by its unique ID
+// @Tags products
 // @Produce json
-// @Param id path int true "User ID"
-// @Success 200 {object} user.UserResponse "User found"
-// @Failure 400 {object} map[string]string "Invalid user ID"
-// @Failure 404 {object} map[string]string "User not found"
+// @Param id path int true "Product ID"
+// @Success 200 {object} product.ProductResponse "Product found"
+// @Failure 400 {object} map[string]string "Invalid product ID"
+// @Failure 404 {object} map[string]string "Product not found"
 // @Failure 500 {object} map[string]string "Internal server error"
-// @Router /users/{id} [get]
-func (h *UserHandler) GetUser() http.HandlerFunc {
+// @Router /products/{id} [get]
+func (h *ProductHandler) GetProduct() http.HandlerFunc {
     return func(w http.ResponseWriter, r *http.Request) {
         // Implementation
     }
@@ -168,18 +180,18 @@ func (h *UserHandler) GetUser() http.HandlerFunc {
 #### POST Endpoint
 
 ```go
-// CreateUser handles POST /users
+// CreateProduct handles POST /products
 // @Summary Create a new user
 // @Description Create a new user with name and email
-// @Tags users
+// @Tags products
 // @Accept json
 // @Produce json
-// @Param request body user.CreateUserRequest true "User creation request"
-// @Success 201 {object} user.UserResponse "User created successfully"
+// @Param request body product.CreateProductRequest true "Product creation request"
+// @Success 201 {object} product.ProductResponse "User created successfully"
 // @Failure 400 {object} map[string]string "Invalid request"
 // @Failure 500 {object} map[string]string "Internal server error"
-// @Router /users [post]
-func (h *UserHandler) CreateUser() http.HandlerFunc {
+// @Router /products [post]
+func (h *ProductHandler) CreateProduct() http.HandlerFunc {
     return func(w http.ResponseWriter, r *http.Request) {
         // Implementation
     }
@@ -189,20 +201,20 @@ func (h *UserHandler) CreateUser() http.HandlerFunc {
 #### PUT Endpoint
 
 ```go
-// UpdateUser handles PUT /users/{id}
+// UpdateProduct handles PUT /products/{id}
 // @Summary Update an existing user
 // @Description Update a user's name and/or email by their ID
-// @Tags users
+// @Tags products
 // @Accept json
 // @Produce json
-// @Param id path int true "User ID"
-// @Param request body user.UpdateUserRequest true "User update request"
-// @Success 200 {object} user.UserResponse "User updated successfully"
+// @Param id path int true "Product ID"
+// @Param request body product.UpdateProductRequest true "Product update request"
+// @Success 200 {object} product.ProductResponse "User updated successfully"
 // @Failure 400 {object} map[string]string "Invalid request"
-// @Failure 404 {object} map[string]string "User not found"
+// @Failure 404 {object} map[string]string "Product not found"
 // @Failure 500 {object} map[string]string "Internal server error"
-// @Router /users/{id} [put]
-func (h *UserHandler) UpdateUser() http.HandlerFunc {
+// @Router /products/{id} [put]
+func (h *ProductHandler) UpdateProduct() http.HandlerFunc {
     return func(w http.ResponseWriter, r *http.Request) {
         // Implementation
     }
@@ -212,17 +224,17 @@ func (h *UserHandler) UpdateUser() http.HandlerFunc {
 #### DELETE Endpoint
 
 ```go
-// DeleteUser handles DELETE /users/{id}
-// @Summary Delete a user by ID
-// @Description Delete a user by their unique ID
-// @Tags users
-// @Param id path int true "User ID"
+// DeleteProduct handles DELETE /products/{id}
+// @Summary Delete a product by ID
+// @Description Delete a product by its unique ID
+// @Tags products
+// @Param id path int true "Product ID"
 // @Success 204 "User deleted successfully"
-// @Failure 400 {object} map[string]string "Invalid user ID"
-// @Failure 404 {object} map[string]string "User not found"
+// @Failure 400 {object} map[string]string "Invalid product ID"
+// @Failure 404 {object} map[string]string "Product not found"
 // @Failure 500 {object} map[string]string "Internal server error"
-// @Router /users/{id} [delete]
-func (h *UserHandler) DeleteUser() http.HandlerFunc {
+// @Router /products/{id} [delete]
+func (h *ProductHandler) DeleteProduct() http.HandlerFunc {
     return func(w http.ResponseWriter, r *http.Request) {
         // Implementation
     }
@@ -234,7 +246,7 @@ func (h *UserHandler) DeleteUser() http.HandlerFunc {
 #### Path Parameters
 
 ```go
-// @Param id path int true "User ID"
+// @Param id path int true "Product ID"
 // @Param username path string true "Username"
 // @Param postId path int true "Post ID"
 ```
@@ -251,8 +263,8 @@ func (h *UserHandler) DeleteUser() http.HandlerFunc {
 #### Request Body
 
 ```go
-// @Param request body user.CreateUserRequest true "User creation request"
-// @Param request body user.UpdateUserRequest true "User update request"
+// @Param request body product.CreateProductRequest true "Product creation request"
+// @Param request body product.UpdateProductRequest true "Product update request"
 ```
 
 #### Header Parameters
@@ -267,10 +279,10 @@ func (h *UserHandler) DeleteUser() http.HandlerFunc {
 #### Success Responses
 
 ```go
-// @Success 200 {object} user.UserResponse "User found"
-// @Success 201 {object} user.UserResponse "User created successfully"
+// @Success 200 {object} product.ProductResponse "Product found"
+// @Success 201 {object} product.ProductResponse "User created successfully"
 // @Success 204 "User deleted successfully"
-// @Success 200 {object} map[string]interface{} "List of users"
+// @Success 200 {object} map[string]interface{} "List of products"
 ```
 
 #### Error Responses
@@ -279,7 +291,7 @@ func (h *UserHandler) DeleteUser() http.HandlerFunc {
 // @Failure 400 {object} map[string]string "Invalid request"
 // @Failure 401 {object} map[string]string "Unauthorized"
 // @Failure 403 {object} map[string]string "Forbidden"
-// @Failure 404 {object} map[string]string "User not found"
+// @Failure 404 {object} map[string]string "Product not found"
 // @Failure 500 {object} map[string]string "Internal server error"
 ```
 
@@ -292,8 +304,8 @@ Add descriptions to your DTO fields using comments:
 ```go
 package user
 
-// CreateUserRequest represents the request body for creating a user
-type CreateUserRequest struct {
+// CreateProductRequest represents the request body for creating a product
+type CreateProductRequest struct {
     // User's full name (required)
     // Example: John Doe
     Name string `json:"name" validate:"required,min=2,max=100"`
@@ -303,8 +315,8 @@ type CreateUserRequest struct {
     Email string `json:"email" validate:"required,email"`
 }
 
-// UserResponse represents the response body for user operations
-type UserResponse struct {
+// ProductResponse represents the response body for user operations
+type ProductResponse struct {
     // Unique identifier
     ID int64 `json:"id"`
     
@@ -327,7 +339,7 @@ type UserResponse struct {
 Add example values to help API consumers understand the expected format:
 
 ```go
-type CreateUserRequest struct {
+type CreateProductRequest struct {
     Name string `json:"name"` // Example: John Doe
     Email string `json:"email"` // Example: john@example.com
 }
@@ -338,7 +350,7 @@ type CreateUserRequest struct {
 Swagger automatically resolves nested types. If your response includes nested objects:
 
 ```go
-type UserResponse struct {
+type ProductResponse struct {
     ID int64 `json:"id"`
     Profile ProfileResponse `json:"profile"` // Nested model
 }
@@ -358,13 +370,13 @@ The project includes JWT Bearer authentication configuration. To document protec
 ```go
 // @Summary Get user profile
 // @Description Retrieve the authenticated user's profile
-// @Tags users
+// @Tags products
 // @Produce json
 // @Security BearerAuth
-// @Success 200 {object} user.UserResponse "User profile"
+// @Success 200 {object} product.ProductResponse "User profile"
 // @Failure 401 {object} map[string]string "Unauthorized"
-// @Router /users/profile [get]
-func (h *UserHandler) GetProfile() http.HandlerFunc {
+// @Router /products/profile [get]
+func (h *ProductHandler) GetProfile() http.HandlerFunc {
     // Implementation
 }
 ```
@@ -465,7 +477,7 @@ Every public endpoint should have complete swagger annotations.
 Group related endpoints with meaningful tags:
 
 ```go
-// @Tags users
+// @Tags products
 // @Tags products
 // @Tags auth
 // @Tags orders
@@ -499,8 +511,8 @@ Add example values to request/response models to help API consumers.
 Clearly indicate required parameters:
 
 ```go
-// @Param id path int true "User ID"
-// @Param request body user.CreateUserRequest true "User creation request"
+// @Param id path int true "Product ID"
+// @Param request body product.CreateProductRequest true "Product creation request"
 ```
 
 ### 7. **Version Your API**

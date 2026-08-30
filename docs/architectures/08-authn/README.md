@@ -196,7 +196,7 @@ Content-Type: application/problem+json
 WWW-Authenticate: Bearer realm="api"
 
 {"type":"about:blank","title":"Unauthorized","status":401,
- "detail":"authentication required","instance":"/api/v1/users/42"}
+ "detail":"authentication required","instance":"/api/v1/users/me"}
 ```
 
 That block is **illustrative, not literal**. Two corrections a client author
@@ -269,14 +269,16 @@ asserted at `cmd/api/routes_test.go:61-63, 69-72`:
 POST   /api/v1/auth/logout
 POST   /api/v1/auth/mfa/setup
 POST   /api/v1/auth/mfa/setup/verify
-POST   /api/v1/users
-GET    /api/v1/users/{id}
-PUT    /api/v1/users/{id}
-DELETE /api/v1/users/{id}
+POST   /api/v1/users/me
+GET    /api/v1/users/me
 ```
 
-(The guard test spells the three `{id}` routes with a concrete `1`; the pattern
-form above is the one the route table registers.)
+(This list used to carry `POST /api/v1/users` and `GET|PUT|DELETE
+/api/v1/users/{id}`. Those routes were removed with E16: a profile is keyed by
+the identity it belongs to, so the id a handler acts on comes from the caller's
+token and there is no path parameter to supply another. Authentication is still
+what these routes require — the change is that authentication is now *all* they
+can be asked about, because there is no other user's record to name.)
 
 **`POST /api/v1/auth/mfa/verify` deliberately keeps an OAuth2-style
 `application/json` error body.** It is registered outside the `h.authMW` group
