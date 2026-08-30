@@ -32,10 +32,8 @@ var protectedRoutes = []struct{ method, path string }{
 	{http.MethodPost, "/api/v1/auth/logout"},
 	{http.MethodPost, "/api/v1/auth/mfa/setup"},
 	{http.MethodPost, "/api/v1/auth/mfa/setup/verify"},
-	{http.MethodPost, "/api/v1/users"},
-	{http.MethodGet, "/api/v1/users/1"},
-	{http.MethodPut, "/api/v1/users/1"},
-	{http.MethodDelete, "/api/v1/users/1"},
+	{http.MethodPost, "/api/v1/users/me"},
+	{http.MethodGet, "/api/v1/users/me"},
 }
 
 // buildAuthTestRouter builds the real application and route tree over a nil

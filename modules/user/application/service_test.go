@@ -3,311 +3,172 @@ package application
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
+	"time"
+
+	"github.com/google/uuid"
 
 	domain "github.com/sujanto-gaws/kopiochi/modules/user/domain"
 )
 
-var errBoom = errors.New("database is down")
-
-// fakeRepo is an in-memory domain.Repository.
-//
-// GetByID and GetByEmail return (nil, nil) for a missing row rather than an
-// error, because that is what the bun repository does — and the service has
-// explicit nil checks for it. A fake that returned an error instead would make
-// those checks look tested when they never ran.
+// fakeRepo is an in-memory profile store with the repository's idempotency
+// contract: EnsureExists on an id that already has a profile is a no-op, not an
+// error.
 type fakeRepo struct {
-	byID map[int64]*domain.User
+	mu sync.Mutex
 
-	createErr error
+	rows      map[uuid.UUID]*domain.User
+	ensureErr error
 	getErr    error
-	updateErr error
-	deleteErr error
 
-	created []*domain.User
-	updated []*domain.User
-	deleted []int64
-	nextID  int64
+	ensureCalls int
 }
 
-func newFakeRepo(users ...*domain.User) *fakeRepo {
-	r := &fakeRepo{byID: map[int64]*domain.User{}, nextID: 1}
-	for _, u := range users {
-		r.byID[u.ID] = u
-		if u.ID >= r.nextID {
-			r.nextID = u.ID + 1
-		}
-	}
-	return r
+func newFakeRepo() *fakeRepo {
+	return &fakeRepo{rows: map[uuid.UUID]*domain.User{}}
 }
 
-func (r *fakeRepo) Create(_ context.Context, u *domain.User) error {
-	if r.createErr != nil {
-		return r.createErr
+func (r *fakeRepo) EnsureExists(_ context.Context, id uuid.UUID) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	r.ensureCalls++
+	if r.ensureErr != nil {
+		return r.ensureErr
 	}
-	u.ID = r.nextID
-	r.nextID++
-	r.byID[u.ID] = u
-	r.created = append(r.created, u)
+	if _, ok := r.rows[id]; ok {
+		return nil
+	}
+	now := time.Now()
+	r.rows[id] = &domain.User{ID: id, CreatedAt: now, UpdatedAt: now}
 	return nil
 }
 
-func (r *fakeRepo) GetByID(_ context.Context, id int64) (*domain.User, error) {
+func (r *fakeRepo) GetByID(_ context.Context, id uuid.UUID) (*domain.User, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
 	if r.getErr != nil {
 		return nil, r.getErr
 	}
-	return r.byID[id], nil // nil, nil when absent — as the real repository does
-}
-
-func (r *fakeRepo) GetByEmail(_ context.Context, email string) (*domain.User, error) {
-	if r.getErr != nil {
-		return nil, r.getErr
+	u, ok := r.rows[id]
+	if !ok {
+		return nil, domain.ErrUserNotFound
 	}
-	for _, u := range r.byID {
-		if u.Email == email {
-			return u, nil
-		}
-	}
-	return nil, nil
+	return u, nil
 }
 
-func (r *fakeRepo) Update(_ context.Context, u *domain.User) error {
-	if r.updateErr != nil {
-		return r.updateErr
-	}
-	r.byID[u.ID] = u
-	r.updated = append(r.updated, u)
-	return nil
-}
-
-func (r *fakeRepo) Delete(_ context.Context, id int64) error {
-	if r.deleteErr != nil {
-		return r.deleteErr
-	}
-	delete(r.byID, id)
-	r.deleted = append(r.deleted, id)
-	return nil
-}
-
-func existingUser() *domain.User {
-	return &domain.User{ID: 1, Name: "Alice", Email: "alice@example.com"}
-}
-
-func TestCreateUser_Valid(t *testing.T) {
-	t.Parallel()
-
+// TestEnsureOwnProfileCreatesTheCallersProfile: the id written is the caller's,
+// and it is the only id in scope. Before E16 this use case took an id from the
+// request body, which is how a caller could mint a row for anybody.
+func TestEnsureOwnProfileCreatesTheCallersProfile(t *testing.T) {
 	repo := newFakeRepo()
 	svc := NewService(repo)
+	caller := uuid.New()
 
-	got, err := svc.CreateUser(context.Background(), &domain.CreateUserRequest{
-		Name: "Alice", Email: "alice@example.com",
-	})
+	got, err := svc.EnsureOwnProfile(context.Background(), caller)
 	if err != nil {
-		t.Fatalf("CreateUser() error = %v", err)
+		t.Fatalf("EnsureOwnProfile: %v", err)
 	}
-	if got.Name != "Alice" || got.Email != "alice@example.com" {
-		t.Errorf("CreateUser() = %+v", got)
+	if got.ID != caller {
+		t.Errorf("profile id = %v, want the caller %v", got.ID, caller)
 	}
-	if got.ID == 0 {
-		t.Error("CreateUser() returned an id of 0; the caller cannot address the row")
-	}
-}
-
-// TestCreateUser_InvalidNeverReachesTheRepository: validation must run before
-// persistence, or invalid rows land in the table and the check becomes
-// decorative.
-func TestCreateUser_InvalidNeverReachesTheRepository(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name string
-		req  *domain.CreateUserRequest
-		want error
-	}{
-		{"empty name", &domain.CreateUserRequest{Name: "", Email: "a@example.com"}, domain.ErrInvalidName},
-		{"bad email", &domain.CreateUserRequest{Name: "Alice", Email: "not-an-email"}, domain.ErrInvalidEmail},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-
-			repo := newFakeRepo()
-			svc := NewService(repo)
-
-			_, err := svc.CreateUser(context.Background(), tc.req)
-			if !errors.Is(err, tc.want) {
-				t.Fatalf("CreateUser() error = %v, want %v", err, tc.want)
-			}
-			if len(repo.created) != 0 {
-				t.Error("an invalid user was written to the repository")
-			}
-		})
+	if _, ok := repo.rows[caller]; !ok {
+		t.Error("no profile was stored for the caller")
 	}
 }
 
-func TestCreateUser_RepositoryErrorIsPropagated(t *testing.T) {
-	t.Parallel()
-
+// TestEnsureOwnProfileIsIdempotent: a caller asking twice has not made a
+// mistake, and the second request is indistinguishable from a retry of the
+// first. Answering one of them with an error would hand a client a failure it
+// cannot act on.
+func TestEnsureOwnProfileIsIdempotent(t *testing.T) {
 	repo := newFakeRepo()
-	repo.createErr = errBoom
 	svc := NewService(repo)
+	caller := uuid.New()
 
-	got, err := svc.CreateUser(context.Background(), &domain.CreateUserRequest{
-		Name: "Alice", Email: "alice@example.com",
-	})
-	if !errors.Is(err, errBoom) {
-		t.Fatalf("CreateUser() error = %v, want errBoom", err)
-	}
-	if got != nil {
-		t.Errorf("CreateUser() = %+v, want nil on failure", got)
-	}
-}
-
-func TestGetUserByID(t *testing.T) {
-	t.Parallel()
-
-	repo := newFakeRepo(existingUser())
-	svc := NewService(repo)
-
-	got, err := svc.GetUserByID(context.Background(), 1)
+	first, err := svc.EnsureOwnProfile(context.Background(), caller)
 	if err != nil {
-		t.Fatalf("GetUserByID() error = %v", err)
+		t.Fatalf("first EnsureOwnProfile: %v", err)
 	}
-	if got.ID != 1 {
-		t.Errorf("GetUserByID() = %+v, want id 1", got)
+	second, err := svc.EnsureOwnProfile(context.Background(), caller)
+	if err != nil {
+		t.Fatalf("second EnsureOwnProfile: %v", err)
+	}
+
+	if first.ID != second.ID || !first.CreatedAt.Equal(second.CreatedAt) {
+		t.Errorf("the second call returned a different profile: %+v vs %+v", first, second)
+	}
+	if len(repo.rows) != 1 {
+		t.Errorf("store holds %d profiles, want 1", len(repo.rows))
 	}
 }
 
-// TestGetUserByID_MissingRowIsNotFound covers the (nil, nil) contract: without
-// the service's nil check this would return a nil *UserResponse and a nil
-// error, and the handler would dereference it.
-func TestGetUserByID_MissingRowIsNotFound(t *testing.T) {
-	t.Parallel()
-
+// TestGetOwnProfileReportsNotFound: a caller who has never created a profile
+// gets a 404's worth of information, not a fabricated empty one.
+func TestGetOwnProfileReportsNotFound(t *testing.T) {
 	svc := NewService(newFakeRepo())
 
-	got, err := svc.GetUserByID(context.Background(), 999)
+	_, err := svc.GetOwnProfile(context.Background(), uuid.New())
 	if !errors.Is(err, domain.ErrUserNotFound) {
-		t.Fatalf("GetUserByID() error = %v, want ErrUserNotFound", err)
-	}
-	if got != nil {
-		t.Errorf("GetUserByID() = %+v, want nil", got)
+		t.Fatalf("err = %v, want ErrUserNotFound", err)
 	}
 }
 
-// TestGetUserByID_NonPositiveIDShortCircuits: ids are positive, so a zero or
-// negative one is a malformed request and must not become a query.
-func TestGetUserByID_NonPositiveIDShortCircuits(t *testing.T) {
-	t.Parallel()
-
-	for _, id := range []int64{0, -1} {
-		repo := newFakeRepo(existingUser())
-		repo.getErr = errBoom // would surface if the repository were consulted
-		svc := NewService(repo)
-
-		_, err := svc.GetUserByID(context.Background(), id)
-		if !errors.Is(err, domain.ErrUserNotFound) {
-			t.Errorf("GetUserByID(%d) error = %v, want ErrUserNotFound without touching the repository", id, err)
-		}
-	}
-}
-
-func TestGetUserByEmail_MissingRowIsNotFound(t *testing.T) {
-	t.Parallel()
-
-	svc := NewService(newFakeRepo(existingUser()))
-
-	_, err := svc.GetUserByEmail(context.Background(), "nobody@example.com")
-	if !errors.Is(err, domain.ErrUserNotFound) {
-		t.Fatalf("GetUserByEmail() error = %v, want ErrUserNotFound", err)
-	}
-}
-
-func TestUpdateUser_Valid(t *testing.T) {
-	t.Parallel()
-
-	repo := newFakeRepo(existingUser())
+// TestGetOwnProfileReturnsOnlyTheCallersRow is the IDOR, asserted at the layer
+// where it used to live. There is no argument that could ask for B's profile,
+// so the check is that A's caller id reaches the store unmodified and B's row
+// is never consulted.
+func TestGetOwnProfileReturnsOnlyTheCallersRow(t *testing.T) {
+	repo := newFakeRepo()
 	svc := NewService(repo)
+	a, b := uuid.New(), uuid.New()
 
-	got, err := svc.UpdateUser(context.Background(), 1, &domain.UpdateUserRequest{
-		Name: "Alice Smith", Email: "alice.smith@example.com",
-	})
+	if _, err := svc.EnsureOwnProfile(context.Background(), a); err != nil {
+		t.Fatalf("seed A: %v", err)
+	}
+	if _, err := svc.EnsureOwnProfile(context.Background(), b); err != nil {
+		t.Fatalf("seed B: %v", err)
+	}
+
+	got, err := svc.GetOwnProfile(context.Background(), a)
 	if err != nil {
-		t.Fatalf("UpdateUser() error = %v", err)
+		t.Fatalf("GetOwnProfile: %v", err)
 	}
-	if got.Name != "Alice Smith" || got.Email != "alice.smith@example.com" {
-		t.Errorf("UpdateUser() = %+v", got)
+	if got.ID != a {
+		t.Errorf("A received profile %v, want its own %v", got.ID, a)
 	}
-	if got.ID != 1 {
-		t.Errorf("UpdateUser() changed the id to %d; the id must survive an update", got.ID)
+	if got.ID == b {
+		t.Fatal("A received B's profile")
 	}
 }
 
-func TestUpdateUser_MissingRowIsNotFound(t *testing.T) {
-	t.Parallel()
-
+// TestEnsureOwnProfilePropagatesStoreFailures: a create that did not happen
+// must not be reported as a profile.
+func TestEnsureOwnProfilePropagatesStoreFailures(t *testing.T) {
 	repo := newFakeRepo()
+	repo.ensureErr = errors.New("connection closed")
 	svc := NewService(repo)
 
-	_, err := svc.UpdateUser(context.Background(), 999, &domain.UpdateUserRequest{
-		Name: "Alice", Email: "alice@example.com",
-	})
-	if !errors.Is(err, domain.ErrUserNotFound) {
-		t.Fatalf("UpdateUser() error = %v, want ErrUserNotFound", err)
-	}
-	if len(repo.updated) != 0 {
-		t.Error("a non-existent user was written")
+	if _, err := svc.EnsureOwnProfile(context.Background(), uuid.New()); err == nil {
+		t.Fatal("EnsureOwnProfile reported success after the store failed")
 	}
 }
 
-// TestUpdateUser_InvalidIsNotPersisted: the update path validates *after*
-// applying the new values to the loaded entity, so this is the check that
-// stops an invalid email overwriting a valid one.
-func TestUpdateUser_InvalidIsNotPersisted(t *testing.T) {
-	t.Parallel()
-
-	repo := newFakeRepo(existingUser())
-	svc := NewService(repo)
-
-	_, err := svc.UpdateUser(context.Background(), 1, &domain.UpdateUserRequest{
-		Name: "Alice", Email: "not-an-email",
-	})
-	if !errors.Is(err, domain.ErrInvalidEmail) {
-		t.Fatalf("UpdateUser() error = %v, want ErrInvalidEmail", err)
-	}
-	if len(repo.updated) != 0 {
-		t.Error("an invalid update was written to the repository")
-	}
-}
-
-func TestDeleteUser(t *testing.T) {
-	t.Parallel()
-
-	repo := newFakeRepo(existingUser())
-	svc := NewService(repo)
-
-	if err := svc.DeleteUser(context.Background(), 1); err != nil {
-		t.Fatalf("DeleteUser() error = %v", err)
-	}
-	if len(repo.deleted) != 1 || repo.deleted[0] != 1 {
-		t.Errorf("deleted = %v, want [1]", repo.deleted)
-	}
-}
-
-// TestDeleteUser_MissingRowIsNotFound: deleting a row that is not there must
-// report not-found rather than succeeding silently, or a caller cannot tell a
-// successful delete from a wrong id.
-func TestDeleteUser_MissingRowIsNotFound(t *testing.T) {
-	t.Parallel()
-
+// TestGetOwnProfilePropagatesStoreFailures: an unreachable database is not the
+// same answer as "you have no profile", and collapsing the two would tell a
+// caller their account is gone during an outage.
+func TestGetOwnProfilePropagatesStoreFailures(t *testing.T) {
 	repo := newFakeRepo()
+	repo.getErr = errors.New("connection closed")
 	svc := NewService(repo)
 
-	if err := svc.DeleteUser(context.Background(), 999); !errors.Is(err, domain.ErrUserNotFound) {
-		t.Fatalf("DeleteUser() error = %v, want ErrUserNotFound", err)
+	_, err := svc.GetOwnProfile(context.Background(), uuid.New())
+	if err == nil {
+		t.Fatal("GetOwnProfile reported success after the store failed")
 	}
-	if len(repo.deleted) != 0 {
-		t.Error("a delete was issued for a row that does not exist")
+	if errors.Is(err, domain.ErrUserNotFound) {
+		t.Error("a store failure was reported as ErrUserNotFound")
 	}
 }

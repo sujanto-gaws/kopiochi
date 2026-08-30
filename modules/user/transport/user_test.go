@@ -10,388 +10,239 @@ import (
 	"testing"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
 
-	"github.com/sujanto-gaws/kopiochi/internal/authn"
 	"github.com/sujanto-gaws/kopiochi/internal/testsupport"
 	domain "github.com/sujanto-gaws/kopiochi/modules/user/domain"
 )
 
-// This package had no test file at all before task B2, which is why the
-// "transport tests drop MintToken/keypair setup" clause found nothing to drop:
-// there was no keypair here to remove, only the absence of coverage. What these
-// tests pin is the property the module's constructor test can only assert half
-// of — module_test.go proves user.New refuses to build without a middleware,
-// and the tests below prove that the middleware it was given is actually on the
-// path of every route Routes mounts, rather than on some of them.
+// What these tests pin is the property module_test.go can only assert half of:
+// it proves user.New refuses to build without a middleware, and these prove the
+// middleware it was given is on the path of every route Routes mounts.
 //
-// Nothing here mints a token or generates a key. testsupport.FakeAuth supplies
-// the caller directly, which is the whole point of it: the thing under test is
-// the route table, not RS256.
+// Since E16 they pin a second, larger property: the handlers act on the
+// Principal and on nothing else. Nothing here mints a token or generates a key
+// — testsupport.FakeAuth supplies the caller directly, because the thing under
+// test is the route table and the id it acts on, not RS256.
 
-const testSubject = "3f1b8a54-2c9e-4d77-9a1e-2b6c0d5e8f41"
+var testSubject = uuid.MustParse("3f1b8a54-2c9e-4d77-9a1e-2b6c0d5e8f41")
 
-// fakeService is a UserService whose every method is a swappable func, so a
-// test names only the behavior it cares about. calls counts every method entry
-// across the interface — that single counter is what proves a rejected request
-// never reached the application layer, which is a stronger statement than
-// "the status code was 401".
+// fakeService records the caller it was handed. That recording is the whole
+// point: the interface no longer has an argument that could name somebody
+// else's profile, so what is left to verify is that the id which arrives is the
+// authenticated one.
 type fakeService struct {
-	calls  int
-	create func(context.Context, *domain.CreateUserRequest) (*domain.UserResponse, error)
-	get    func(context.Context, int64) (*domain.UserResponse, error)
-	update func(context.Context, int64, *domain.UpdateUserRequest) (*domain.UserResponse, error)
-	del    func(context.Context, int64) error
+	calls      int
+	sawCaller  uuid.UUID
+	ensureResp *domain.UserResponse
+	ensureErr  error
+	getResp    *domain.UserResponse
+	getErr     error
 }
 
-func newFakeService() *fakeService {
-	ok := &domain.UserResponse{ID: 42, Name: "Ada", Email: "ada@example.com"}
-	return &fakeService{
-		create: func(context.Context, *domain.CreateUserRequest) (*domain.UserResponse, error) { return ok, nil },
-		get:    func(context.Context, int64) (*domain.UserResponse, error) { return ok, nil },
-		update: func(context.Context, int64, *domain.UpdateUserRequest) (*domain.UserResponse, error) { return ok, nil },
-		del:    func(context.Context, int64) error { return nil },
-	}
-}
-
-func (f *fakeService) CreateUser(ctx context.Context, req *domain.CreateUserRequest) (*domain.UserResponse, error) {
+func (f *fakeService) EnsureOwnProfile(_ context.Context, caller uuid.UUID) (*domain.UserResponse, error) {
 	f.calls++
-	return f.create(ctx, req)
+	f.sawCaller = caller
+	return f.ensureResp, f.ensureErr
 }
 
-func (f *fakeService) GetUserByID(ctx context.Context, id int64) (*domain.UserResponse, error) {
+func (f *fakeService) GetOwnProfile(_ context.Context, caller uuid.UUID) (*domain.UserResponse, error) {
 	f.calls++
-	return f.get(ctx, id)
+	f.sawCaller = caller
+	return f.getResp, f.getErr
 }
 
-func (f *fakeService) UpdateUser(ctx context.Context, id int64, req *domain.UpdateUserRequest) (*domain.UserResponse, error) {
-	f.calls++
-	return f.update(ctx, id, req)
-}
-
-func (f *fakeService) DeleteUser(ctx context.Context, id int64) error {
-	f.calls++
-	return f.del(ctx, id)
-}
-
-// mount builds the real route table the module mounts in production: a chi
-// router with Routes applied to it, so URL params resolve through chi exactly
-// as they do at runtime rather than through a hand-built RouteContext.
-func mount(svc UserService, mw authn.Middleware) http.Handler {
+// router mounts the real route table behind a middleware that authenticates
+// every request as subject.
+func router(svc UserService, subject string) http.Handler {
 	r := chi.NewRouter()
-	NewUserHandler(svc, mw).Routes(r)
+	h := NewUserHandler(svc, testsupport.FakeAuth(subject))
+	r.Route("/api/v1", h.Routes)
 	return r
 }
 
-func request(method, path, body string) *http.Request {
-	if body == "" {
-		return httptest.NewRequest(method, path, nil)
-	}
-	r := httptest.NewRequest(method, path, strings.NewReader(body))
-	r.Header.Set("Content-Type", "application/json")
-	return r
+func do(t *testing.T, h http.Handler, method, path string) *httptest.ResponseRecorder {
+	t.Helper()
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(method, path, nil))
+	return rec
 }
 
-const validBody = `{"name":"Ada","email":"ada@example.com"}`
+// TestHandlersActOnThePrincipalAndNothingElse is E16, closed.
+//
+// The service records the id it was given. It must be the authenticated
+// subject, because that is the only id the handler has: there is no path
+// parameter and no body to take one from.
+func TestHandlersActOnThePrincipalAndNothingElse(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		method string
+	}{
+		{"get", http.MethodGet},
+		{"ensure", http.MethodPost},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			svc := &fakeService{
+				getResp:    &domain.UserResponse{ID: testSubject},
+				ensureResp: &domain.UserResponse{ID: testSubject},
+			}
 
-// routeTable is every route Routes mounts. The tests below iterate it rather
-// than naming four cases each, so a fifth route added to Routes without a line
-// here is caught by TestRoutes_TableMatchesTheMountedRoutes.
-var routeTable = []struct {
-	method string
-	path   string
-	body   string
-	want   int
-}{
-	{http.MethodPost, "/users", validBody, http.StatusCreated},
-	{http.MethodGet, "/users/42", "", http.StatusOK},
-	{http.MethodPut, "/users/42", validBody, http.StatusOK},
-	{http.MethodDelete, "/users/42", "", http.StatusNoContent},
-}
-
-// TestRoutes_TableMatchesTheMountedRoutes walks the chi tree the handler built
-// and compares it to routeTable. Without it, a route added to Routes and not to
-// the table would silently escape every protection assertion in this file — the
-// tests would keep passing while a new endpoint sat unexercised.
-func TestRoutes_TableMatchesTheMountedRoutes(t *testing.T) {
-	r := chi.NewRouter()
-	NewUserHandler(newFakeService(), testsupport.FakeAuth(testSubject)).Routes(r)
-
-	mounted := map[string]bool{}
-	err := chi.Walk(r, func(method, route string, _ http.Handler, _ ...func(http.Handler) http.Handler) error {
-		mounted[method+" "+route] = true
-		return nil
-	})
-	if err != nil {
-		t.Fatalf("chi.Walk: %v", err)
-	}
-
-	if len(mounted) != len(routeTable) {
-		t.Errorf("chi tree has %d routes, routeTable has %d: %v", len(mounted), len(routeTable), mounted)
-	}
-	for _, rt := range routeTable {
-		key := rt.method + " " + rt.path
-		// chi reports the pattern, not a concrete path; normalize the two
-		// id-bearing paths back to their pattern.
-		key = strings.Replace(key, "/users/42", "/users/{id}", 1)
-		if !mounted[key] {
-			t.Errorf("route %q is in routeTable but not in the mounted chi tree", key)
-		}
-	}
-}
-
-// TestRoutes_EveryRouteIsBehindTheInjectedMiddleware is the security property.
-// Routes wraps its group in h.authMW; if a future edit moved one route outside
-// that group, the route table would look identical and nothing else in the
-// suite would notice. A middleware that rejects everything makes the difference
-// observable: a route inside the group answers 401 and never touches the
-// service, a route outside it answers 200 and does.
-func TestRoutes_EveryRouteIsBehindTheInjectedMiddleware(t *testing.T) {
-	deny := func(http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-			w.WriteHeader(http.StatusUnauthorized)
+			rec := do(t, router(svc, testSubject.String()), tc.method, "/api/v1/users/me")
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body)
+			}
+			if svc.sawCaller != testSubject {
+				t.Errorf("service was given %v, want the authenticated subject %v",
+					svc.sawCaller, testSubject)
+			}
 		})
 	}
+}
 
-	for _, rt := range routeTable {
-		t.Run(rt.method+" "+rt.path, func(t *testing.T) {
-			svc := newFakeService()
-			rec := httptest.NewRecorder()
-			mount(svc, deny).ServeHTTP(rec, request(rt.method, rt.path, rt.body))
+// TestNoRouteTakesAnID is the structural half of the fix. E16 was not a missing
+// ownership check — it was an addressable id with nothing to compare it
+// against. A route table with no id in it cannot be asked for somebody else's
+// row, so these 404s are the vulnerability's absence, not a guard's success.
+func TestNoRouteTakesAnID(t *testing.T) {
+	other := uuid.New().String()
 
-			if rec.Code != http.StatusUnauthorized {
-				t.Errorf("status = %d, want %d: this route is not behind the auth middleware",
-					rec.Code, http.StatusUnauthorized)
+	for _, tc := range []struct {
+		method string
+		path   string
+	}{
+		{http.MethodGet, "/api/v1/users/" + other},
+		{http.MethodPut, "/api/v1/users/" + other},
+		{http.MethodDelete, "/api/v1/users/" + other},
+		{http.MethodPost, "/api/v1/users"},
+		{http.MethodPut, "/api/v1/users/me"},
+		{http.MethodDelete, "/api/v1/users/me"},
+	} {
+		t.Run(tc.method+" "+tc.path, func(t *testing.T) {
+			svc := &fakeService{}
+
+			rec := do(t, router(svc, testSubject.String()), tc.method, tc.path)
+			if rec.Code == http.StatusOK {
+				t.Fatalf("status = 200: %s %s is routed, and it should not be", tc.method, tc.path)
 			}
 			if svc.calls != 0 {
-				t.Errorf("the application service was called %d time(s) on a rejected request; "+
-					"the handler ran despite the middleware refusing the caller", svc.calls)
+				t.Errorf("the application layer was reached %d times by an unrouted request", svc.calls)
 			}
 		})
 	}
 }
 
-// TestRoutes_AuthenticatedRequestsReachTheHandlers is the control for the test
-// above: the 401s there must come from the middleware refusing, not from the
-// routes being broken. It also checks what the middleware left behind — a
-// Principal carrying the subject FakeAuth was given — observed from inside the
-// chain, between the middleware and the handler.
+// TestUnauthenticatedRequestsNeverReachTheService: the counter, not the status
+// code, is the assertion. A 401 with the handler having already run is a
+// different and worse thing than a 401 instead of it.
+func TestUnauthenticatedRequestsNeverReachTheService(t *testing.T) {
+	for _, method := range []string{http.MethodGet, http.MethodPost} {
+		t.Run(method, func(t *testing.T) {
+			svc := &fakeService{}
+			r := chi.NewRouter()
+			// A middleware that authenticates nobody, standing in for a
+			// request with no credentials.
+			h := NewUserHandler(svc, func(next http.Handler) http.Handler {
+				return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+					w.WriteHeader(http.StatusUnauthorized)
+				})
+			})
+			r.Route("/api/v1", h.Routes)
+
+			rec := do(t, r, method, "/api/v1/users/me")
+			if rec.Code != http.StatusUnauthorized {
+				t.Fatalf("status = %d, want 401", rec.Code)
+			}
+			if svc.calls != 0 {
+				t.Errorf("the service ran %d times for an unauthenticated request", svc.calls)
+			}
+		})
+	}
+}
+
+// TestGetReportsNotFoundForACallerWithNoProfile: a caller who has not created
+// one is told so, rather than handed a fabricated empty profile.
+func TestGetReportsNotFoundForACallerWithNoProfile(t *testing.T) {
+	svc := &fakeService{getErr: domain.ErrUserNotFound}
+
+	rec := do(t, router(svc, testSubject.String()), http.MethodGet, "/api/v1/users/me")
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404", rec.Code)
+	}
+}
+
+// TestResponseCarriesNoIdentityData: the profile echoes back the caller's own
+// id and its timestamps. A name or an email appearing here would be a second
+// copy of data the identity owns (E20).
+func TestResponseCarriesNoIdentityData(t *testing.T) {
+	svc := &fakeService{getResp: &domain.UserResponse{ID: testSubject}}
+
+	rec := do(t, router(svc, testSubject.String()), http.MethodGet, "/api/v1/users/me")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+
+	var body map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("response is not JSON: %v (%q)", err, rec.Body)
+	}
+	for _, forbidden := range []string{"name", "email"} {
+		if _, ok := body[forbidden]; ok {
+			t.Errorf("the profile response carries %q, which belongs to the identity", forbidden)
+		}
+	}
+	if got := body["id"]; got != testSubject.String() {
+		t.Errorf("id = %v, want the caller's own %v", got, testSubject)
+	}
+}
+
+// TestAMalformedSubjectIs401NotAProfile is the branch that matters most in
+// caller(): the token verified, but its subject is not an id this service can
+// act for.
 //
-// That observation is deliberately made by a probe rather than by a handler
-// assertion, because no handler in this package reads the Principal: these
-// routes take their target id from the URL and have no ownership check. Task
-// B2 intended to add one, and could not — Principal.Subject is the identity
-// module's uuid and this module's rows are keyed by an int64 with no mapping
-// between them. Until that is resolved, what is verifiable is that the
-// middleware runs and what it produces is well-formed, which is what this test
-// pins; it must not be read as evidence that a caller can only reach their own
-// record, because nothing here establishes that.
-func TestRoutes_AuthenticatedRequestsReachTheHandlers(t *testing.T) {
-	for _, rt := range routeTable {
-		t.Run(rt.method+" "+rt.path, func(t *testing.T) {
-			var (
-				seen  authn.Principal
-				found bool
-			)
-			fake := testsupport.FakeAuth(testSubject)
-			probe := func(next http.Handler) http.Handler {
-				return fake(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-					seen, found = authn.FromContext(r.Context())
-					next.ServeHTTP(w, r)
-				}))
-			}
+// It must be 401 and not 400, and it must not reach the service. A subject that
+// does not parse is an authentication problem — nothing about the client's
+// request is wrong — and treating it as a bad request would invite a handler to
+// carry on with a zero uuid, which is a profile belonging to nobody.
+func TestAMalformedSubjectIs401NotAProfile(t *testing.T) {
+	for _, method := range []string{http.MethodGet, http.MethodPost} {
+		t.Run(method, func(t *testing.T) {
+			svc := &fakeService{}
 
-			svc := newFakeService()
-			rec := httptest.NewRecorder()
-			mount(svc, probe).ServeHTTP(rec, request(rt.method, rt.path, rt.body))
-
-			if rec.Code != rt.want {
-				t.Errorf("status = %d, want %d (body %q)", rec.Code, rt.want, rec.Body.String())
+			rec := do(t, router(svc, "not-a-uuid"), method, "/api/v1/users/me")
+			if rec.Code != http.StatusUnauthorized {
+				t.Fatalf("status = %d, want 401", rec.Code)
 			}
-			if svc.calls != 1 {
-				t.Errorf("service calls = %d, want 1", svc.calls)
-			}
-			if !found {
-				t.Fatal("no authn.Principal in the request context; the injected middleware did not run on this route")
-			}
-			if seen.Subject != testSubject {
-				t.Errorf("Principal.Subject = %q, want %q", seen.Subject, testSubject)
+			if svc.calls != 0 {
+				t.Errorf("the service ran %d times for a caller with no usable id", svc.calls)
 			}
 		})
 	}
 }
 
-// TestCreateUser_Success checks the one response body worth asserting: the
-// created record is echoed back, so a handler that returned 201 with an empty
-// body would not pass.
-func TestCreateUser_Success(t *testing.T) {
-	svc := newFakeService()
-	rec := httptest.NewRecorder()
-	mount(svc, testsupport.FakeAuth(testSubject)).ServeHTTP(rec, request(http.MethodPost, "/users", validBody))
+// TestStoreFailuresAre500AndLeakNothing: an unreachable database must not be
+// reported as "you have no profile" — that would tell a caller their account is
+// gone during an outage — and the body must not carry the underlying error,
+// which can name hosts and drivers.
+func TestStoreFailuresAre500AndLeakNothing(t *testing.T) {
+	boom := errors.New("dial tcp 10.0.0.5:5432: connection refused")
 
-	if rec.Code != http.StatusCreated {
-		t.Fatalf("status = %d, want %d", rec.Code, http.StatusCreated)
-	}
-	var got domain.UserResponse
-	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
-		t.Fatalf("decode response: %v (body %q)", err, rec.Body.String())
-	}
-	if got.ID != 42 || got.Email != "ada@example.com" {
-		t.Errorf("response = %+v, want the created user echoed back", got)
-	}
-}
-
-// TestHandlers_ErrorMapping pins the status code each failure produces. The
-// mapping is the handler's entire job on the sad path, and the distinction that
-// matters most here is domain.ErrUserNotFound → 404 versus any other service
-// error → 500: collapsing those would either leak that a row exists or hide a
-// real fault as a 404.
-func TestHandlers_ErrorMapping(t *testing.T) {
-	boom := errors.New("repository exploded")
-
-	tests := []struct {
-		name    string
-		method  string
-		path    string
-		body    string
-		arrange func(*fakeService)
-		want    int
-		wantMsg string
+	for _, tc := range []struct {
+		name   string
+		method string
+		svc    *fakeService
 	}{
-		{
-			name: "create rejects a body that is not JSON", method: http.MethodPost, path: "/users",
-			body: "{not json", want: http.StatusBadRequest, wantMsg: "invalid request body",
-		},
-		{
-			name: "create surfaces a domain validation error", method: http.MethodPost, path: "/users", body: validBody,
-			arrange: func(f *fakeService) {
-				f.create = func(context.Context, *domain.CreateUserRequest) (*domain.UserResponse, error) {
-					return nil, domain.ErrInvalidEmail
-				}
-			},
-			want: http.StatusBadRequest, wantMsg: domain.ErrInvalidEmail.Error(),
-		},
-		{
-			name: "create hides an unexpected error", method: http.MethodPost, path: "/users", body: validBody,
-			arrange: func(f *fakeService) {
-				f.create = func(context.Context, *domain.CreateUserRequest) (*domain.UserResponse, error) {
-					return nil, boom
-				}
-			},
-			want: http.StatusInternalServerError, wantMsg: "failed to create user",
-		},
-		{
-			name: "get rejects a non-numeric id", method: http.MethodGet, path: "/users/abc",
-			want: http.StatusBadRequest, wantMsg: "invalid user ID",
-		},
-		{
-			name: "get maps not-found to 404", method: http.MethodGet, path: "/users/42",
-			arrange: func(f *fakeService) {
-				f.get = func(context.Context, int64) (*domain.UserResponse, error) { return nil, domain.ErrUserNotFound }
-			},
-			want: http.StatusNotFound, wantMsg: "user not found",
-		},
-		{
-			name: "get hides an unexpected error", method: http.MethodGet, path: "/users/42",
-			arrange: func(f *fakeService) {
-				f.get = func(context.Context, int64) (*domain.UserResponse, error) { return nil, boom }
-			},
-			want: http.StatusInternalServerError, wantMsg: "failed to fetch user",
-		},
-		{
-			name: "update rejects a non-numeric id", method: http.MethodPut, path: "/users/abc", body: validBody,
-			want: http.StatusBadRequest, wantMsg: "invalid user ID",
-		},
-		{
-			name: "update rejects a body that is not JSON", method: http.MethodPut, path: "/users/42",
-			body: "{not json", want: http.StatusBadRequest, wantMsg: "invalid request body",
-		},
-		{
-			name: "update maps not-found to 404", method: http.MethodPut, path: "/users/42", body: validBody,
-			arrange: func(f *fakeService) {
-				f.update = func(context.Context, int64, *domain.UpdateUserRequest) (*domain.UserResponse, error) {
-					return nil, domain.ErrUserNotFound
-				}
-			},
-			want: http.StatusNotFound, wantMsg: "user not found",
-		},
-		{
-			name: "update surfaces a domain validation error", method: http.MethodPut, path: "/users/42", body: validBody,
-			arrange: func(f *fakeService) {
-				f.update = func(context.Context, int64, *domain.UpdateUserRequest) (*domain.UserResponse, error) {
-					return nil, domain.ErrInvalidName
-				}
-			},
-			want: http.StatusBadRequest, wantMsg: domain.ErrInvalidName.Error(),
-		},
-		{
-			name: "update hides an unexpected error", method: http.MethodPut, path: "/users/42", body: validBody,
-			arrange: func(f *fakeService) {
-				f.update = func(context.Context, int64, *domain.UpdateUserRequest) (*domain.UserResponse, error) {
-					return nil, boom
-				}
-			},
-			want: http.StatusInternalServerError, wantMsg: "failed to update user",
-		},
-		{
-			name: "delete rejects a non-numeric id", method: http.MethodDelete, path: "/users/abc",
-			want: http.StatusBadRequest, wantMsg: "invalid user ID",
-		},
-		{
-			name: "delete maps not-found to 404", method: http.MethodDelete, path: "/users/42",
-			arrange: func(f *fakeService) {
-				f.del = func(context.Context, int64) error { return domain.ErrUserNotFound }
-			},
-			want: http.StatusNotFound, wantMsg: "user not found",
-		},
-		{
-			name: "delete hides an unexpected error", method: http.MethodDelete, path: "/users/42",
-			arrange: func(f *fakeService) {
-				f.del = func(context.Context, int64) error { return boom }
-			},
-			want: http.StatusInternalServerError, wantMsg: "failed to delete user",
-		},
-	}
-
-	for _, tc := range tests {
+		{"get", http.MethodGet, &fakeService{getErr: boom}},
+		{"ensure", http.MethodPost, &fakeService{ensureErr: boom}},
+	} {
 		t.Run(tc.name, func(t *testing.T) {
-			svc := newFakeService()
-			if tc.arrange != nil {
-				tc.arrange(svc)
+			rec := do(t, router(tc.svc, testSubject.String()), tc.method, "/api/v1/users/me")
+			if rec.Code != http.StatusInternalServerError {
+				t.Fatalf("status = %d, want 500", rec.Code)
 			}
-
-			rec := httptest.NewRecorder()
-			mount(svc, testsupport.FakeAuth(testSubject)).ServeHTTP(rec, request(tc.method, tc.path, tc.body))
-
-			if rec.Code != tc.want {
-				t.Fatalf("status = %d, want %d (body %q)", rec.Code, tc.want, rec.Body.String())
-			}
-			if ct := rec.Header().Get("Content-Type"); ct != "application/json" {
-				t.Errorf("Content-Type = %q, want application/json", ct)
-			}
-
-			var body map[string]string
-			if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
-				t.Fatalf("decode error body: %v (body %q)", err, rec.Body.String())
-			}
-			if body["error"] != tc.wantMsg {
-				t.Errorf("error = %q, want %q", body["error"], tc.wantMsg)
+			if strings.Contains(rec.Body.String(), "10.0.0.5") {
+				t.Errorf("the response leaked the underlying error: %s", rec.Body)
 			}
 		})
-	}
-}
-
-// TestDeleteUser_SuccessHasNoBody guards the one writeJSON call that passes a
-// nil value: 204 with a body is a protocol error, and the nil branch in
-// writeJSON is the only thing preventing it.
-func TestDeleteUser_SuccessHasNoBody(t *testing.T) {
-	rec := httptest.NewRecorder()
-	mount(newFakeService(), testsupport.FakeAuth(testSubject)).
-		ServeHTTP(rec, request(http.MethodDelete, "/users/42", ""))
-
-	if rec.Code != http.StatusNoContent {
-		t.Fatalf("status = %d, want %d", rec.Code, http.StatusNoContent)
-	}
-	if rec.Body.Len() != 0 {
-		t.Errorf("204 response carried a body %q; it must be empty", rec.Body.String())
 	}
 }

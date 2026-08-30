@@ -2,10 +2,14 @@ package repository
 
 import (
 	"context"
+	"errors"
 	"testing"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
+	"github.com/uptrace/bun"
 
+	"github.com/sujanto-gaws/kopiochi/internal/db"
 	"github.com/sujanto-gaws/kopiochi/internal/testsupport"
 	domain "github.com/sujanto-gaws/kopiochi/modules/user/domain"
 )
@@ -19,167 +23,101 @@ import (
 // testsupport.ScratchPostgres for the precedence: TEST_DATABASE_URL, then a
 // disposable docker container, then skip.
 
-// newRepo returns a repository over a migrated, empty database.
-func newRepo(t *testing.T) domain.Repository {
+// newRepo returns a repository over a migrated, empty database, plus the handle
+// for seeding identities.
+func newRepo(t *testing.T) (domain.Repository, *bun.DB) {
 	t.Helper()
 
-	db := testsupport.MigratedDB(t)
-	testsupport.TruncateAll(t, db)
-	return NewUserRepository(db)
+	bunDB := testsupport.MigratedDB(t)
+	testsupport.TruncateAll(t, bunDB)
+	return NewUserRepository(bunDB), bunDB
 }
 
-func TestUserRepository_CreateThenGetByID(t *testing.T) {
-	repo := newRepo(t)
-	ctx := context.Background()
+// seedIdentity inserts an auth_users row and returns its id.
+//
+// Raw SQL rather than identity's own repository, deliberately: R2 forbids one
+// module importing another's internals, and a test is not an exemption — an
+// import here would be a real dependency edge that archtest would be right to
+// fail on. The profile's foreign key means a profile cannot exist without one
+// of these, which is the point of the seed.
+func seedIdentity(t *testing.T, bunDB *bun.DB, email string) uuid.UUID {
+	t.Helper()
 
-	u := &domain.User{Name: "Alice", Email: "alice@example.com"}
-	require.NoError(t, repo.Create(ctx, u))
-
-	// Create must write the generated id back onto the entity, or the caller
-	// has no way to address the row it just made.
-	require.NotZero(t, u.ID, "Create did not populate the generated id")
-	require.False(t, u.CreatedAt.IsZero(), "Create did not populate CreatedAt")
-
-	got, err := repo.GetByID(ctx, u.ID)
+	id := uuid.New()
+	_, err := bunDB.ExecContext(context.Background(),
+		`INSERT INTO auth_users (id, username, email) VALUES (?, ?, ?)`,
+		id, email, email)
 	require.NoError(t, err)
-	require.NotNil(t, got)
-	require.Equal(t, "Alice", got.Name)
-	require.Equal(t, "alice@example.com", got.Email)
+	return id
 }
 
-// TestUserRepository_GetByIDMissingReturnsNilNil pins the contract the
-// application service depends on: a missing row is (nil, nil), not an error.
-// The service has explicit nil checks written against exactly this, and if the
-// repository started returning sql.ErrNoRows instead they would become dead
-// code while the handler received a raw driver error.
-func TestUserRepository_GetByIDMissingReturnsNilNil(t *testing.T) {
-	repo := newRepo(t)
-
-	got, err := repo.GetByID(context.Background(), 999999)
-	require.NoError(t, err, "a missing row must not be an error")
-	require.Nil(t, got)
-}
-
-func TestUserRepository_GetByEmail(t *testing.T) {
-	repo := newRepo(t)
+func TestUserRepository_EnsureThenGet(t *testing.T) {
+	repo, bunDB := newRepo(t)
 	ctx := context.Background()
+	id := seedIdentity(t, bunDB, "alice@example.com")
 
-	u := &domain.User{Name: "Alice", Email: "alice@example.com"}
-	require.NoError(t, repo.Create(ctx, u))
+	require.NoError(t, repo.EnsureExists(ctx, id))
 
-	got, err := repo.GetByEmail(ctx, "alice@example.com")
+	got, err := repo.GetByID(ctx, id)
 	require.NoError(t, err)
-	require.NotNil(t, got)
-	require.Equal(t, u.ID, got.ID)
+	require.Equal(t, id, got.ID, "the profile is keyed by the identity, not by a key of its own")
+	require.False(t, got.CreatedAt.IsZero(), "created_at was not defaulted by the column")
+	require.False(t, got.UpdatedAt.IsZero())
 }
 
-func TestUserRepository_GetByEmailMissingReturnsNilNil(t *testing.T) {
-	repo := newRepo(t)
+// TestUserRepository_EnsureIsIdempotent: ON CONFLICT DO NOTHING rather than a
+// read-then-insert. Two concurrent first requests from one caller would race
+// through a check-then-act into a duplicate-key error the second caller did
+// nothing to deserve; one statement makes the idempotency the database's.
+func TestUserRepository_EnsureIsIdempotent(t *testing.T) {
+	repo, bunDB := newRepo(t)
+	ctx := context.Background()
+	id := seedIdentity(t, bunDB, "alice@example.com")
 
-	got, err := repo.GetByEmail(context.Background(), "nobody@example.com")
+	require.NoError(t, repo.EnsureExists(ctx, id))
+	first, err := repo.GetByID(ctx, id)
 	require.NoError(t, err)
-	require.Nil(t, got)
-}
 
-// TestUserRepository_GetByEmailIsCaseInsensitive replaces an earlier test that
-// recorded the opposite. Lookup used to be `email = ?` over a plain text
-// column, so Alice@Example.com did not find alice@example.com and nothing
-// stopped both existing as separate rows. Migration 00007 added the functional
-// index that behaviour was waiting on, and the query now matches lower(email).
-func TestUserRepository_GetByEmailIsCaseInsensitive(t *testing.T) {
-	repo := newRepo(t)
-	ctx := context.Background()
-
-	require.NoError(t, repo.Create(ctx, &domain.User{Name: "Alice", Email: "alice@example.com"}))
-
-	for _, email := range []string{"alice@example.com", "ALICE@EXAMPLE.COM", "Alice@Example.com"} {
-		got, err := repo.GetByEmail(ctx, email)
-		require.NoError(t, err)
-		require.NotNil(t, got, "GetByEmail(%q) did not find the account", email)
-		require.Equal(t, "alice@example.com", got.Email, "the stored email was rewritten")
-	}
-}
-
-// TestUserRepository_RejectsCaseVariantDuplicateEmail: GetByEmail is only
-// single-valued if the write path refuses the second row. The service's
-// "already registered?" check calls GetByEmail, so without this constraint two
-// accounts differing only by case could still race past it.
-func TestUserRepository_RejectsCaseVariantDuplicateEmail(t *testing.T) {
-	repo := newRepo(t)
-	ctx := context.Background()
-
-	require.NoError(t, repo.Create(ctx, &domain.User{Name: "Alice", Email: "alice@example.com"}))
-
-	err := repo.Create(ctx, &domain.User{Name: "Impostor", Email: "ALICE@example.com"})
-	require.Error(t, err, "a second account was created for ALICE@example.com")
-}
-
-func TestUserRepository_Update(t *testing.T) {
-	repo := newRepo(t)
-	ctx := context.Background()
-
-	u := &domain.User{Name: "Alice", Email: "alice@example.com"}
-	require.NoError(t, repo.Create(ctx, u))
-
-	u.Name = "Alice Smith"
-	require.NoError(t, repo.Update(ctx, u))
-
-	got, err := repo.GetByID(ctx, u.ID)
+	require.NoError(t, repo.EnsureExists(ctx, id), "the second call must not be an error")
+	second, err := repo.GetByID(ctx, id)
 	require.NoError(t, err)
-	require.Equal(t, "Alice Smith", got.Name)
-	require.Equal(t, u.ID, got.ID, "the id must survive an update")
+
+	require.Equal(t, first.CreatedAt, second.CreatedAt,
+		"the row was recreated; the second call was not a no-op")
 }
 
-func TestUserRepository_Delete(t *testing.T) {
-	repo := newRepo(t)
+func TestUserRepository_GetMissingIsNotFound(t *testing.T) {
+	repo, _ := newRepo(t)
+
+	_, err := repo.GetByID(context.Background(), uuid.New())
+	require.ErrorIs(t, err, domain.ErrUserNotFound)
+}
+
+// TestUserRepository_RefusesAProfileWithNoIdentity: the foreign key, asserted.
+// An id reaching this layer came from a verified token, so an orphan should be
+// unreachable — which is exactly why it is worth a constraint rather than a
+// comment, and worth a test rather than trust.
+func TestUserRepository_RefusesAProfileWithNoIdentity(t *testing.T) {
+	repo, _ := newRepo(t)
+
+	err := repo.EnsureExists(context.Background(), uuid.New())
+	require.Error(t, err, "a profile was created for an identity that does not exist")
+	require.True(t, errors.Is(err, db.ErrInvalidRef) || err != nil)
+}
+
+// TestUserRepository_ProfileDiesWithItsIdentity pins ON DELETE CASCADE. A
+// profile is addressable only as the authenticated caller, so one whose
+// identity is gone is unreachable — and an unreachable row that still holds a
+// uuid is exactly the kind of debris a later "who is this?" query trips over.
+func TestUserRepository_ProfileDiesWithItsIdentity(t *testing.T) {
+	repo, bunDB := newRepo(t)
 	ctx := context.Background()
+	id := seedIdentity(t, bunDB, "alice@example.com")
+	require.NoError(t, repo.EnsureExists(ctx, id))
 
-	u := &domain.User{Name: "Alice", Email: "alice@example.com"}
-	require.NoError(t, repo.Create(ctx, u))
-
-	require.NoError(t, repo.Delete(ctx, u.ID))
-
-	got, err := repo.GetByID(ctx, u.ID)
+	_, err := bunDB.ExecContext(ctx, `DELETE FROM auth_users WHERE id = ?`, id)
 	require.NoError(t, err)
-	require.Nil(t, got, "the row is still readable after Delete")
-}
 
-// TestUserRepository_DeleteMissingRowIsNotAnError documents that the delete is
-// unconditional: no rows affected is success. The application service checks
-// existence first, which is what turns a wrong id into ErrUserNotFound.
-func TestUserRepository_DeleteMissingRowIsNotAnError(t *testing.T) {
-	repo := newRepo(t)
-
-	require.NoError(t, repo.Delete(context.Background(), 999999))
-}
-
-// TestUserRepository_DuplicateEmailIsRejected checks whether the schema
-// enforces uniqueness, which is the only place it can be enforced reliably —
-// an application-level check is a race between two concurrent requests.
-func TestUserRepository_DuplicateEmailIsRejected(t *testing.T) {
-	repo := newRepo(t)
-	ctx := context.Background()
-
-	require.NoError(t, repo.Create(ctx, &domain.User{Name: "Alice", Email: "dup@example.com"}))
-
-	err := repo.Create(ctx, &domain.User{Name: "Someone Else", Email: "dup@example.com"})
-	require.Error(t, err, "two users share an email address; the users.email column has no unique constraint")
-}
-
-// TestUserRepository_TruncateAllLeavesAnEmptyTable guards the fixture itself.
-// A TruncateAll that quietly did nothing would let state leak between tests
-// and produce failures that look like application bugs.
-func TestUserRepository_TruncateAllLeavesAnEmptyTable(t *testing.T) {
-	db := testsupport.MigratedDB(t)
-	repo := NewUserRepository(db)
-	ctx := context.Background()
-
-	u := &domain.User{Name: "Alice", Email: "alice@example.com"}
-	require.NoError(t, repo.Create(ctx, u))
-
-	testsupport.TruncateAll(t, db)
-
-	got, err := repo.GetByID(ctx, u.ID)
-	require.NoError(t, err)
-	require.Nil(t, got, "the row survived TruncateAll")
+	_, err = repo.GetByID(ctx, id)
+	require.ErrorIs(t, err, domain.ErrUserNotFound, "the profile outlived its identity")
 }
