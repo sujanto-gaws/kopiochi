@@ -131,6 +131,38 @@ board: #19/#21/#24/#27/#28/#32 → `ca397f1` · #41 board
 #61 `af83214` **E21-1** · #62 board · #63 `aa784a1` **E9b+E9c** · #64 board ·
 #65 `ae8f61e` **E12** · #66 board · #67 board · *(open: **#68 E16-1+2+3**, #69 board)*
 
+## PROCESS-9 — I reported gates as run when I had run something adjacent to them
+Two instances, one root cause, neither previously recorded.
+
+**1. The linter.** I stated in three dispatch briefs and several PR bodies that golangci-lint
+was **not installed locally** and that CI was therefore the only place it ran. It has been at
+`/mnt/c/Users/sujan/go/bin/golangci-lint.exe` (v2.12.2) since 2 August. I never checked. I had
+confirmed `go` was absent from the WSL `PATH` and **inferred the rest of the toolchain from
+that one observation**. Three CI lint failures this session — ST1021, SA4006, the deprecated
+`reflect.Ptr` — were all locally detectable before push.
+
+**2. The coverage ratchet, #92.** I reported "coverage clean, run locally" on the strength of
+`go test ./tools/coverage` — **the coverage tool's own unit tests**, not the policy check.
+Guardrail 8 names `make coverage-check`; the real command is
+`go run ./tools/coverage -profile coverage.out`. CI caught what I had claimed to have checked:
+`modules/user/transport: 97.4% < baseline 97.5%`, because deleting a fully covered one-line
+function lowered the ratio while an uncovered statement stayed.
+
+**The shape is the same both times:** a command in the neighbourhood of the gate, reported as
+the gate. It is more dangerous than skipping the check outright, because the PR body then
+carries a specific false assurance that a reviewer has no reason to re-run.
+
+**Standing correction:** run the command the guardrail names, not one that looks like it. Before
+asserting a tool is unavailable, run `command -v` — the claim costs one command to verify and
+was wrong for four weeks. This sits next to PROCESS-2 (do not generalise from one observation)
+and GATE-INTEGRITY (a green gate is not evidence unless the gate really ran).
+
+**What it cost:** nothing merged wrong — CI is the arbiter and it held both times. What it did
+cost is trust in every "run locally, all clean" line I have written on this board, which is why
+this is recorded rather than quietly fixed. #92's own fix went the right way: the uncovered
+branch was **covered** rather than the baseline lowered, and the package is now at 100% with the
+baseline ratcheted to match.
+
 ## PROCESS-7 — six changes merged with NO arch-reviewer verdict
 T6 (#44), T7 (#45), E8-FIX (#46), E18-FIX (#47), BL34b (#48), GITIGNORE (#49), E11-FIX (#51),
 four board PRs, E13/E14-FIX (#53) and the E15 precursor (#55) were produced without passing the
@@ -477,6 +509,14 @@ wrong for the 401. All three now resolve to `#/definitions/internal_httpx.Proble
 
 **The test gap is the same one that hid the 401 until #88:** the existing tests asserted the
 status code and that nothing leaked, and both stayed true across the entire divergence.
+
+**The coverage ratchet caught a regression I had reported as checked** — see PROCESS-9. Deleting
+`errorResponse`, a fully covered one-line function, took the package from 97.5% to 97.4%: nothing
+got worse, the ratio did. Fixed by covering `caller()`'s remaining branch — a middleware that
+allows the request through while setting no principal, unreachable from the existing tests
+because `FakeAuth` always sets one. Worth pinning anyway: without that check the failure is not
+a 500, it is `uuid.Nil` reaching the service as an authenticated subject. Package now 100%,
+baseline ratcheted to match.
 `TestEveryFailureIsProblemJSON` now asserts the envelope — `type`, `title`, `status`, `instance`
 — and deliberately not the prose, so improving a message is not a test change.
 
