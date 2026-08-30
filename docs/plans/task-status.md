@@ -247,7 +247,7 @@ against `main` rather than a fix on an open branch. The T2 review is being re-po
 
 ---
 
-# ESCALATIONS — OPEN (2)
+# ESCALATIONS — OPEN (3)
 **Was 17. Fourteen were resolved on 2026-08-29** — E7, E8, E9b, E9c, E11, E12, E13, E14, E15,
 E18, E19, E21, E23 and E24 — each now headed RESOLVED or ANSWERED below.
 
@@ -265,11 +265,16 @@ answering it showed that claim was wrong. **Nothing on this board is blocked on 
 numbered set; **E25 closed** once the human authorised editing the agent definitions, and it
 turned out to name only one of the two files carrying the false convention.
 
-**Two NEW escalations opened 2026-08-30 — E27 and E28**, both found by building D6 rather than
-by reading, both defects in `internal/**` that no module task owns, and both about the same
-thing: **`module.Module`'s contract is under-specified.** One optional field panics when
-absent; another cannot receive the context its own shutdown path supplies. Neither blocks D6,
-which worked around both. Both will be hit again by the next module. Nothing is blocked, on the human or on anything else.
+**Three NEW escalations opened 2026-08-30 — E27, E28 and E29** — all found by BUILDING against
+a contract rather than reading it, all in code no module task owns, and all the same shape: **a
+contract that reads as explicit and has nothing enforcing it.**
+- **E27** — `module.Module`'s optional fields are half-guarded; the unguarded one panics.
+- **E28** — a module that owns a goroutine cannot receive the shutdown deadline.
+- **E29** — the composition root's config mapping silently drops newly added fields, and its own
+  doc comment claims a guarantee that covers renames but not additions.
+
+None blocks anything: D6 and D8 worked around all three. **Each will be hit again** — E27 and
+E28 by the next module, E29 by D9 and D10, which edit that mapping. Nothing is blocked, on the human or on anything else.
 
 **Still yours, and blocking nothing:** whether roles and permissions should mean anything at all
 (E26 ask 1). The tokens no longer advertise them, so the question can wait indefinitely without
@@ -325,6 +330,42 @@ change on a merged type with two implementors, so it is a decision rather than a
 alternative — every module inventing a private timeout — is what happened once already and
 looked reasonable each time.
 
+
+## E29 — THE COMPOSITION ROOT'S CONFIG MAPPING SILENTLY DROPS NEW FIELDS ⚠ NEW
+**Found building D8 (#85); the pattern it is about is in `main` today.**
+`cmd/api/container.go:206`'s `newNotificationModule` maps `config.Notification` onto
+`notification.Config` **field by field**. Add a field to both structs and forget the mapping
+line and it **compiles**, then boots with that setting silently zeroed — D8 added
+`email.username` and `email.timeout`, missed the mapping, and the module failed at startup with
+*"email.timeout must be positive"* **for a config that set it.**
+
+**The function's own doc comment states the property that failed:**
+
+> *"The cost is this function; the benefit is that a renamed field here is a compile error
+> rather than a silently-zeroed setting."*
+
+**That is true for a RENAME and false for an ADDITION**, and it was an addition that broke. The
+comment is not wrong about what it claims — it is wrong about what it covers, which is the
+harder kind to notice, because it reads as a guarantee against exactly this class.
+
+**The explicit mapping is still the right trade** and D8 agreed after being bitten by it: a
+shared struct would make every host — a test, a second binary — carry the whole application
+config to build one module. **The defect is that a hand-maintained mapping has no mechanical
+check**, while this repository mechanically checks the analogous thing one layer down:
+`tools/schemacheck` asserts model and migration agree, in both directions, and would fail on
+exactly this shape of omission.
+
+**Why it is urgent rather than tidy: D9 and D10 both edit this mapping.** The next omission has
+no guarantee of a test standing under it; D8's was caught by
+`TestBuildApp_WiresTheEmailAddressResolver`, which existed for a different reason.
+
+**Ask:** a per-field completeness check, in the shape schemacheck already establishes —
+reflect over both structs and fail when a `config.Notification` field has no counterpart set in
+the mapping. Or accept the risk and say so, since the alternative the comment implies (renames
+are safe) is only half the exposure.
+
+**Same family as E27 and E28:** a contract that reads as explicit and has nothing enforcing it.
+All three were found by building against the contract, not by reading it.
 
 ## E26 — **ANSWERED 2026-08-30 (human, delegated). Asks 2 and 3 settled from the repository; ask 1 dissolved. #73.**
 **I opened this saying it asks what the product intends. That was right about ask 1 and wrong
