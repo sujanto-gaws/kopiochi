@@ -368,7 +368,12 @@ call sites in identity use cases, `cmd/api/notifier_adapter.go` (new),
 **Do:** Interface owned by identity (`PasswordChanged`, plus whatever events
 identity's current use cases can emit today — do not invent events with no
 producer). Adapter in `cmd/api` maps each to `EnqueueRequest` with idempotency key
-`<event>:<userID>:<eventID>`. Wire real adapter when notification enabled,
+`<event>:<userID>:<eventID>:<channel>`. **The channel segment is required**, not
+optional tidiness: `idx_notifications_idem` is one partial-unique index over the whole
+outbox and is not channel-scoped, so a key shared across channels makes the second
+channel's `Enqueue` collide with the first channel's row and disappear through
+`ON CONFLICT DO NOTHING` — a silently undelivered notification, not a deduplicated
+retry. This task originally specified the three-segment form; D9 (#95) caught it. Wire real adapter when notification enabled,
 `NoopNotifier` otherwise.
 **Accept:** identity unit tests assert notifier invocation via a fake; one
 composition-level test drives an identity use case and asserts a pending row lands
