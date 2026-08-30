@@ -30,8 +30,13 @@ Phase A merges).
 - Changelog line, exactly this contract: 401 responses are uniform problem+json;
   clients key off status, never detail.
 - BOILERPLATE.md's "to add a module" section: consumer modules take
-  authn.Middleware; provider modules return (*module.Module, RootInterface, error)
+  authn.Middleware; every module constructor returns (*module.Module, error)
   — record the convention where the uniform-constructor promise currently lives.
+  (Corrected 2026-08-30, E25. This said RootInterface, which appears NOWHERE in
+  the Go tree: modules/identity/module.go:88 and modules/user/module.go:75 both
+  return two values. It was an instruction to write a convention that does not
+  exist into the file adopters copy from, and it violated the rule three lines
+  below it. C1 refused to follow it and documented what exists instead.)
 - Relative links must resolve; run a link check over your changed files.
 - No aspirational documentation: if a feature is planned but unmerged, it does not
   appear, or appears explicitly marked as roadmap.

@@ -261,8 +261,9 @@ importantly that it was unreachable, and that the fix is a `NOT NULL` migration.
 **E26 was answered the same day it was opened** (#73): asks 2 and 3 from the repository, ask 1
 dissolved by ceasing to advertise what nothing enforces. **It no longer blocks E16-5 part 2** —
 answering it showed that claim was wrong. **Nothing on this board is blocked on the human.**
-**EVERY ESCALATION RAISED ON THIS EFFORT IS NOW ANSWERED.** E17 was the last, closed 2026-08-30
-in #78. Nothing is blocked, on the human or on anything else.
+**EVERY ESCALATION RAISED ON THIS EFFORT IS NOW ANSWERED.** E17 was the last of the numbered
+set; **E25 closed 2026-08-30** once the human authorised editing the agent definitions, and it
+turned out to name only one of the two files carrying the false convention. Nothing is blocked, on the human or on anything else.
 
 **Still yours, and blocking nothing:** whether roles and permissions should mean anything at all
 (E26 ask 1). The tokens no longer advertise them, so the question can wait indefinitely without
@@ -883,7 +884,32 @@ by an agent that was not asked about it and had no stake in it. E7 stands, and t
 was right. **Still not T4's to fix** — it needs a test or a reasoned `exempt`, never a lowered
 floor, and it needs an owner from you.
 
-## E25 — a STANDING AGENT DEFINITION carries a convention the merged code contradicts ⚠ NEW
+## E25 — **CLOSED 2026-08-30. Corrected on the human's instruction — and there were TWO files, not one.**
+Both now say `(*module.Module, error)`, matching `modules/identity/module.go:88` and
+`modules/user/module.go:75`.
+
+- **`.claude/agents/docs-scribe.md:33`** — the one this entry named. Worth stating what it
+  actually instructed: *record* the `RootInterface` convention into **`BOILERPLATE.md`'s "to
+  add a module" section** — the file adopters copy from. It was an instruction to propagate a
+  convention that does not exist into the exemplar, which is the E21 amplification shape. It
+  also **violated the rule three lines below it in its own file**: *"No aspirational
+  documentation: if a feature is planned but unmerged, it does not appear."*
+- **`.claude/agents/platform-engineer.md:28`** — **NOT named by this entry, and the more
+  consequential of the two.** It called `(*module.Module, Service, error)` a "settled
+  decision", and platform-engineer is the agent that builds D5, D6 and D8. The D6 dispatch had
+  to override it explicitly; without that the agent would have followed its own definition.
+
+**Two agents refused this convention independently before anyone corrected it** — C1 would not
+document it and documented what exists instead, and D5 flagged it unprompted while shipping
+something else. That is the evidence it was wrong, and it is also the reason it survived: a
+false line in a standing definition is only visible to whoever is unlucky enough to act on it.
+
+**Also corrected in `platform-engineer.md` while there:** it instructed the agent to write a
+stuck-`sending` sweep that already exists. `ClaimStalled` landed in #63 and does not change
+status, so recovery is per row through `RecoverStalled` — a set-based `UPDATE` would be a
+second copy of the state machine (E9c).
+
+### E25 (original entry, kept) — a STANDING AGENT DEFINITION carries a convention the merged code contradicts
 C1 was briefed — by its own agent definition, not by my dispatch — that provider modules return
 `(*module.Module, RootInterface, error)`. **It refused to document it**, because merged code says
 otherwise: `modules/identity/module.go:88` returns `(*module.Module, error)`, and the
