@@ -1,6 +1,6 @@
 // Package notification is the notification capability: an outbox other modules
-// write to, a background dispatcher that drains it, and (from D7) a read model
-// over a user's in-app mailbox and delivery preferences.
+// write to, a background dispatcher that drains it, and a read model over a
+// user's in-app mailbox and delivery preferences.
 //
 // Nothing is sent inside a request. Enqueue commits a row in the caller's
 // transaction and returns; delivery, retries and dead-lettering happen later on
@@ -34,6 +34,7 @@ import (
 	"github.com/sujanto-gaws/kopiochi/modules/notification/infrastructure/persistence/repository"
 	"github.com/sujanto-gaws/kopiochi/modules/notification/infrastructure/sender"
 	"github.com/sujanto-gaws/kopiochi/modules/notification/infrastructure/template"
+	"github.com/sujanto-gaws/kopiochi/modules/notification/transport"
 )
 
 // Name is the module's name on the lifecycle stack and in the boot log.
@@ -127,9 +128,18 @@ func New(deps module.Deps, cfg Config) (*module.Module, error) {
 	}
 	disp.Start()
 
+	// The same *application.Service serves the dispatcher and the read model.
+	// It is one type because the use cases share the same four dependencies,
+	// and transport declares the narrow subset it needs (transport.Service) so
+	// the handler cannot reach the dispatch cycle.
+	//
+	// cfg.Auth is non-nil here: Validate refuses an enabled module without one,
+	// and the routes below mount inside the group it guards.
+	handler := transport.NewHandler(svc, cfg.Auth)
+
 	return &module.Module{
 		Name:   Name,
-		Routes: noRoutes,
+		Routes: handler.Routes,
 		// Whoever starts a goroutine registers the way to stop it, once. The
 		// lifecycle stack calls this exactly once, in reverse construction
 		// order, and there is deliberately no second `defer` anywhere.
@@ -157,12 +167,14 @@ func disabled() *module.Module {
 	}
 }
 
-// noRoutes mounts nothing.
+// noRoutes mounts nothing. It is what a DISABLED module carries; an enabled one
+// mounts transport.Handler.Routes.
 //
 // It is a function that does nothing rather than a nil field because
 // httpx.Mount calls m.Routes unconditionally — Close and Migrations are
 // nil-guarded there and Routes is not, so a genuinely routeless module would
-// panic the router at boot. Reported as a finding; harmless to satisfy here.
+// panic the router at boot. Reported as a finding (E27); harmless to satisfy
+// here.
 func noRoutes(chi.Router) {}
 
 // systemClock is the real clock. It exists because the application layer takes

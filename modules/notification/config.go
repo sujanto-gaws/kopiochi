@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/sujanto-gaws/kopiochi/internal/authn"
 	"github.com/sujanto-gaws/kopiochi/internal/platform/secret"
 	domain "github.com/sujanto-gaws/kopiochi/modules/notification/domain"
 	"github.com/sujanto-gaws/kopiochi/modules/notification/infrastructure/sender"
@@ -33,6 +34,23 @@ type Config struct {
 	Dispatcher DispatcherConfig `mapstructure:"dispatcher"`
 	Email      EmailConfig      `mapstructure:"email"`
 	LogSender  LogSenderConfig  `mapstructure:"log_sender"`
+
+	// Auth protects every route this module exposes. It is a required
+	// dependency of an ENABLED module, not an option: Validate refuses a
+	// configuration that would serve a mailbox to anonymous callers, exactly
+	// as user.Config.Validate does.
+	//
+	// A disabled module does not need one, and that is not a hole. It mounts
+	// no routes at all, so there is nothing to protect; requiring a middleware
+	// to switch the module off would make "we do not run notifications" depend
+	// on wiring an authentication stack.
+	//
+	// It arrives as a middleware rather than as a token verifier so this
+	// module never learns how authentication is implemented. The type is
+	// authn.Middleware, an alias for func(http.Handler) http.Handler, which is
+	// what lets the composition root assign identity's AuthRequired to it with
+	// no conversion and no import edge between the two modules (R2).
+	Auth authn.Middleware `mapstructure:"-"`
 
 	// EmailAddressResolver turns a recipient id into an email address. It is
 	// required when Email.Enabled and ignored otherwise.
@@ -158,6 +176,14 @@ func (c Config) Validate() error {
 	}
 
 	var errs []error
+
+	// First, because it is the one that fails closed on a security property
+	// rather than on tuning: routes that mount without it are routes served
+	// unauthenticated.
+	if c.Auth == nil {
+		errs = append(errs, errors.New("notification: an auth middleware is required when the module is enabled"))
+	}
+
 	errs = append(errs, c.Dispatcher.validate()...)
 	errs = append(errs, c.validateEmail()...)
 	errs = append(errs, c.validateLogSender()...)

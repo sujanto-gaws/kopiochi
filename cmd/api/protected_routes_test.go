@@ -34,6 +34,18 @@ var protectedRoutes = []struct{ method, path string }{
 	{http.MethodPost, "/api/v1/auth/mfa/setup/verify"},
 	{http.MethodPost, "/api/v1/users/me"},
 	{http.MethodGet, "/api/v1/users/me"},
+
+	// The notification module's whole surface. Its own tests use a fake
+	// middleware — what they are about is the mailbox, not RS256 — so these
+	// entries are the only place the real AuthRequired is proven to be on
+	// those routes, and modules/notification cannot prove it itself: it may
+	// not import modules/identity (R2), and cmd/api is the package that sees
+	// both.
+	{http.MethodGet, "/api/v1/notifications"},
+	{http.MethodPost, "/api/v1/notifications/00000000-0000-0000-0000-000000000000/read"},
+	{http.MethodPost, "/api/v1/notifications/read-all"},
+	{http.MethodGet, "/api/v1/notifications/preferences"},
+	{http.MethodPut, "/api/v1/notifications/preferences"},
 }
 
 // buildAuthTestRouter builds the real application and route tree over a nil
@@ -43,8 +55,16 @@ func buildAuthTestRouter(t *testing.T) (http.Handler, testsupport.Keypair) {
 
 	cfg, kp := testsupport.Config(t)
 
-	app, err := BuildApp(cfg, nil, zerolog.Nop())
+	// Enabled, because a disabled notification module mounts no routes and
+	// half the table below would then be asserted against a 404 that has
+	// nothing to do with authentication. lazyDB never dials and the
+	// dispatcher's first tick is an hour away; nothing here gets past
+	// AuthRequired, which is the property under test.
+	cfg.Notification = enabledNotification()
+
+	app, err := BuildApp(cfg, lazyDB(t), zerolog.Nop())
 	require.NoError(t, err)
+	t.Cleanup(func() { closeModules(t, app) })
 
 	r, closeRouter, err := httpx.NewRouter(cfg.Server, cfg.Security, zerolog.Nop(), nil)
 	require.NoError(t, err)

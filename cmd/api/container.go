@@ -10,6 +10,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 
 	"github.com/rs/zerolog"
 	"github.com/uptrace/bun"
@@ -114,17 +115,44 @@ func BuildApp(cfg *config.Config, db bun.IDB, log zerolog.Logger) (*App, error) 
 // Since 3.6b the module itself owns its dependency graph (modules/user/
 // module.go); this function is only the glue that satisfies user.Config.
 func newUserModule(deps module.Deps, cfg *config.Config) (*module.Module, error) {
+	// authMW is derived from a verifier this function builds, so it is
+	// guaranteed non-nil here — construction already returned on error
+	// otherwise. user.Config.Validate rejects a nil middleware regardless,
+	// so the module fails closed rather than serving unprotected routes.
+	authMW, err := newAuthMiddleware(cfg)
+	if err != nil {
+		return nil, err
+	}
+
+	return user.New(deps, user.Config{AuthMiddleware: authMW})
+}
+
+// newAuthMiddleware builds an access-token middleware from the shared auth
+// config.
+//
+// One function with two callers rather than a copy per module, because the
+// thing being duplicated is a security decision — which key, which issuer,
+// which audience, which leeway — and two copies of it are two places for a
+// deployment to end up verifying tokens differently. The RSA keys are parsed
+// once per call, which is once per module at boot and never again.
+//
+// It deliberately does NOT extract identity's verifier: module.Module exposes
+// nothing but Name/Routes/Migrations/Close, so cross-module auth wiring goes
+// through shared config and this file, not a back-channel into another
+// module's private dependency graph (R2).
+//
+// The return type is spelled out rather than written as authn.Middleware, which
+// is the same type — an alias — but naming it would put an import edge from
+// cmd/api to internal/authn, and tools/archtest fences that contract to
+// modules/*, internal/httpx, internal/testsupport and the conformance suite.
+// The composition root supplies the middleware; it is not a consumer of the
+// contract.
+func newAuthMiddleware(cfg *config.Config) (func(http.Handler) http.Handler, error) {
 	jwtSvc, err := token.NewJWTService(cfg.Auth.PrivateKeyPath, cfg.Auth.PublicKeyPath, cfg.Auth.Issuer, cfg.Auth.ClientID, cfg.Auth.TokenLeeway)
 	if err != nil {
 		return nil, fmt.Errorf("init token verifier: %w", err)
 	}
-	// authMW is derived from the same jwtSvc built above, so it is
-	// guaranteed non-nil here — construction already returned on error
-	// otherwise. user.Config.Validate rejects a nil middleware regardless,
-	// so the module fails closed rather than serving unprotected routes.
-	authMW := identitytransport.AuthRequired(jwtSvc)
-
-	return user.New(deps, user.Config{AuthMiddleware: authMW})
+	return identitytransport.AuthRequired(jwtSvc), nil
 }
 
 // newNotificationModule maps the host's notification config onto the module's
@@ -158,8 +186,26 @@ func newNotificationModule(deps module.Deps, cfg *config.Config) (*module.Module
 		resolver = identityEmailResolver{users: identityrepo.NewUserRepo(deps.DB)}
 	}
 
+	// The middleware every notification route mounts behind, built here for
+	// exactly the same reason as the resolver above and as the user module's:
+	// neither module imports the other, and the composition root is the only
+	// place that knows both exist.
+	//
+	// Built only for an enabled module. A disabled one mounts no routes, so it
+	// needs no middleware — and it must not need a keypair either, or "switch
+	// notifications off" would stop being an answer for a deployment that has
+	// no auth keys on disk.
+	var authMW func(http.Handler) http.Handler
+	if n.Enabled {
+		var err error
+		if authMW, err = newAuthMiddleware(cfg); err != nil {
+			return nil, err
+		}
+	}
+
 	return notification.New(deps, notification.Config{
 		Enabled:              n.Enabled,
+		Auth:                 authMW,
 		EmailAddressResolver: resolver,
 		Dispatcher: notification.DispatcherConfig{
 			PollInterval: n.Dispatcher.PollInterval,
