@@ -159,6 +159,48 @@ pattern to follow. See
 
 ---
 
+### R5 — Ownership is a query shape, not a check
+
+**A use case that acts on somebody's data takes the caller as a parameter, and
+the repository query is scoped by it. There is no branch that decides whether
+the caller may proceed, because there is nothing to branch on.**
+
+This is not new guidance. It is what two modules already do, and
+`modules/notification/domain/repository.go` states the reason better than a rule
+could:
+
+> Scoped by recipient in the query rather than filtered afterwards: **an
+> ownership check a caller can forget is an ownership check that will be
+> forgotten.**
+
+`ListForRecipient` puts `recipient_id` in the `WHERE` clause. `modules/user`'s
+use cases take `caller uuid.UUID` and have no parameter that could name anybody
+else. Both arrived at the same shape independently, which is usually a sign the
+shape is right.
+
+**Why a rule rather than a habit: E16.** Any valid access token could read,
+overwrite or delete any other user's profile. The cause was not a missing check —
+it was that `users.id` was unrelated to the caller's identity, so there was *no
+value to compare*. A rule phrased as "check ownership" would have been satisfied
+by code that had nothing to check with. Phrased as a shape, it is not
+satisfiable by accident.
+
+| Question | Where it is answered |
+|---|---|
+| May this caller touch **this row**? | The use case's caller parameter and the query's `WHERE`. **Not a check.** |
+| May this caller call **this endpoint at all**? | Route-level middleware. A separate, coarser mechanism. |
+
+**These two are not the same problem and must not share a mechanism.** No
+route-level rule can express "this row is yours", which is why middleware could
+never have caught E16. The second row of that table is unimplemented and blocked:
+this repository has no authorization primitive, and the access token deliberately
+carries no privilege claims — see **E26**.
+
+**Enforcement.** `tools/archtest` cannot prove a `WHERE` clause is present, so
+this rule is partly a review obligation. What it can and does check is the
+direction rules above. When a repository method takes an owner id, the reviewer's
+question is not "is there a check?" but **"is the id in the query?"**
+
 ## Enforcement
 
 ### 1. `go-arch-lint` or `depguard` in CI

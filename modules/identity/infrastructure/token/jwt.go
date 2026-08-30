@@ -78,20 +78,35 @@ func NewJWTService(privateKeyPath, publicKeyPath, issuer, audience string, leewa
 	}, nil
 }
 
+// IssueAccessToken mints an access token for user.
+//
+// It deliberately does NOT carry roles or permissions. It did until E26, and
+// nothing anywhere consulted them: a grep for RequireRole, RequirePermission,
+// Authorize, HasRole, HasPermission or CanAccess found nothing outside comments,
+// and nothing read authn.Principal.Scopes either.
+//
+// A signed claim that nothing enforces is worse than an absent one. It travels,
+// and a downstream service can trust it without ever asking this one — so the
+// claim becomes an authorization decision made by whoever reads it, on data this
+// service never checks. An absent feature is obvious; a present-looking one gets
+// trusted.
+//
+// The columns and the login response keep them, documented as advisory. The rule
+// this follows: a claim is minted when something enforces it, and not before.
+// Minting first is how a decorative claim happens. When an authorization
+// primitive lands (E26), these come back alongside the code that checks them.
 func (s *JWTService) IssueAccessToken(user domain.User, ttl time.Duration) (string, error) {
 	now := time.Now()
 	claims := jwt.MapClaims{
-		"sub":         user.ID.String(),
-		"email":       user.Email,
-		"name":        user.Name,
-		"roles":       user.Roles,
-		"permissions": user.Permissions,
-		"scope":       "access",
-		"cls":         string(domain.ClassAccess),
-		"iss":         s.issuer,
-		"aud":         s.audience,
-		"iat":         now.Unix(),
-		"exp":         now.Add(ttl).Unix(),
+		"sub":   user.ID.String(),
+		"email": user.Email,
+		"name":  user.Name,
+		"scope": "access",
+		"cls":   string(domain.ClassAccess),
+		"iss":   s.issuer,
+		"aud":   s.audience,
+		"iat":   now.Unix(),
+		"exp":   now.Add(ttl).Unix(),
 	}
 	return s.sign(claims)
 }
@@ -181,6 +196,11 @@ func (s *JWTService) Validate(tokenStr string, want domain.Class) (*domain.Claim
 		return nil, fmt.Errorf("%w: got %q, want %q", domain.ErrWrongTokenClass, cls, want)
 	}
 
+	// Roles and Permissions are still READ, and that is not an oversight. Tokens
+	// minted before E26 are still valid until they expire, and a validator that
+	// dropped the fields would report a different Claims for the same token
+	// depending on when it was issued. Reading a claim commits to nothing;
+	// minting one does. They will be empty for every token issued from here on.
 	c := &domain.Claims{
 		Subject:     getString(claims, "sub"),
 		Email:       getString(claims, "email"),
