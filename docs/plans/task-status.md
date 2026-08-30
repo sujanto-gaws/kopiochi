@@ -38,8 +38,9 @@ States: pending | dispatched | in-review | blocked | merged | escalated
 | **E21-1** | *(in-session, ungated)* | **merged** | #61 (`af83214`) | **none — see PROCESS-7** |
 | **E9b/E9c-FIX** | *(in-session, ungated)* | **merged** | #63 (`aa784a1`) | **none — see PROCESS-7** |
 | **E26-FIX** | *(in-session, ungated)* | **merged** | #73 (`d3611a0`) | **none — see PROCESS-7** |
-| **E10-FIX** | *(in-session, ungated)* | **in review** | **#75** (`b586c71`) | **none** |
-| **BL33/E10-2** | *(unassigned)* | **READY** — schemacheck `is_nullable == pointer-ness`, with the `*string` refactor it forces | - | - |
+| **E10-FIX** | *(in-session, ungated)* | **merged** | #75 (`b586c71`) | **none — see PROCESS-7** |
+| **BL33/E10-2** | *(in-session, ungated)* | **merged** | #77 (`95a0f10`) | **none — see PROCESS-7** |
+| **E17-FIX** | *(in-session, ungated)* | **in review** | **#78** (`1cadbc8`) | **none** |
 | **E12-FIX** | *(in-session, ungated)* | **in review** | **#65** (`ae8f61e`) — 7/7 green | **none** |
 | D5  | platform-engineer | **UNBLOCKED 2026-08-29** — E11, E13, E14 all answered. Scope grew: `sender/inapp.go`, and its file list must say `domain/message.go`, not `application/ports.go` | - | - |
 | D6  | platform-engineer | **UNBLOCKED 2026-08-29** — E9b/E9c answered and implemented (#63); E12 answered and additive, not a dependency | - | - |
@@ -246,7 +247,7 @@ against `main` rather than a fix on an open branch. The T2 review is being re-po
 
 ---
 
-# ESCALATIONS — OPEN (1)
+# ESCALATIONS — OPEN (0)
 **Was 17. Fourteen were resolved on 2026-08-29** — E7, E8, E9b, E9c, E11, E12, E13, E14, E15,
 E18, E19, E21, E23 and E24 — each now headed RESOLVED or ANSWERED below.
 
@@ -260,11 +261,15 @@ importantly that it was unreachable, and that the fix is a `NOT NULL` migration.
 **E26 was answered the same day it was opened** (#73): asks 2 and 3 from the repository, ask 1
 dissolved by ceasing to advertise what nothing enforces. **It no longer blocks E16-5 part 2** —
 answering it showed that claim was wrong. **Nothing on this board is blocked on the human.**
-**E17 is the only escalation still open**, and it blocks nothing. Whether roles should mean
-anything at all is still yours, and nothing waits on it.
+**EVERY ESCALATION RAISED ON THIS EFFORT IS NOW ANSWERED.** E17 was the last, closed 2026-08-30
+in #78. Nothing is blocked, on the human or on anything else.
 
-**One task remains from E10's answer: BL33/E10-2**, the `schemacheck` rule that makes the whole
-nullable-to-non-pointer class unrepresentable. It is ready and needs no answer from anyone.
+**Still yours, and blocking nothing:** whether roles and permissions should mean anything at all
+(E26 ask 1). The tokens no longer advertise them, so the question can wait indefinitely without
+costing anything.
+
+**Dispatchable work remaining, none of it blocked:** D5, D6, D8, D7, D9, D10 in Phase D;
+**E16-5 part 2**, the generator template, which E26's answer released.
 
 Ordered by severity.
 
@@ -1457,7 +1462,47 @@ nor D6 may add it. Blocked behind E9b. **Correction:** the sweep can **no longer
 set-based UPDATE — that would be a second, untested copy of the state machine. D6 must do
 select → `RecoverStalled` → `Save` per row.
 
-## E17 — the conformance suite guards `detail` only
+## E17 — **ANSWERED 2026-08-30 (human, delegated). Fixed in #78 — and half of its fix was wrong.**
+**Both defects were real.** The body was parsed into `struct{ Detail string }` and
+`WWW-Authenticate` was checked for **presence only**, so a middleware leaking the reason through
+`title`, through the problem `type` URI, or through **RFC 6750's `error_description` in the
+challenge** passed with zero findings. The challenge is where most OAuth middleware puts it,
+which makes it the **likeliest** leak rather than an exotic one.
+
+**Now compared: the whole body, and every response header except `Date`.**
+
+**Wider than this entry asked.** Its fix says "the whole rejection response", which reads as the
+body, while its own prose names `WWW-Authenticate`. Headers are compared explicitly and reported
+separately — a body difference is usually a message built from the validation error, a header
+difference is usually `error_description`, and an author may not think of the latter as a body
+at all.
+
+**Two carve-outs, both narrow, both tested rather than asserted:**
+- **`instance`** — RFC 7807 defines it as a URI reference for the specific occurrence and this
+  service sets it to the request path. The suite takes arbitrary minters, so a caller whose
+  invalid cases hit different paths would get a **false failure from a uniform middleware**.
+  Everything the *server* chooses is compared; the one member echoing the *request* is not.
+- **`Date`** — a clock reading, not a choice about this credential. **A denylist of exactly one,
+  not an allowlist:** a leak can hide in any header, including one the middleware invented.
+
+**⚠ NOT IMPLEMENTED, and this is a disagreement rather than an omission.** This entry also asks
+that an **absent `detail` be treated as a finding. It should not be.** Once the whole response is
+compared, a middleware answering `{}` for every 401 **is uniform** — it leaks nothing, and RFC
+7807 makes `detail` optional — so reporting it would **fail a conformant replacement for a reason
+unrelated to leaking**, in a suite whose entire purpose is that replacements must pass it. The
+vacuity this entry correctly identified was a *symptom* of comparing one optional member, and it
+goes away with the comparison rather than needing its own rule. **A test asserts `{}` is
+accepted**, so the decision is pinned rather than implicit.
+
+**Also done, because a branch no caller can reach is a branch no test can honestly cover:** two
+unreachable branches deleted rather than tested around — `indent`'s empty case, and
+`fingerprint`'s `json.Marshal` error (a map from `json.Unmarshal` always re-marshals). The body
+fingerprint is sorted `key=value` pairs instead: order-insensitive, no error path.
+
+**The evidence it reports real leaks rather than merely more:** the identity module's own
+conformance run passes unchanged.
+
+### E17 (original entry, kept) — the conformance suite guards `detail` only
 A textbook **RFC 6750** middleware leaking the reason via `WWW-Authenticate`, the problem
 `type` URI, or `title`, with **no `detail` member at all**, passes B3's suite with **zero
 findings** — and that is the default shape of most OAuth/OIDC middleware. Also `{}` for every
