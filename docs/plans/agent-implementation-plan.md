@@ -27,8 +27,17 @@ These override anything an agent infers from general Go conventions.
    `make compose-up` first or accept that CI is the arbiter for integration tests.
 5. **Layer rules inside a module:** `domain` → stdlib + `internal/platform` only;
    `application` → own domain; `infrastructure` → domain + `internal/**`;
-   `transport` → application, domain (+ `internal/authn`, `internal/httpx` after
-   task A4 lands).
+   `transport` → application, domain, `internal/authn`, `internal/httpx`.
+   **`internal/authn` is fenced to exactly four areas** — `modules/*`,
+   `internal/httpx`, `internal/testsupport`, `internal/authn/authntest`
+   (`tools/archtest/arch_test.go`, `authnAreas`). **`cmd/**` is not one of them**,
+   so the composition root must not name `authn.Middleware` in a declaration, even
+   though wiring is exactly where you would expect to. Use the structural type
+   `func(http.Handler) http.Handler`, which is what `cmd/api/container.go:150`
+   already does — the value still is an `authn.Middleware`, it is just never named
+   as one outside the fence. Widening `authnAreas` is a decision to take
+   deliberately, not a diff to wave through. See
+   `docs/architectures/08-authn/README.md` for the full rationale.
 6. **Secrets:** any password/credential config field uses
    `internal/platform/secret.String`, is populated from env only, never from YAML,
    and is never logged. Config `Validate()` fails closed — missing required values
