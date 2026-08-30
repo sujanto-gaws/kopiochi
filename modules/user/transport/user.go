@@ -79,8 +79,8 @@ func caller(r *http.Request) (uuid.UUID, bool) {
 // @Tags users
 // @Produce json
 // @Success 200 {object} domain.UserResponse "The caller's profile"
-// @Failure 401 {object} map[string]string "Not authenticated"
-// @Failure 500 {object} map[string]string "Internal server error"
+// @Failure 401 {object} internal_httpx.Problem "Not authenticated"
+// @Failure 500 {object} internal_httpx.Problem "Internal server error"
 // @Router /users/me [post]
 func (h *UserHandler) EnsureOwnProfile() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -92,7 +92,9 @@ func (h *UserHandler) EnsureOwnProfile() http.HandlerFunc {
 
 		resp, err := h.svc.EnsureOwnProfile(r.Context(), id)
 		if err != nil {
-			writeJSON(w, http.StatusInternalServerError, errorResponse("failed to create profile"))
+			httpx.WriteProblem(w, r, http.StatusInternalServerError,
+				"internal_error", "Internal Server Error",
+				"The profile could not be created.")
 			return
 		}
 
@@ -110,9 +112,9 @@ func (h *UserHandler) EnsureOwnProfile() http.HandlerFunc {
 // @Tags users
 // @Produce json
 // @Success 200 {object} domain.UserResponse "The caller's profile"
-// @Failure 401 {object} map[string]string "Not authenticated"
-// @Failure 404 {object} map[string]string "No profile yet"
-// @Failure 500 {object} map[string]string "Internal server error"
+// @Failure 401 {object} internal_httpx.Problem "Not authenticated"
+// @Failure 404 {object} internal_httpx.Problem "No profile yet"
+// @Failure 500 {object} internal_httpx.Problem "Internal server error"
 // @Router /users/me [get]
 func (h *UserHandler) GetOwnProfile() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -125,10 +127,14 @@ func (h *UserHandler) GetOwnProfile() http.HandlerFunc {
 		resp, err := h.svc.GetOwnProfile(r.Context(), id)
 		if err != nil {
 			if errors.Is(err, domain.ErrUserNotFound) {
-				writeJSON(w, http.StatusNotFound, errorResponse("user not found"))
+				httpx.WriteProblem(w, r, http.StatusNotFound,
+					"not_found", "Not Found",
+					"You have no profile yet.")
 				return
 			}
-			writeJSON(w, http.StatusInternalServerError, errorResponse("failed to fetch profile"))
+			httpx.WriteProblem(w, r, http.StatusInternalServerError,
+				"internal_error", "Internal Server Error",
+				"The profile could not be retrieved.")
 			return
 		}
 

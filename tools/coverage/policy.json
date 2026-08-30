@@ -81,6 +81,6 @@
     "modules/user/application": 90,
     "modules/user/domain": 100,
     "modules/user/infrastructure/persistence/repository": 90.9,
-    "modules/user/transport": 97.5
+    "modules/user/transport": 100
   }
 }

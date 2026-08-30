@@ -22,11 +22,17 @@ import (
 // identity owns tokens and cookies, and a second, drifting copy of the
 // cookie-security attributes is exactly the duplication Phase 3 exists to
 // remove. What remains is what the user handlers actually call.
-
-// errorResponse creates a standardized error JSON response.
-func errorResponse(message string) map[string]string {
-	return map[string]string{"error": message}
-}
+//
+// errorResponse went the same way, later and for the same reason (E32). Deleting
+// the RFC 7807 writer from this file without replacing it is what left the module
+// answering its failures with {"error": "..."} while the rest of the tree spoke
+// problem+json — the handlers reached for the one writer still in the file. The
+// replacement is internal/httpx.WriteProblem, which is the shared writer this
+// file should have pointed at in the first place: unlike the copy deleted above,
+// it cannot drift, and it fills instance and request_id from the request.
+//
+// writeJSON stays. It carries the 200s, where the module's own DTO is the body
+// and there is nothing canonical to defer to.
 
 // writeJSON is a helper to write JSON responses.
 func writeJSON(w http.ResponseWriter, status int, v any) {
