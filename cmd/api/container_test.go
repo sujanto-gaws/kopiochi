@@ -1,10 +1,23 @@
 package main
 
 import (
+	"context"
+	"database/sql"
+	"database/sql/driver"
+	"errors"
+	"fmt"
+	"runtime"
 	"testing"
+	"time"
 
 	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/require"
+	"github.com/uptrace/bun"
+	"github.com/uptrace/bun/dialect/pgdialect"
+
+	"github.com/sujanto-gaws/kopiochi/internal/config"
+	"github.com/sujanto-gaws/kopiochi/internal/module"
+	"github.com/sujanto-gaws/kopiochi/internal/platform/secret"
 )
 
 // TestBuildApp_RegistersModules is task 1.1(a) from the remediation plan
@@ -68,3 +81,157 @@ func TestBuildApp_FailsOnInvalidConfig(t *testing.T) {
 // against the current implementation; a test asserting NoError still passes
 // through the (correct) module-building logic, not through the guard being
 // meaningfully exercised.
+
+// refusingConnector is a database handle that never dials. database/sql
+// connects lazily, so sql.OpenDB over it yields a real, non-nil *bun.DB that
+// every module can build its repositories from, and that fails loudly if
+// anything queries. BuildApp's other tests pass a nil DB; the notification
+// module refuses one when it is enabled, which is what this exists for.
+type refusingConnector struct{}
+
+func (refusingConnector) Connect(context.Context) (driver.Conn, error) {
+	return nil, errors.New("this test must not touch the database")
+}
+
+func (refusingConnector) Driver() driver.Driver { return nil }
+
+func lazyDB(t *testing.T) bun.IDB {
+	t.Helper()
+
+	sqldb := sql.OpenDB(refusingConnector{})
+	t.Cleanup(func() { _ = sqldb.Close() })
+	return bun.NewDB(sqldb, pgdialect.New())
+}
+
+// enabledNotification is a valid module whose dispatcher will not poll during a
+// test: the first tick is an hour away and every test here closes the app long
+// before that.
+func enabledNotification() config.Notification {
+	return config.Notification{
+		Enabled: true,
+		Dispatcher: config.NotificationDispatcher{
+			PollInterval: time.Hour,
+			BatchSize:    50,
+			Workers:      2,
+			MaxAttempts:  6,
+			BackoffBase:  30 * time.Second,
+			BackoffCap:   time.Hour,
+			StalledAfter: time.Hour,
+			DrainTimeout: 5 * time.Second,
+		},
+	}
+}
+
+// closeModules is what serve does through the lifecycle stack: every module
+// that owns something gets its Close called, in reverse construction order. A
+// test that builds an App and drops it leaks the dispatcher's goroutines.
+func closeModules(t *testing.T, app *App) {
+	t.Helper()
+
+	for i := len(app.Modules) - 1; i >= 0; i-- {
+		if m := app.Modules[i]; m.Close != nil {
+			if err := m.Close(); err != nil {
+				t.Errorf("close module %s: %v", m.Name, err)
+			}
+		}
+	}
+}
+
+func moduleNamed(app *App, name string) *module.Module {
+	for _, m := range app.Modules {
+		if m.Name == name {
+			return m
+		}
+	}
+	return nil
+}
+
+// The disabled module is still registered. Pretending it is absent would make
+// "which modules does this deployment run" a question with two answers, and it
+// is the state every other test in this package boots in — testsupport.Config
+// zeroes the section, so notification.enabled is false there.
+func TestBuildApp_RegistersTheNotificationModuleEvenWhenDisabled(t *testing.T) {
+	t.Parallel()
+
+	cfg := testConfig(t)
+	cfg.Notification.Enabled = false
+
+	app, err := BuildApp(cfg, nil, zerolog.Nop())
+	require.NoError(t, err)
+
+	m := moduleNamed(app, "notification")
+	require.NotNil(t, m, "the notification module is not registered")
+	require.NotNil(t, m.Routes, "httpx.Mount calls Routes unconditionally")
+	require.NotNil(t, m.Close)
+	require.NoError(t, m.Close())
+}
+
+// The other half of the acceptance: the application boots with the module on,
+// and everything it started stops again.
+func TestBuildApp_BootsWithTheNotificationModuleEnabled(t *testing.T) {
+	db := lazyDB(t)
+
+	before := runtime.NumGoroutine()
+
+	cfg := testConfig(t)
+	cfg.Notification = enabledNotification()
+
+	app, err := BuildApp(cfg, db, zerolog.Nop())
+	require.NoError(t, err)
+	require.NotNil(t, moduleNamed(app, "notification"))
+
+	require.Greater(t, runtime.NumGoroutine(), before, "the dispatcher did not start")
+
+	closeModules(t, app)
+
+	deadline := time.Now().Add(2 * time.Second)
+	for runtime.NumGoroutine() > before {
+		if time.Now().After(deadline) {
+			t.Fatalf("shutdown left %d goroutine(s) running", runtime.NumGoroutine()-before)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+// Fail closed at boot, and say which setting. Email switched on with no host,
+// no from address and no APP_NOTIFICATION_EMAIL_PASSWORD is not a deployment
+// that sends no mail — it is one that dead-letters every security notification
+// it queues.
+func TestBuildApp_FailsOnIncompleteNotificationEmailConfig(t *testing.T) {
+	t.Parallel()
+
+	cfg := testConfig(t)
+	cfg.Notification = enabledNotification()
+	cfg.Notification.Email.Enabled = true
+
+	app, err := BuildApp(cfg, lazyDB(t), zerolog.Nop())
+	require.Error(t, err)
+	require.Nil(t, app)
+	require.Contains(t, err.Error(), "build notification module")
+	require.Contains(t, err.Error(), "email.smtp_host is required")
+	require.Contains(t, err.Error(), "APP_NOTIFICATION_EMAIL_PASSWORD")
+}
+
+// The credential travels from the host's config into the module's as a
+// secret.String, and secret.String redacts itself in every formatting verb —
+// so a wiring mistake that logged the whole config would not print it.
+func TestBuildApp_KeepsTheSMTPPasswordRedacted(t *testing.T) {
+	t.Parallel()
+
+	cfg := testConfig(t)
+	cfg.Notification = enabledNotification()
+	cfg.Notification.Email = config.NotificationEmail{
+		Enabled:  true,
+		SMTPHost: "smtp.example.test",
+		SMTPPort: 587,
+		From:     "no-reply@example.test",
+		Password: secret.String("the-smtp-credential"),
+	}
+
+	app, err := BuildApp(cfg, lazyDB(t), zerolog.Nop())
+	require.NoError(t, err)
+	t.Cleanup(func() { closeModules(t, app) })
+
+	require.NotContains(t, fmt.Sprintf("%v %+v %s", cfg.Notification, cfg.Notification, cfg.Notification.Email.Password),
+		"the-smtp-credential")
+}
