@@ -2,6 +2,7 @@ package notification_test
 
 import (
 	"context"
+	"net/http"
 	"strings"
 	"testing"
 	"time"
@@ -20,13 +21,20 @@ func (stubResolver) ResolveEmail(context.Context, uuid.UUID) (string, error) {
 	return "someone@example.test", nil
 }
 
+// stubAuth stands in for the composition root's access-token middleware.
+// Config only cares that one is present; what it does is transport's business
+// and modules/notification/transport tests it with the real shape.
+func stubAuth(next http.Handler) http.Handler { return next }
+
 // validConfig is the shipped default set, as config/default.yaml spells it,
-// plus the one value that file cannot carry (the SMTP password is env-only).
+// plus the two values that file cannot carry: the SMTP password is env-only,
+// and the auth middleware is a dependency rather than a setting.
 // Every case below is this minus one thing, so a test says exactly which
 // setting it is about.
 func validConfig() notification.Config {
 	return notification.Config{
 		Enabled: true,
+		Auth:    stubAuth,
 		Dispatcher: notification.DispatcherConfig{
 			PollInterval: 5 * time.Second,
 			BatchSize:    50,
@@ -78,6 +86,16 @@ func TestConfigValidate(t *testing.T) {
 				Email:      notification.EmailConfig{Enabled: true},
 				LogSender:  notification.LogSenderConfig{Enabled: true, Channel: "carrier-pigeon"},
 			},
+		},
+
+		// The one requirement that is not about tuning. Routes that mount
+		// without a middleware are routes served to anonymous callers, so an
+		// enabled module with no Auth is refused for the same reason user.New
+		// refuses one — and refused at boot, where a human is reading.
+		{
+			name: "enabled with no auth middleware",
+			cfg:  mutate(func(c *notification.Config) { c.Auth = nil }),
+			want: "auth middleware is required",
 		},
 
 		{

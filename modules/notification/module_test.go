@@ -5,7 +5,9 @@ import (
 	"database/sql"
 	"database/sql/driver"
 	"errors"
+	"net/http"
 	"runtime"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -148,6 +150,60 @@ func TestNewEnabledRefusesToBuildWithoutADatabase(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "database is required") {
 		t.Errorf("unhelpful error: %v", err)
+	}
+}
+
+// An enabled module mounts the read model, and it mounts it behind the
+// middleware the composition root supplied. modules/notification/transport
+// tests the handlers; this is the seam — that New wires them at all, onto the
+// router the host hands over.
+func TestNewEnabledMountsTheReadModelRoutes(t *testing.T) {
+	m, err := notification.New(deps(t, lazyDB(t)), enabledConfig())
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	t.Cleanup(func() { _ = m.Close() })
+
+	r := chi.NewRouter()
+	r.Route("/api/v1", m.Routes)
+
+	var got []string
+	if err := chi.Walk(r, func(method, route string, _ http.Handler, _ ...func(http.Handler) http.Handler) error {
+		got = append(got, method+" "+route)
+		return nil
+	}); err != nil {
+		t.Fatalf("walk: %v", err)
+	}
+	sort.Strings(got)
+
+	want := []string{
+		"GET /api/v1/notifications",
+		"GET /api/v1/notifications/preferences",
+		"POST /api/v1/notifications/read-all",
+		"POST /api/v1/notifications/{id}/read",
+		"PUT /api/v1/notifications/preferences",
+	}
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Errorf("routes are\n%s\nwant\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
+	}
+}
+
+// Fail closed, the way user.New does. A module that builds without a middleware
+// is a module that serves one user's mailbox to whoever asks — and it would
+// build cleanly, boot cleanly, and be discovered by a caller rather than by a
+// test.
+func TestNewEnabledRefusesToBuildWithoutAnAuthMiddleware(t *testing.T) {
+	t.Parallel()
+
+	cfg := enabledConfig()
+	cfg.Auth = nil
+
+	m, err := notification.New(deps(t, lazyDB(t)), cfg)
+	if err == nil {
+		t.Fatalf("New built an enabled module with no auth middleware: %+v", m)
+	}
+	if !strings.Contains(err.Error(), "auth middleware is required") {
+		t.Errorf("error does not name the missing dependency: %v", err)
 	}
 }
 

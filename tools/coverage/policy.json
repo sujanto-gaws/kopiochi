@@ -76,6 +76,7 @@
     "modules/notification/application": 100,
     "modules/notification/domain": 100,
     "modules/notification/infrastructure/persistence/repository": 84.2,
+    "modules/notification/transport": 98.6,
     "modules/user": 100,
     "modules/user/application": 90,
     "modules/user/domain": 100,

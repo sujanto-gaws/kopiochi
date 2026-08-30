@@ -2,6 +2,7 @@ package main
 
 import (
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/go-chi/chi/v5"
@@ -37,8 +38,16 @@ func testConfig(t *testing.T) *config.Config {
 func TestRouteTable(t *testing.T) {
 	cfg := testConfig(t)
 
-	app, err := BuildApp(cfg, nil, zerolog.Nop())
+	// The notification module is enabled here and nowhere else in this package,
+	// because a disabled module mounts no routes and this is the test that
+	// walks the route table. It needs a database handle to build its
+	// repositories — lazyDB is one that never dials — and it starts a
+	// dispatcher, which closeModules stops.
+	cfg.Notification = enabledNotification()
+
+	app, err := BuildApp(cfg, lazyDB(t), zerolog.Nop())
 	require.NoError(t, err)
+	t.Cleanup(func() { closeModules(t, app) })
 	require.NotEmpty(t, app.Modules, "application must register at least one module")
 
 	r, closeRouter, err := httpx.NewRouter(cfg.Server, cfg.Security, zerolog.Nop(), nil)
@@ -78,6 +87,42 @@ func TestRouteTable(t *testing.T) {
 		"the profile has no writable field, so a PUT can only lie (E24)")
 	require.NotContains(t, got, "DELETE /api/v1/users",
 		"deleting a profile without its identity leaves a logged-in caller with none")
+
+	// The notification module, per the blueprint's route table (§7). This is
+	// the first id-bearing route table in the tree — marking one notification
+	// read cannot be expressed without naming it — so the absences below are
+	// the ones that matter.
+	require.Contains(t, got, "GET /api/v1/notifications")
+	require.Contains(t, got, "POST /api/v1/notifications/{id}/read")
+	require.Contains(t, got, "POST /api/v1/notifications/read-all")
+	require.Contains(t, got, "GET /api/v1/notifications/preferences")
+	require.Contains(t, got, "PUT /api/v1/notifications/preferences")
+
+	// No route may name a recipient. The one path parameter names a ROW, and
+	// the recipient is the Principal — the scoping is in the query (R5), so a
+	// path that carried a user id would be E16 rediscovered behind a different
+	// table.
+	for _, route := range got {
+		if !strings.HasPrefix(routePath(route), "/api/v1/notifications") {
+			continue
+		}
+		for _, forbidden := range []string{"{user", "{recipient", "{subject"} {
+			require.NotContains(t, route, forbidden,
+				"a notification route names a recipient in its path")
+		}
+	}
+
+	// There is deliberately no public send endpoint: enqueue is an internal
+	// capability other modules reach through an adapter at the composition
+	// root. Exposed over HTTP it would let any authenticated caller mint mail
+	// addressed to anybody.
+	require.NotContains(t, got, "POST /api/v1/notifications")
+}
+
+// routePath drops the method from a walked route.
+func routePath(route string) string {
+	_, path, _ := strings.Cut(route, " ")
+	return path
 }
 
 func routeTableString(routes []string) string {
