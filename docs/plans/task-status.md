@@ -44,11 +44,9 @@ States: pending | dispatched | in-review | blocked | merged | escalated
 | D8  | platform-engineer | **UNBLOCKED 2026-08-29** — E15 answered; precursor #55. Port declared by the sender, adapter in `cmd/api` | - | - |
 | D9a/D9b, D10 | domain / platform | pending | - | - |
 | E16-P | test-guardian | **merged** | #37 (`1dc6aa7`) | **APPROVE-WITH-NOTES** |
-| E16-1 | persistence-engineer | **UNBLOCKED 2026-08-30** — E20 answered, E19 ruled, E22 dissolved. **Scope amended:** the migration back-fills by `lower(email)` and **RAISEs on any `users` row it cannot map**, so it is correct on an empty table and on a populated one | - | - |
-| E16-2 | domain-engineer | **UNBLOCKED 2026-08-29** (E24 = option b). **Scope changed:** `CreateUserRequest`/`UpdateUserRequest` are **deleted, not emptied**; `UserResponse` becomes `{id uuid, created_at, updated_at}`; `ID int64`→`uuid.UUID`; drop the `id <= 0` guard | - | - |
-| E16-3 | transport-engineer | **UNBLOCKED 2026-08-29** (E24 = option b). **Scope SHRANK:** the route table becomes `GET /api/v1/users/me` alone — POST/PUT/DELETE are removed, so there is no `{id}` param, no `strconv.ParseInt` ×3, no `@Param id path int` ×3, and **the byte-identity obligation is moot on verbs that no longer exist**. The handler reads the Principal | - | - |
-| E16-4 | docs-scribe | pending — needs E16-3 merged; carries **E19**, BL40 | - | - |
-| E16-5 | platform-engineer | **part 1 merged (#61)**; part 2 **BLOCKED — no authorization primitive exists**, and needs E16-3 first | - | - |
+| **E16-1/2/3** | *(in-session, ungated)* | **in review — SHIPPED AS ONE PR** | **#68** (`b21b907`) — 7/7 green | **none — see PROCESS-7** |
+| E16-4 | docs-scribe | **READY** once #68 merges; carries **E19**, BL40, and the exemplar gap (E24) | - | - |
+| E16-5 | platform-engineer | **part 1 merged (#61)**; part 2 **BLOCKED — no authorization primitive exists**. Its other precondition is met: #68 settles the safe shape | - | - |
 
 **Phase A and Phase B are complete on `main`.** `main` is **`5030e7f`**.
 
@@ -80,6 +78,10 @@ being a blocker and become an ordinary pre-deploy check, which is where it belon
 
 **Still open, blocking nothing:** E10 and E17. **Still unnumbered and larger than any of them:**
 this repository has no authorization primitive at all — see E21.
+
+**E16 is CLOSED as of 2026-08-30 (#68).** The confirmed IDOR is fixed, by removing the
+addressable id rather than by guarding it. E16-4 (docs) is ready once #68 merges; E16-5 part 2
+is the generator, blocked on that same missing authorization primitive.
 **Phase D's dependency wall is down.** E11 (#51), E13/E14 (#53) and E15 (#55 + decision) are
 all answered, so **D5 and D8 are both dispatchable now**. **D6 alone still waits**, on
 E9b/E9c/E12 — and those are the only Phase D asks left. Nothing in Phase D is blocked on
@@ -123,7 +125,7 @@ board: #19/#21/#24/#27/#28/#32 → `ca397f1` · #41 board
 #52 board · #53 `0d0b02d` **E13+E14** · #54 board · #55 `ee9bbd9` **E15 precursor** ·
 #56 board · #57 board · #58 `49ee321` **E16-P2** · #59 board · #60 board ·
 #61 `af83214` **E21-1** · #62 board · #63 `aa784a1` **E9b+E9c** · #64 board ·
-*(open: #65 E12, #66 board)*
+#65 `ae8f61e` **E12** · #66 board · #67 board · *(open: **#68 E16-1+2+3**, #69 board)*
 
 ## PROCESS-7 — six changes merged with NO arch-reviewer verdict
 T6 (#44), T7 (#45), E8-FIX (#46), E18-FIX (#47), BL34b (#48), GITIGNORE (#49), E11-FIX (#51),
@@ -142,6 +144,20 @@ coverage gate on #47). But the gate is the gate, and the board must record that 
 are **unreviewed** rather than let the merge log imply otherwise.
 **Standing correction:** work done directly in the lead's session is still work, and is
 not exempt from the gate because it was convenient.
+
+## PROCESS-8 — a plan stated a constraint and then violated it, for three weeks
+E16-ARCH's decomposition says a uuid PK "cannot be split across PRs without breaking
+`go build ./...` in between" and then splits it into three PRs. Both halves were written in the
+same paragraph, by me, and reviewed by nobody who tried to execute step one — because until
+2026-08-30 nobody did. The contradiction survived every read of that section, including several
+of mine while amending the rows immediately above it.
+
+**Sequencing was the error.** "These are sequenced, not parallel" reads like a mitigation and is
+not one: it is the SPLIT that breaks the build, not the order of the pieces.
+
+**Standing correction:** when a plan states a constraint and a decomposition in the same
+paragraph, check the decomposition against the constraint before recording either. A plan that
+cannot be executed is worse than no plan, because it is dispatched.
 
 ## PROCESS-1 — B2 and B3 were never pushed
 PR #26 merged **only** `ea0d30f` (B1). B2 and B3 stacked onto the same branch and **I
@@ -244,7 +260,26 @@ it is framed under E21 below rather than opened as an escalation, because naming
 
 Ordered by severity.
 
-## E16 — CONFIRMED IDOR, INHERITED FROM THE INTERNAL CORE
+## E16 — **CLOSED 2026-08-30 in #68 (`b21b907`), by removing the addressable id.**
+**Not by adding an ownership check.** This entry's own diagnosis is why: the defect was never a
+missing `if` — `users.id` was a `BIGSERIAL` unrelated to any identity, so there was **no value a
+handler could compare a caller against**. The profile is now keyed by `auth_users.id`, and the
+routes that took an id are gone, so a cross-user request **is not expressible**.
+
+**What shipped:** `POST /api/v1/users/me` and `GET /api/v1/users/me`, and nothing else.
+- **No `{id}` anywhere.** The enumeration oracle E16-P and E16-P2 recorded — 200/404 on GET,
+  200/404 on PUT, 204/404 on DELETE — is gone with the verbs that produced it. Byte-identity
+  between a cross-user answer and a not-found answer is **moot when a cross-user request cannot
+  be phrased**.
+- **The second leg is gone too:** the unrestricted `POST /users` that minted a profile from any
+  valid token. `POST /users/me` takes no body and creates only the caller's own.
+- **A foreign key and `ON DELETE CASCADE`**, so a profile cannot exist without its identity or
+  outlive it — refused by the database rather than by a comment.
+
+**Still open under E16:** **E16-4** (docs, ready once #68 merges) and **E16-5 part 2** (the
+generator, blocked on the authorization primitive that does not exist — see E21).
+
+### E16 (original entry, kept) — CONFIRMED IDOR, INHERITED FROM THE INTERNAL CORE
 Any caller with **any valid access token** can `GET`/`PUT`/`DELETE` **any other user's
 row** at `/api/v1/users/{id}`, plus unrestricted `POST /users`. Ids are `BIGSERIAL`;
 `internal/metrics` templatises the path, so enumeration is invisible in metrics.
@@ -304,9 +339,19 @@ never by editing an existing one"*, and the ADR declares itself binding) and
 this repo has ever been modified, renamed or deleted. The `users` constraint change of
 `00007` is the counter-precedent: it added a file rather than editing `00001`.
 
-**Decomposition** (E16-P → E16-1 → E16-2 → E16-3 → E16-4, each merged before the next; a
-uuid PK cannot be split across PRs without breaking `go build ./...` in between, so these
-are sequenced, not parallel):
+**⚠ THE DECOMPOSITION BELOW COULD NOT BE EXECUTED AS WRITTEN. Corrected 2026-08-30 (#68).**
+It says a uuid PK "cannot be split across PRs without breaking `go build ./...` in between, so
+these are sequenced, not parallel" — and then splits it into three PRs anyway. **Sequencing does
+not help: it is the SPLIT that breaks, not the order.** The moment `UserDBModel` changes,
+`domain`, `application`, `infrastructure` and `transport` all stop compiling; leaving the model
+alone fails `tools/schemacheck` instead, since that asserts the model matches the migrated
+schema. **There is no green E16-1.** E16-1, E16-2 and E16-3 shipped as ONE pull request, #68.
+
+**Standing correction:** when a plan states a constraint and a decomposition in the same
+paragraph, check that the decomposition satisfies the constraint. This one contradicted itself
+and nobody noticed until someone tried to execute step one.
+
+**Decomposition, as executed** (E16-P → E16-P2 → **E16-1+2+3 together** → E16-4; E16-5 apart):
 - **E16-P** *(merged/in-review, #37)* — goldens recording the defect: cross-user
   GET/PUT/DELETE currently return **200 / 200 / 204**, with B's row overwritten and then
   deleted. `get_cross_user` (200 + body) vs `get_not_found` (404 + `{"error":…}`) quantifies
@@ -324,21 +369,27 @@ are sequenced, not parallel):
   that fails closed.
 - **E16-2** domain — `ID int64` → `uuid.UUID` through `domain/{user,dto,repository}.go` and
   `application/service.go`, including deleting the `id <= 0` guard, which has no uuid analogue.
-- **E16-3** transport — **SUPERSEDED 2026-08-29 by E24 = option (b), and it SHRANK.** The route
-  table becomes **`GET /api/v1/users/me` alone**; POST, PUT and DELETE are removed. So: no
+- **E16-3** transport — **SHIPPED in #68. The route table is `POST /users/me` + `GET
+  /users/me`, not `GET` alone**, which corrects E24's answer rather than following it. Removing
+  `POST` removed **the only thing in this repository that creates a `users` row**, so `GET /me`
+  would have 404ed forever — a hole in that answer, found while implementing it. `POST /users/me`
+  is option (a)'s creation half, which E24 itself credits with removing the "unrestricted
+  creation behind mere authentication" leg, without (a)'s id-bearing routes: it takes no body,
+  creates only the caller's own profile, and is idempotent. *(As previously written:* the route
+  table becomes `GET /api/v1/users/me` alone; POST, PUT and DELETE are removed.*)* So: no
   `{id}` path param, no `strconv.ParseInt` ×3, no `@Param id path int` ×3, no ownership check to
   write, and **the byte-identity obligation is moot — it cannot apply to verbs that no longer
   exist.** The handler reads the caller from the Principal. *(Original scope, kept for the
   record: `strconv.ParseInt` ×3 → uuid parse, `@Param id path int` ×3, the ownership check
   itself, and byte-identity of the cross-user response against the genuinely-not-found one.)*
-- **E16-3 also owns the goldens, which is easy to miss.** Removing the routes **breaks
-  `TestCurrentUserRouteShapes`** — five of its eight cases drive verbs that will 404 or 405.
-  E16-P and E16-P2's files stay as the historical record of the defect, and the test is rewritten
-  to assert the surface is **gone** rather than guarded. **The six
-  `// E16: invert to require.Equal when the ownership check lands` markers now mean something
-  different from what they say**: there is no ownership check on those verbs, so each is
-  "assert the route no longer exists, or delete the case". Whoever executes E16-3 should read
-  this line before greping for them.
+- **The goldens were neither deleted nor inverted — they became the regression test.** #68
+  replays **all eight** recorded requests against the live route table and fails if any routes
+  again. The assertion is deliberately NOT "returns 404": a 404 from a handler that looked the
+  row up is still a handler that CAN, so it asserts the application layer **is never entered**.
+  The files are left byte-for-byte — evidence rewritten to match the present is not evidence —
+  and two further tests guard against a thinned `testdata` directory letting the replay pass over
+  whatever is left. The six `// E16: invert to require.Equal…` markers are gone with the
+  assertions they annotated: there was no ownership check to invert.
 - **E16-4** docs — `BOILERPLATE.md`, `SWAGGER.md`, `README.md`, `MIGRATIONS.md` examples,
   plus **E19**'s contradiction and BL40. **Now also carries the exemplar gap:** `BOILERPLATE.md:279`
   points adopters at `modules/user/transport/user.go` as the worked CRUD example, and under E24
