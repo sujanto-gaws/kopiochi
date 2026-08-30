@@ -265,16 +265,33 @@ answering it showed that claim was wrong. **Nothing on this board is blocked on 
 numbered set; **E25 closed** once the human authorised editing the agent definitions, and it
 turned out to name only one of the two files carrying the false convention.
 
-**Three NEW escalations opened 2026-08-30 — E27, E28 and E29** — all found by BUILDING against
-a contract rather than reading it, all in code no module task owns, and all the same shape: **a
-contract that reads as explicit and has nothing enforcing it.**
+**Six NEW escalations opened 2026-08-30 — E27 through E32** — all found by BUILDING against
+a contract rather than reading it, all in code no module task owns, and the first three all the
+same shape: **a contract that reads as explicit and has nothing enforcing it.**
 - **E27** — `module.Module`'s optional fields are half-guarded; the unguarded one panics.
 - **E28** — a module that owns a goroutine cannot receive the shutdown deadline.
 - **E29** — the composition root's config mapping silently drops newly added fields, and its own
   doc comment claims a guarantee that covers renames but not additions.
 
-None blocks anything: D6 and D8 worked around all three. **Each will be hit again** — E27 and
-E28 by the next module, E29 by D9 and D10, which edit that mapping. Nothing is blocked, on the human or on anything else.
+- **E30** — `MarkRead` and `MarkAllRead` disagree about which rows they own.
+- **E31** — Guardrail 5 documents who may import `internal/authn`, not who may not.
+- **E32** — `modules/user/transport` is the only place emitting `{"error": ...}`.
+
+None blocks anything: D6 and D8 worked around the first three. **Each of those will be hit
+again** — E27 and E28 by the next module, E29 by D9 and D10, which edit that mapping. E30, E31
+and E32 are one line, one sentence and one small refactor respectively. Nothing is blocked, on
+the human or on anything else.
+
+**Fixed rather than escalated, 2026-08-30:** `modules/user/transport` answered an unusable
+subject with a hand-rolled `{"error": "unauthorized"}` carrying **no `WWW-Authenticate` header**,
+which RFC 9110 §15.5.2 makes mandatory on a 401 — the only 401 in the tree that was not
+`httpx.Unauthorized`. Introduced by the change that closed E16, which was busy with the ownership
+hole. Unreachable through this issuer (every `sub` is a uuid on a uuid column) but the **common**
+path for every federated caller the day a second middleware is mounted, which is the entire
+premise of `internal/authn`. Fixed in **#88**. Its test had asserted only the status code, so it
+stayed green across the divergence and left the ad-hoc shape looking deliberate; it now compares
+the whole response against `httpx.Unauthorized`'s own output. Found by the D7 agent, outside its
+scope; E32 is the remainder.
 
 **Still yours, and blocking nothing:** whether roles and permissions should mean anything at all
 (E26 ask 1). The tokens no longer advertise them, so the question can wait indefinitely without
@@ -366,6 +383,69 @@ are safe) is only half the exposure.
 
 **Same family as E27 and E28:** a contract that reads as explicit and has nothing enforcing it.
 All three were found by building against the contract, not by reading it.
+
+## E30 — `MarkRead` AND `MarkAllRead` DISAGREE ABOUT WHICH ROWS THEY OWN ⚠ NEW
+**Found by the D7 transport agent reviewing #87, outside its own scope.** Three queries in
+`modules/notification/infrastructure/persistence/repository/notification_repo.go` write or read
+`read_at`, and one of them is not channel-scoped:
+
+| query | declared | predicate lines | predicate |
+|---|---|---|---|
+| `MarkRead` | `:333` | `:337-338` | `id = ?` + `recipient_id = ?` — **no channel predicate** |
+| `MarkAllRead` | `:361` | `:365-366` | `recipient_id = ?` + `channel = 'inapp'` |
+| `ListForRecipient` | `:283` | `:291-292` | `recipient_id = ?` + `channel = 'inapp'` |
+
+(Line numbers verified against `origin/main`; the agent's report cited `:355` and `:288` for the
+declarations, which were a few lines off. The predicates are as it described them.)
+
+So a recipient's email or webhook row **can be marked read individually, but will never be
+returned by the mailbox and will never be touched by "mark all read"**. Two writers to one
+column disagree about the set they own.
+
+**Not a security defect.** Every row reachable this way is the caller's own — `recipient_id`
+scoping is intact, and #87 keeps a non-existent id and someone else's id indistinguishable.
+No harm today because nothing outside the in-app queries reads `read_at`.
+
+**Why it is still worth an entry.** The invariant "`read_at` is a mailbox concept" holds in two
+of the three queries, and the one where it does not hold is **the one an id reaches from
+outside**. The agent's first framing of this was against a hypothetical GET-one endpoint; it
+withdrew that and filed the sharper version above, which is already in the tree.
+
+**Fix:** one line — add `channel = 'inapp'` to `MarkRead`. Consistent with #87: a non-in-app id
+becomes not-found, the same answer a foreign id already gets, so the indistinguishability
+property is preserved rather than weakened. **Blocks nothing.**
+
+## E31 — GUARDRAIL 5 SAYS WHO MAY IMPORT `internal/authn`, NOT WHO MAY NOT ⚠ NEW, docs
+**Found building D7 (#87).** `tools/archtest` fences `internal/authn` to `modules/*`,
+`internal/httpx`, `internal/testsupport` and the conformance suite — **`cmd/api` is not on that
+list and may not import it.** The agent's first cut of `newAuthMiddleware` returned
+`authn.Middleware` from the composition root; archtest caught it.
+
+Guardrail 5 in the plan lists who **may** import the contract and never states that the
+composition root may not — and the composition root is the one place a reader would look, since
+wiring is exactly where you would expect to name the type you are wiring. The rule was enforced;
+only the documentation of it was silent.
+
+**Fix:** one sentence in Guardrail 5. **Blocks nothing** — archtest already fails the build, which
+is why this cost the agent a compile cycle rather than a merged mistake.
+
+## E32 — `modules/user/transport` IS THE ONLY PLACE EMITTING `{"error": ...}` ⚠ NEW, small
+**Found fixing the 401 in #88.** With that PR merged, `modules/user/transport` emits the canonical
+`httpx.Unauthorized` for 401 but still hand-rolls its other two failures:
+
+```
+user.go:95   writeJSON(w, 500, errorResponse("failed to create profile"))
+user.go:128  writeJSON(w, 404, errorResponse("user not found"))
+user.go:131  writeJSON(w, 500, errorResponse("failed to fetch profile"))
+```
+
+`modules/identity/transport` emits problem+json for its failures (via its own local
+`writeProblemDetails`), and `internal/httpx.WriteProblem` is the canonical writer. So the tree
+has **three** error writers and this module's is the only one that is not problem-shaped at all:
+`application/json`, body `{"error": "..."}`.
+
+Deliberately left out of #88, which fixed only the 401 — that one had an RFC 9110 §15.5.2
+violation behind it (a 401 with no `WWW-Authenticate`) and these do not. **Blocks nothing.**
 
 ## E26 — **ANSWERED 2026-08-30 (human, delegated). Asks 2 and 3 settled from the repository; ask 1 dissolved. #73.**
 **I opened this saying it asks what the product intends. That was right about ask 1 and wrong
