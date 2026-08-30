@@ -274,13 +274,13 @@ same shape: **a contract that reads as explicit and has nothing enforcing it.**
   doc comment claims a guarantee that covers renames but not additions.
 
 - **E30** — `MarkRead` and `MarkAllRead` disagree about which rows they own. **Fixed in #90.**
-- **E31** — Guardrail 5 documents who may import `internal/authn`, not who may not.
-- **E32** — `modules/user/transport` is the only place emitting `{"error": ...}`.
+- **E31** — Guardrail 5 documents who may import `internal/authn`, not who may not. **Fixed in #93.**
+- **E32** — `modules/user/transport` is the only place emitting `{"error": ...}`. **Fixed in #92.**
 
 None blocks anything: D6 and D8 worked around the first three. **Each of those will be hit
 again** — E27 and E28 by the next module, E29 by D9 and D10, which edit that mapping. E30, E31
-and E32 were one line, one sentence and one small refactor respectively; **E30 is fixed (#90)**
-and E31 and E32 remain open. Nothing is blocked, on
+and E32 were one line, one sentence and one small refactor respectively, and **all three are now
+fixed — #90, #93, #92.** E27, E28 and E29 remain open. Nothing is blocked, on
 the human or on anything else.
 
 **Fixed rather than escalated, 2026-08-30:** `modules/user/transport` answered an unusable
@@ -425,7 +425,7 @@ Mutation-checked by removing only the predicate.
 that lacked the channel boundary is reachable from outside as `POST /notifications/{id}/read` —
 the endpoint existing makes the entry more material, not less.
 
-## E31 — GUARDRAIL 5 SAYS WHO MAY IMPORT `internal/authn`, NOT WHO MAY NOT ⚠ NEW, docs
+## E31 — **FIXED 2026-08-30 in #93.** Guardrail 5 said who may import `internal/authn`, not who may not
 **Found building D7 (#87).** `tools/archtest` fences `internal/authn` to `modules/*`,
 `internal/httpx`, `internal/testsupport` and the conformance suite — **`cmd/api` is not on that
 list and may not import it.** The agent's first cut of `newAuthMiddleware` returned
@@ -436,10 +436,16 @@ composition root may not — and the composition root is the one place a reader 
 wiring is exactly where you would expect to name the type you are wiring. The rule was enforced;
 only the documentation of it was silent.
 
-**Fix:** one sentence in Guardrail 5. **Blocks nothing** — archtest already fails the build, which
-is why this cost the agent a compile cycle rather than a merged mistake.
+**Fixed in #93.** Guardrail 5 now names the four permitted areas, states the `cmd/**` exclusion,
+says why it surprises people, and points at the structural type
+`func(http.Handler) http.Handler` that `cmd/api/container.go:150` already uses — the value still
+**is** an `authn.Middleware`, it is just never named as one outside the fence.
 
-## E32 — `modules/user/transport` IS THE ONLY PLACE EMITTING `{"error": ...}` ⚠ NEW, small
+**`docs/architectures/08-authn/README.md:441` had this right all along.** The gap was only in the
+plan — which is the file prepended to every agent's context, so it is the one that mattered. Also
+dropped "after task A4 lands" from the same sentence; A4 has landed.
+
+## E32 — **FIXED 2026-08-30 in #92.** `modules/user/transport` was the only place emitting `{"error": ...}`
 **Found fixing the 401 in #88.** With that PR merged, `modules/user/transport` emits the canonical
 `httpx.Unauthorized` for 401 but still hand-rolls its other two failures:
 
@@ -455,7 +461,24 @@ has **three** error writers and this module's is the only one that is not proble
 `application/json`, body `{"error": "..."}`.
 
 Deliberately left out of #88, which fixed only the 401 — that one had an RFC 9110 §15.5.2
-violation behind it (a 401 with no `WWW-Authenticate`) and these do not. **Blocks nothing.**
+violation behind it (a 401 with no `WWW-Authenticate`) and these do not.
+
+**Fixed in #92.** All three go through `httpx.WriteProblem`, which also fills `instance` and
+`request_id` — neither of which the hand-rolled response carried. `errorResponse` is deleted;
+`writeJSON` stays for the 200s, where the module's own DTO is the body.
+
+**The cause is written in `helpers.go`'s own doc comment.** That file once held the RFC 7807
+writers; they moved to `modules/identity` in Phase 1 and the copies here were deleted as unused.
+Deleting the problem writer without replacing it left `errorResponse` as the only error writer
+still in the file, so that is what the handlers reached for.
+
+**The swagger annotations were wrong too** — `map[string]string`, which #88 had already made
+wrong for the 401. All three now resolve to `#/definitions/internal_httpx.Problem`.
+
+**The test gap is the same one that hid the 401 until #88:** the existing tests asserted the
+status code and that nothing leaked, and both stayed true across the entire divergence.
+`TestEveryFailureIsProblemJSON` now asserts the envelope — `type`, `title`, `status`, `instance`
+— and deliberately not the prose, so improving a message is not a test change.
 
 ## E26 — **ANSWERED 2026-08-30 (human, delegated). Asks 2 and 3 settled from the repository; ask 1 dissolved. #73.**
 **I opened this saying it asks what the product intends. That was right about ask 1 and wrong
