@@ -606,6 +606,50 @@ func TestNotificationRepo_MarkReadIsIdempotent(t *testing.T) {
 	require.Equal(t, first, pgTime(*got[0].ReadAt), "the second MarkRead moved the read timestamp")
 }
 
+// TestNotificationRepo_MarkReadRefusesANonInAppRow is E30: read_at is a mailbox
+// concept and the mailbox is in-app, so the row a caller can mark read must be
+// one ListForRecipient would have shown them.
+//
+// Before the channel predicate, all three queries were reachable for the same
+// recipient but disagreed about the set they owned: this one would stamp an
+// email row that the mailbox never returns and that MarkAllRead never touches.
+// Nothing read that column, so nothing broke — but the query an id reaches from
+// outside was the one without the boundary, and since D7 that id arrives over
+// HTTP as POST /notifications/{id}/read.
+//
+// The row must be left untouched, and the error must be the same ErrNotFound a
+// foreign or absent id gets: narrowing what is accepted must not add a way to
+// tell the cases apart.
+func TestNotificationRepo_MarkReadRefusesANonInAppRow(t *testing.T) {
+	repo, _ := newRepo(t)
+	ctx := context.Background()
+
+	recipient := uuid.New()
+	now := pgTime(time.Now())
+
+	email := newNotification(t, recipient, now)
+	email.Channel = domain.ChannelEmail
+	require.NoError(t, repo.Enqueue(ctx, email))
+
+	err := repo.MarkRead(ctx, recipient, email.ID, now)
+	require.ErrorIs(t, err, domain.ErrNotFound,
+		"MarkRead accepted a row its own mailbox does not contain")
+
+	var readAt *time.Time
+	require.NoError(t, repo.db.NewSelect().
+		TableExpr("notifications").
+		ColumnExpr("read_at").
+		Where("id = ?", email.ID).
+		Scan(ctx, &readAt))
+	require.Nil(t, readAt, "a non-in-app row was stamped read")
+
+	// The caller's own in-app row still works: the predicate narrowed the set,
+	// it did not break the feature.
+	inapp := newNotification(t, recipient, now)
+	require.NoError(t, repo.Enqueue(ctx, inapp))
+	require.NoError(t, repo.MarkRead(ctx, recipient, inapp.ID, now))
+}
+
 func TestNotificationRepo_MarkAllRead(t *testing.T) {
 	repo, _ := newRepo(t)
 	ctx := context.Background()

@@ -330,12 +330,24 @@ func (r *NotificationRepo) ListForRecipient(
 // case into the second; coalesce keeps the original timestamp (a second read
 // does not move it) and leaves "no rows matched" meaning exactly "not yours or
 // not there".
+//
+// Scoped by channel as well, for the same reason as ListForRecipient and
+// MarkAllRead: read_at is a mailbox concept, and the mailbox is in-app. Without
+// this predicate the three queries disagreed about which rows they own — an
+// email or webhook row could be marked read individually here, while never
+// being returned by ListForRecipient and never touched by MarkAllRead (E30).
+//
+// This narrows what the endpoint accepts, and does so in the safe direction: a
+// non-in-app id now returns ErrNotFound, which is the answer a foreign id and a
+// missing id already get, so the three stay indistinguishable and the route
+// cannot be used to probe for ids of any channel.
 func (r *NotificationRepo) MarkRead(ctx context.Context, recipientID, id uuid.UUID, now time.Time) error {
 	res, err := r.db.NewUpdate().
 		Model((*models.NotificationRow)(nil)).
 		Set("read_at = coalesce(read_at, ?)", now).
 		Where("id = ?", id).
 		Where("recipient_id = ?", recipientID).
+		Where("channel = ?", string(domain.ChannelInApp)).
 		Exec(ctx)
 	if err != nil {
 		return db.Translate(err)
