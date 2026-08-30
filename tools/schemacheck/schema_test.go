@@ -91,3 +91,117 @@ func actualColumns(t *testing.T, sqlDB *sql.DB, table string) []string {
 	require.NotEmpty(t, cols, "table %q has no columns — does it exist after migrations ran?", table)
 	return cols
 }
+
+// TestNullableColumnsMapToNilableFields — BL33, the class E10 was one instance of.
+//
+// A nullable column mapped to a plain Go value collapses two different facts
+// into one: "this was never set" and "this was set to the zero value" arrive at
+// the caller identically. Whether that matters depends entirely on what the
+// caller then does with the zero value, which is not a property any reviewer can
+// see from the model.
+//
+// E10 is what it costs when the answer is bad. mfa_secret is nullable and was a
+// plain string, so an account that never ran MFA setup presented as one whose
+// secret is "" — and the TOTP code derived from the empty secret is computable
+// by anyone with a clock. The second factor was a public constant. password_hash
+// has the identical shape and happens to fail closed, which is luck about what
+// bcrypt does with "", not a difference in the models.
+//
+// So the rule is mechanical rather than case-by-case: a nullable column needs a
+// Go type that has a nil. Pointers qualify; so do maps and slices, which carry
+// their own absent state. Anything else is a value that cannot say "absent".
+//
+// bun's `nullzero` tag deliberately does NOT satisfy this. It makes WRITES send
+// NULL for a zero value; it does nothing for reads, where NULL still scans to
+// the zero value and the ambiguity survives in the direction that bit E10.
+func TestNullableColumnsMapToNilableFields(t *testing.T) {
+	bunDB := testsupport.MigratedDB(t)
+
+	// Deliberate exceptions live here, one line each, with the reason. An empty
+	// map is the goal state: every entry is a column where somebody decided the
+	// zero value and absence mean the same thing, and wrote down why.
+	exempt := map[string]string{
+		"auth_users.name": "a person with no name and a person whose name is \"\" are the " +
+			"same thing to every consumer: it is displayed, never compared, never " +
+			"authenticated against, and no branch anywhere reads it. Unlike password_hash " +
+			"and mfa_secret, nothing downstream turns the zero value into a decision.",
+	}
+
+	cases := []struct {
+		table string
+		model any
+	}{
+		{"users", usermodels.UserDBModel{}},
+		{"auth_users", identitymodels.BunUser{}},
+		{"auth_refresh_tokens", identitymodels.RefreshTokenRow{}},
+		{"auth_mfa_backup_codes", identitymodels.MfaBackupCodeRow{}},
+		{"notifications", notifmodels.NotificationRow{}},
+		{"notification_preferences", notifmodels.NotificationPreferenceRow{}},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.table, func(t *testing.T) {
+			nullable := nullableColumns(t, bunDB.DB, tc.table)
+			tbl := bunDB.Table(reflect.TypeOf(tc.model))
+
+			var checked int
+			for _, f := range tbl.Fields {
+				if !nullable[f.Name] {
+					continue
+				}
+				checked++
+
+				key := tc.table + "." + f.Name
+				if why, ok := exempt[key]; ok {
+					t.Logf("%s: exempt — %s", key, why)
+					continue
+				}
+				if canBeNil(f.StructField.Type) {
+					continue
+				}
+
+				t.Errorf("%s is NULLABLE but maps to %s, which has no nil: "+
+					"a row where this was never set is indistinguishable from one set to "+
+					"the zero value. Make it a pointer, make the column NOT NULL, or add "+
+					"an exemption here saying why the two mean the same thing (BL33, E10).",
+					key, f.StructField.Type)
+			}
+
+			if checked == 0 {
+				t.Logf("%s has no nullable columns", tc.table)
+			}
+		})
+	}
+}
+
+// canBeNil reports whether a value of t can represent absence.
+func canBeNil(t reflect.Type) bool {
+	switch t.Kind() {
+	case reflect.Ptr, reflect.Map, reflect.Slice, reflect.Interface:
+		return true
+	default:
+		return false
+	}
+}
+
+// nullableColumns returns the columns information_schema reports as nullable.
+func nullableColumns(t *testing.T, sqlDB *sql.DB, table string) map[string]bool {
+	t.Helper()
+
+	rows, err := sqlDB.Query(
+		`SELECT column_name FROM information_schema.columns
+		  WHERE table_schema = 'public' AND table_name = $1 AND is_nullable = 'YES'`,
+		table,
+	)
+	require.NoError(t, err)
+	defer func() { _ = rows.Close() }()
+
+	out := map[string]bool{}
+	for rows.Next() {
+		var c string
+		require.NoError(t, rows.Scan(&c))
+		out[c] = true
+	}
+	require.NoError(t, rows.Err())
+	return out
+}
