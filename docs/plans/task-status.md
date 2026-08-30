@@ -40,15 +40,15 @@ States: pending | dispatched | in-review | blocked | merged | escalated
 | **E26-FIX** | *(in-session, ungated)* | **merged** | #73 (`d3611a0`) | **none — see PROCESS-7** |
 | **E10-FIX** | *(in-session, ungated)* | **merged** | #75 (`b586c71`) | **none — see PROCESS-7** |
 | **BL33/E10-2** | *(in-session, ungated)* | **merged** | #77 (`95a0f10`) | **none — see PROCESS-7** |
-| **E17-FIX** | *(in-session, ungated)* | **in review** | **#78** (`1cadbc8`) | **none** |
-| **E12-FIX** | *(in-session, ungated)* | **in review** | **#65** (`ae8f61e`) — 7/7 green | **none** |
-| D5  | platform-engineer | **UNBLOCKED 2026-08-29** — E11, E13, E14 all answered. Scope grew: `sender/inapp.go`, and its file list must say `domain/message.go`, not `application/ports.go` | - | - |
-| D6  | platform-engineer | **UNBLOCKED 2026-08-29** — E9b/E9c answered and implemented (#63); E12 answered and additive, not a dependency | - | - |
-| D7  | transport-engineer | **UNBLOCKED** — needs D6 | - | - |
-| D8  | platform-engineer | **UNBLOCKED 2026-08-29** — E15 answered; precursor #55. Port declared by the sender, adapter in `cmd/api` | - | - |
+| **E17-FIX** | *(in-session, ungated)* | **merged** | #78 (`1cadbc8`) | **none — see PROCESS-7** |
+| **E12-FIX** | *(in-session, ungated)* | **merged** | #65 (`ae8f61e`) | **none — see PROCESS-7** |
+| D5  | platform-engineer | **merged** | #80 | **none — see PROCESS-7** |
+| D6  | platform-engineer | **merged** | #82 | **none — see PROCESS-7** |
+| D7  | transport-engineer | **READY** — D6 merged (#82) | - | - |
+| D8  | platform-engineer | **DISPATCHED 2026-08-30** — E15 answered; precursor #55. Port declared by the sender (its consumer), adapter in `cmd/api`; `identity.New` unchanged | - | - |
 | D9a/D9b, D10 | domain / platform | pending | - | - |
 | E16-P | test-guardian | **merged** | #37 (`1dc6aa7`) | **APPROVE-WITH-NOTES** |
-| **E16-1/2/3** | *(in-session, ungated)* | **in review — SHIPPED AS ONE PR** | **#68** (`b21b907`) — 7/7 green | **none — see PROCESS-7** |
+| **E16-1/2/3** | *(in-session, ungated)* | **merged — SHIPPED AS ONE PR** | #68 (`b21b907`) | **none — see PROCESS-7** |
 | E16-4 | docs-scribe | **READY** once #68 merges; carries **E19**, BL40, and the exemplar gap (E24) | - | - |
 | E16-5 | platform-engineer | **part 1 merged (#61)**; part 2 **UNBLOCKED 2026-08-30** — E26 showed the row-scoped shape needs no role primitive (R5). Ready | - | - |
 
@@ -247,7 +247,7 @@ against `main` rather than a fix on an open branch. The T2 review is being re-po
 
 ---
 
-# ESCALATIONS — OPEN (0)
+# ESCALATIONS — OPEN (2)
 **Was 17. Fourteen were resolved on 2026-08-29** — E7, E8, E9b, E9c, E11, E12, E13, E14, E15,
 E18, E19, E21, E23 and E24 — each now headed RESOLVED or ANSWERED below.
 
@@ -261,9 +261,15 @@ importantly that it was unreachable, and that the fix is a `NOT NULL` migration.
 **E26 was answered the same day it was opened** (#73): asks 2 and 3 from the repository, ask 1
 dissolved by ceasing to advertise what nothing enforces. **It no longer blocks E16-5 part 2** —
 answering it showed that claim was wrong. **Nothing on this board is blocked on the human.**
-**EVERY ESCALATION RAISED ON THIS EFFORT IS NOW ANSWERED.** E17 was the last of the numbered
-set; **E25 closed 2026-08-30** once the human authorised editing the agent definitions, and it
-turned out to name only one of the two files carrying the false convention. Nothing is blocked, on the human or on anything else.
+**Every escalation raised BEFORE 2026-08-30 is answered.** E17 was the last of the original
+numbered set; **E25 closed** once the human authorised editing the agent definitions, and it
+turned out to name only one of the two files carrying the false convention.
+
+**Two NEW escalations opened 2026-08-30 — E27 and E28**, both found by building D6 rather than
+by reading, both defects in `internal/**` that no module task owns, and both about the same
+thing: **`module.Module`'s contract is under-specified.** One optional field panics when
+absent; another cannot receive the context its own shutdown path supplies. Neither blocks D6,
+which worked around both. Both will be hit again by the next module. Nothing is blocked, on the human or on anything else.
 
 **Still yours, and blocking nothing:** whether roles and permissions should mean anything at all
 (E26 ask 1). The tokens no longer advertise them, so the question can wait indefinitely without
@@ -273,6 +279,52 @@ costing anything.
 **E16-5 part 2**, the generator template, which E26's answer released.
 
 Ordered by severity.
+
+## E27 — `module.Module`'s OPTIONAL FIELDS ARE HALF-GUARDED, AND THE UNGUARDED ONE PANICS ⚠ NEW
+**Found building D6 (#82), verified independently.** `internal/httpx/routes.go:63` calls
+`m.Routes(v1)` with **no nil check**, inside the `/api/v1` route walk. A module whose `Routes`
+is nil **panics the router at boot**.
+
+**The asymmetry is the finding, and it is sharper than "a missing nil check".**
+`cmd/api/main.go:122` guards `if m.Close != nil` immediately before calling `PushCloser`. The
+same codebase nil-checks one optional field of `module.Module` and does not check the other,
+eleven lines apart in files that ship together. Nothing in the type says which of its four
+fields are optional; two are treated as if they are and one of those is not.
+
+**What it costs today:** the plan's *"`enabled: false` ⇒ routeless module"* is **not
+expressible**. D6 shipped a `Routes` that mounts nothing — correct, and a workaround for a
+contract the type appears to offer. Latent rather than live: nothing currently ships a nil
+`Routes`, exactly as E7/E18 were latent.
+
+**Fix is three lines** in `internal/httpx`, mirroring `main.go:122`. **Ask:** confirm the
+intent — is `Routes` optional (guard it) or required (say so on the type, and `module.Module`
+should refuse construction without one)? Either is defensible; the present state is neither.
+
+## E28 — A MODULE THAT OWNS A GOROUTINE CANNOT RECEIVE THE SHUTDOWN DEADLINE ⚠ NEW
+**Found building D6 (#82), verified independently.** `lifecycle.Stack.PushCloser` is:
+
+    func (s *Stack) PushCloser(name string, fn func() error) {
+        s.Push(name, func(context.Context) error { return fn() })
+    }
+
+**The context is discarded at the wrapper**, one line from where `Shutdown(ctx)` supplies it.
+`Stack.Push` takes a context-aware func and `Shutdown` passes a real deadline; `module.Module`
+exposes `Close func() error`, which cannot receive it, and `cmd/api/main.go:123` registers
+modules through `PushCloser`.
+
+**So a module owning a background goroutine has to invent its own bound.** D6 added
+`dispatcher.drain_timeout` (default 30s) because it had no way to learn the deadline the
+operator already configured. That value can now disagree with the real shutdown budget in
+either direction, and nothing reconciles them.
+
+**This is not notification's problem — every future background-worker module hits it**, and
+the notification dispatcher is simply the first one this repository has.
+
+**Ask:** does `module.Module.Close` become `func(context.Context) error`? That is a signature
+change on a merged type with two implementors, so it is a decision rather than a fix. The
+alternative — every module inventing a private timeout — is what happened once already and
+looked reasonable each time.
+
 
 ## E26 — **ANSWERED 2026-08-30 (human, delegated). Asks 2 and 3 settled from the repository; ask 1 dissolved. #73.**
 **I opened this saying it asks what the product intends. That was right about ask 1 and wrong
