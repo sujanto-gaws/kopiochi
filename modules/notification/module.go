@@ -189,13 +189,34 @@ func (jitter) Float64() float64 { return rand.Float64() }
 // unattempted hours later.
 //
 // In-app is unconditional — the row is the notification, and without its
-// no-op sender the mailbox could not be written to at all. Email is not here
-// yet: the SMTP sender is D8, so a deployment with email.enabled today
-// validates its SMTP settings and still cannot route email. That is loud
-// (ErrChannelNotRoutable at the producer) rather than silent, which is the
-// right way for a half-built capability to fail.
+// no-op sender the mailbox could not be written to at all. Email is registered
+// when it is configured, and only then: with email.enabled false there is no
+// email sender, so an enqueue for that channel is refused at the producer
+// rather than accepted and dropped.
 func buildSenders(deps module.Deps, cfg Config) ([]application.ChannelSender, error) {
 	senders := []application.ChannelSender{sender.NewInApp()}
+
+	if cfg.Email.Enabled {
+		smtpSender, err := sender.NewSMTP(
+			sender.SMTPDeps{
+				Resolver: cfg.EmailAddressResolver,
+				Clock:    systemClock{},
+			},
+			sender.SMTPConfig{
+				Host:        cfg.Email.SMTPHost,
+				Port:        cfg.Email.SMTPPort,
+				ImplicitTLS: sender.PortUsesImplicitTLS(cfg.Email.SMTPPort),
+				Username:    cfg.Email.Username,
+				Password:    cfg.Email.Password,
+				From:        cfg.Email.From,
+				Timeout:     cfg.Email.Timeout,
+			},
+		)
+		if err != nil {
+			return nil, fmt.Errorf("notification: build smtp sender: %w", err)
+		}
+		senders = append(senders, smtpSender)
+	}
 
 	if cfg.LogSender.Enabled {
 		logSender, err := sender.NewLog(

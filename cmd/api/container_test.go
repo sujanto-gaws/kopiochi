@@ -226,6 +226,7 @@ func TestBuildApp_KeepsTheSMTPPasswordRedacted(t *testing.T) {
 		SMTPPort: 587,
 		From:     "no-reply@example.test",
 		Password: secret.String("the-smtp-credential"),
+		Timeout:  10 * time.Second,
 	}
 
 	app, err := BuildApp(cfg, lazyDB(t), zerolog.Nop())
@@ -234,4 +235,44 @@ func TestBuildApp_KeepsTheSMTPPasswordRedacted(t *testing.T) {
 
 	require.NotContains(t, fmt.Sprintf("%v %+v %s", cfg.Notification, cfg.Notification, cfg.Notification.Email.Password),
 		"the-smtp-credential")
+}
+
+// The composition root's half of E15: with email on, BuildApp must supply the
+// address resolver the sender consumes.
+//
+// Asserted through the module's own fail-closed rule rather than by reaching
+// into the App — notification.Config.Validate refuses an enabled email block
+// with no resolver, so an unwired one is a boot failure and this test is the
+// thing that would see it.
+func TestBuildApp_WiresTheEmailAddressResolver(t *testing.T) {
+	t.Parallel()
+
+	cfg := testConfig(t)
+	cfg.Notification = enabledNotification()
+	cfg.Notification.Email = config.NotificationEmail{
+		Enabled:  true,
+		SMTPHost: "smtp.example.test",
+		SMTPPort: 587,
+		From:     "no-reply@example.test",
+		Password: secret.String("a-real-credential"),
+		Timeout:  10 * time.Second,
+	}
+
+	app, err := BuildApp(cfg, lazyDB(t), zerolog.Nop())
+	require.NoError(t, err, "the email sender was built without an address resolver")
+	t.Cleanup(func() { closeModules(t, app) })
+}
+
+// And it is built only when it is needed: a deployment that sends no email owes
+// no resolver, and attaching a repository to a module that will never call it
+// is wiring for its own sake.
+func TestBuildApp_OmitsTheEmailAddressResolverWhenEmailIsOff(t *testing.T) {
+	t.Parallel()
+
+	cfg := testConfig(t)
+	cfg.Notification = enabledNotification()
+
+	app, err := BuildApp(cfg, lazyDB(t), zerolog.Nop())
+	require.NoError(t, err)
+	t.Cleanup(func() { closeModules(t, app) })
 }

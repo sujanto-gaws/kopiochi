@@ -2,6 +2,7 @@ package notification_test
 
 import (
 	"context"
+	"net"
 	"testing"
 	"time"
 
@@ -10,9 +11,11 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/sujanto-gaws/kopiochi/internal/module"
+	"github.com/sujanto-gaws/kopiochi/internal/platform/secret"
 	"github.com/sujanto-gaws/kopiochi/internal/testsupport"
 	"github.com/sujanto-gaws/kopiochi/modules/notification"
 	domain "github.com/sujanto-gaws/kopiochi/modules/notification/domain"
+	"github.com/sujanto-gaws/kopiochi/modules/notification/infrastructure/persistence/models"
 	"github.com/sujanto-gaws/kopiochi/modules/notification/infrastructure/persistence/repository"
 )
 
@@ -101,4 +104,97 @@ func isSettled(s domain.Status) bool {
 	default:
 		return false
 	}
+}
+
+// The loop D6 left open: with email configured, the email channel is routable.
+//
+// Registration is asserted through its consequence rather than by reaching into
+// the module, which the two-value constructor deliberately does not allow. The
+// two outcomes are far apart and neither can be mistaken for the other:
+//
+//   - No sender registered ⇒ the dispatch cycle dead-letters the row on sight,
+//     status dead, LastError "no sender registered for channel". That is what
+//     this test asserted before the SMTP sender existed.
+//   - Sender registered ⇒ the row is actually attempted, the dial to a closed
+//     port fails, and a connection failure is retryable — so the row goes back
+//     to pending with an attempt spent.
+//
+// A closed port rather than a fake SMTP server, because the claim being made is
+// about wiring, and the conversation itself is covered against a real server in
+// the sender's own tests.
+func TestModuleRoutesTheEmailChannelWhenEmailIsConfigured(t *testing.T) {
+	bunDB := testsupport.MigratedDB(t)
+	testsupport.TruncateAll(t, bunDB)
+
+	ctx := context.Background()
+	recipient := uuid.New()
+
+	queued, err := domain.NewNotification(domain.NewNotificationParams{
+		ID:          uuid.New(),
+		RecipientID: recipient,
+		Channel:     domain.ChannelEmail,
+		Category:    domain.CategorySecurity,
+		TemplateKey: "security.password_changed",
+		Payload:     map[string]any{"ChangedAt": "30 August 2026 at 09:14 UTC"},
+	}, time.Now())
+	require.NoError(t, err)
+
+	repo := repository.NewNotificationRepo(bunDB)
+	require.NoError(t, repo.Enqueue(ctx, queued))
+
+	cfg := validConfig()
+	cfg.Dispatcher.PollInterval = 10 * time.Millisecond
+	cfg.Dispatcher.StalledAfter = time.Minute
+	cfg.Dispatcher.DrainTimeout = 5 * time.Second
+	cfg.Email = notification.EmailConfig{
+		Enabled:  true,
+		SMTPHost: "127.0.0.1",
+		SMTPPort: closedPort(t),
+		From:     "no-reply@example.test",
+		Password: secret.String("a-real-credential"),
+		Timeout:  time.Second,
+	}
+	cfg.EmailAddressResolver = stubResolver{}
+
+	m, err := notification.New(module.Deps{DB: bunDB, Logger: zerolog.Nop()}, cfg)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, m.Close()) })
+
+	// Read with bun rather than through the repository: ListForRecipient is
+	// the in-app mailbox and filters to that channel, which is correct and
+	// makes it the wrong instrument for an email row.
+	attempted := new(models.NotificationRow)
+	deadline := time.Now().Add(15 * time.Second)
+	for attempted.Attempts == 0 && attempted.Status != string(domain.StatusDead) {
+		// Dead is a stopping condition and not just a failure: an unroutable
+		// channel dead-letters without ever spending an attempt, so waiting
+		// for Attempts alone would wait out the whole deadline before saying
+		// what happened.
+		if time.Now().After(deadline) {
+			t.Fatalf("the row was never attempted; last seen: %+v", attempted)
+		}
+		time.Sleep(10 * time.Millisecond)
+
+		require.NoError(t, bunDB.NewSelect().Model(attempted).Where("id = ?", queued.ID).Scan(ctx))
+	}
+
+	require.NotNil(t, attempted.LastError)
+	lastError := *attempted.LastError
+
+	require.NotEqual(t, string(domain.StatusDead), attempted.Status,
+		"the email channel is not routable: %s", lastError)
+	require.NotContains(t, lastError, "no sender registered")
+	require.Contains(t, lastError, "dial", "the row failed somewhere other than the connection")
+	require.Equal(t, string(domain.StatusPending), attempted.Status, "a connection failure must be retried")
+}
+
+// closedPort returns a port on loopback that nothing is listening on.
+func closedPort(t *testing.T) int {
+	t.Helper()
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	port := ln.Addr().(*net.TCPAddr).Port
+	require.NoError(t, ln.Close())
+	return port
 }

@@ -7,18 +7,24 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 
 	"github.com/rs/zerolog"
 	"github.com/uptrace/bun"
 
+	"github.com/google/uuid"
 	"github.com/sujanto-gaws/kopiochi/internal/config"
 	"github.com/sujanto-gaws/kopiochi/internal/module"
+
+	"github.com/sujanto-gaws/kopiochi/internal/db"
 	"github.com/sujanto-gaws/kopiochi/modules/identity"
+	identityrepo "github.com/sujanto-gaws/kopiochi/modules/identity/infrastructure/persistence/repository"
 	"github.com/sujanto-gaws/kopiochi/modules/identity/infrastructure/token"
 	identitytransport "github.com/sujanto-gaws/kopiochi/modules/identity/transport"
 	"github.com/sujanto-gaws/kopiochi/modules/notification"
+	notifsender "github.com/sujanto-gaws/kopiochi/modules/notification/infrastructure/sender"
 	"github.com/sujanto-gaws/kopiochi/modules/user"
 )
 
@@ -138,8 +144,23 @@ func newUserModule(deps module.Deps, cfg *config.Config) (*module.Module, error)
 func newNotificationModule(deps module.Deps, cfg *config.Config) (*module.Module, error) {
 	n := cfg.Notification
 
+	// The address resolver is the cross-module edge, and it is built here for
+	// the same reason the user module's auth middleware is: neither module
+	// imports the other, and the composition root is the only place that knows
+	// both exist. identity.New's signature is untouched — this constructs its
+	// own repository over the same handle, exactly as newUserModule
+	// constructs its own token service rather than extracting identity's.
+	//
+	// Only wired when email is on. Building it unconditionally would attach a
+	// repository to a module that will never call it.
+	var resolver notifsender.AddressResolver
+	if n.Email.Enabled {
+		resolver = identityEmailResolver{users: identityrepo.NewUserRepo(deps.DB)}
+	}
+
 	return notification.New(deps, notification.Config{
-		Enabled: n.Enabled,
+		Enabled:              n.Enabled,
+		EmailAddressResolver: resolver,
 		Dispatcher: notification.DispatcherConfig{
 			PollInterval: n.Dispatcher.PollInterval,
 			BatchSize:    n.Dispatcher.BatchSize,
@@ -155,6 +176,8 @@ func newNotificationModule(deps module.Deps, cfg *config.Config) (*module.Module
 			SMTPHost: n.Email.SMTPHost,
 			SMTPPort: n.Email.SMTPPort,
 			From:     n.Email.From,
+			Username: n.Email.Username,
+			Timeout:  n.Email.Timeout,
 			// Still a secret.String on both sides: it is copied, never
 			// revealed, and the SMTP sender is the only thing that calls
 			// Reveal, at dial time.
@@ -165,4 +188,46 @@ func newNotificationModule(deps module.Deps, cfg *config.Config) (*module.Module
 			Channel: n.LogSender.Channel,
 		},
 	})
+}
+
+// identityEmailResolver answers "what is this recipient's email address" out of
+// the identity module's user table.
+//
+// A recipient id is an auth_users id and nothing else — there is no profile
+// hop, because E16 keyed the profile by that same id and removed the addressable
+// one — so this is a single lookup with no mapping to get wrong.
+//
+// It is the whole adapter: one call and one error translation. Anything more
+// here would be business logic in the composition root.
+type identityEmailResolver struct {
+	users *identityrepo.UserRepo
+}
+
+// ResolveEmail translates the storage layer's vocabulary into the port's.
+//
+// The translation is the point, and it is the reason #55 converted this
+// repository to db.ErrNotFound: a recipient who does not exist can never be
+// delivered to, so it becomes notifsender.ErrNoAddress, which wraps
+// domain.ErrNonRetryable and dead-letters the row on the first attempt.
+// Everything else — a dropped connection, a timeout — passes through as a
+// plain error and is retried.
+//
+// Backwards one way, a deleted user is retried until its budget is gone;
+// backwards the other, a security mail is destroyed by a network blip.
+// Classified with errors.Is, never by message.
+func (r identityEmailResolver) ResolveEmail(ctx context.Context, recipientID uuid.UUID) (string, error) {
+	user, err := r.users.FindByID(ctx, recipientID.String())
+	if err != nil {
+		if errors.Is(err, db.ErrNotFound) {
+			return "", fmt.Errorf("%w: no user %s", notifsender.ErrNoAddress, recipientID)
+		}
+		return "", fmt.Errorf("look up recipient %s: %w", recipientID, err)
+	}
+
+	// An account with no address on file is the same answer as no account:
+	// there is nowhere to deliver, and no retry creates one.
+	if user.Email == "" {
+		return "", fmt.Errorf("%w: user %s has no email on file", notifsender.ErrNoAddress, recipientID)
+	}
+	return user.Email, nil
 }

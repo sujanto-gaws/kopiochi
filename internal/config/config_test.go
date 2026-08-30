@@ -675,6 +675,10 @@ func TestLoad_NotificationDefaults(t *testing.T) {
 		{"dispatcher.stalled_after", n.Dispatcher.StalledAfter, 5 * time.Minute},
 		{"dispatcher.drain_timeout", n.Dispatcher.DrainTimeout, 30 * time.Second},
 		{"email.smtp_port", n.Email.SMTPPort, 587},
+		{"email.timeout", n.Email.Timeout, 10 * time.Second},
+		// Empty means "authenticate as from", which is the mailbox-provider
+		// case; a relay whose credential is not an address needs it set.
+		{"email.username", n.Email.Username, ""},
 		{"log_sender.channel", n.LogSender.Channel, "email"},
 	} {
 		if tc.got != tc.want {
@@ -728,6 +732,8 @@ func TestLoad_NotificationEnvOverrides(t *testing.T) {
 	t.Setenv("APP_NOTIFICATION_DISPATCHER_STALLED_AFTER", "90s")
 	t.Setenv("APP_NOTIFICATION_EMAIL_ENABLED", "true")
 	t.Setenv("APP_NOTIFICATION_EMAIL_SMTP_HOST", "smtp.example.test")
+	t.Setenv("APP_NOTIFICATION_EMAIL_USERNAME", "AKIAEXAMPLE")
+	t.Setenv("APP_NOTIFICATION_EMAIL_TIMEOUT", "45s")
 	t.Setenv("APP_NOTIFICATION_LOG_SENDER_ENABLED", "true")
 
 	cfg, err := Load(writeConfig(t, validYAML))
@@ -750,6 +756,9 @@ func TestLoad_NotificationEnvOverrides(t *testing.T) {
 	}
 	if !n.Email.Enabled || n.Email.SMTPHost != "smtp.example.test" {
 		t.Errorf("email overrides did not take effect: %+v", n.Email)
+	}
+	if n.Email.Username != "AKIAEXAMPLE" || n.Email.Timeout != 45*time.Second {
+		t.Errorf("email username/timeout overrides did not take effect: %+v", n.Email)
 	}
 	if !n.LogSender.Enabled {
 		t.Error("APP_NOTIFICATION_LOG_SENDER_ENABLED did not take effect")
@@ -774,7 +783,7 @@ func TestDefaultYAMLShipsTheNotificationSection(t *testing.T) {
 	if n.Dispatcher.BatchSize == 0 || n.Dispatcher.PollInterval == 0 || n.Dispatcher.DrainTimeout == 0 {
 		t.Errorf("the dispatcher block did not map: %+v", n.Dispatcher)
 	}
-	if n.Email.SMTPPort == 0 {
+	if n.Email.SMTPPort == 0 || n.Email.Timeout == 0 {
 		t.Errorf("the email block did not map: %+v", n.Email)
 	}
 	if n.LogSender.Channel == "" {

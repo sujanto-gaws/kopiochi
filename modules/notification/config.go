@@ -8,6 +8,7 @@ import (
 
 	"github.com/sujanto-gaws/kopiochi/internal/platform/secret"
 	domain "github.com/sujanto-gaws/kopiochi/modules/notification/domain"
+	"github.com/sujanto-gaws/kopiochi/modules/notification/infrastructure/sender"
 )
 
 // Config is the notification module's settings, as the composition root
@@ -32,6 +33,18 @@ type Config struct {
 	Dispatcher DispatcherConfig `mapstructure:"dispatcher"`
 	Email      EmailConfig      `mapstructure:"email"`
 	LogSender  LogSenderConfig  `mapstructure:"log_sender"`
+
+	// EmailAddressResolver turns a recipient id into an email address. It is
+	// required when Email.Enabled and ignored otherwise.
+	//
+	// It is a dependency and not a setting, and it is on Config anyway because
+	// Config is already this module's whole contract with whoever builds it —
+	// module.Deps carries what every module needs, and this is needed by one.
+	// The interface is declared by the sender that consumes it (E15, R2) and
+	// satisfied at the composition root by an adapter over the identity
+	// module's user repository; naming the type here does not make this
+	// package depend on identity, and nothing else does either.
+	EmailAddressResolver sender.AddressResolver `mapstructure:"-"`
 }
 
 // DispatcherConfig tunes the background worker that drains the outbox.
@@ -94,6 +107,18 @@ type EmailConfig struct {
 	// From is the envelope and header sender address.
 	From string `mapstructure:"from"`
 
+	// Username is the SMTP AUTH identity. Empty means "authenticate as From",
+	// which is what a mailbox provider expects; a relay that issues a
+	// credential which is not an address — SES, SendGrid, Mailgun — needs this
+	// set. The blueprint's config block has no such field, and without one
+	// every such relay is unusable.
+	Username string `mapstructure:"username"`
+
+	// Timeout bounds one SMTP conversation end to end. Also absent from the
+	// blueprint, and a sender with no timeout parks a dispatcher worker on a
+	// TCP handshake until the kernel gives up.
+	Timeout time.Duration `mapstructure:"timeout"`
+
 	// Password is env-only: APP_NOTIFICATION_EMAIL_PASSWORD. It never appears
 	// in a YAML file, and secret.String keeps it out of logs and JSON — it
 	// redacts itself in every formatting verb, so the value is readable only
@@ -134,7 +159,7 @@ func (c Config) Validate() error {
 
 	var errs []error
 	errs = append(errs, c.Dispatcher.validate()...)
-	errs = append(errs, c.Email.validate()...)
+	errs = append(errs, c.validateEmail()...)
 	errs = append(errs, c.validateLogSender()...)
 
 	return errors.Join(errs...)
@@ -189,12 +214,23 @@ func (d DispatcherConfig) validate() []error {
 	return errs
 }
 
-func (e EmailConfig) validate() []error {
+func (c Config) validateEmail() []error {
+	e := c.Email
 	if !e.Enabled {
 		return nil
 	}
 
 	var errs []error
+
+	// The resolver is the difference between a configured mail server and a
+	// deployment that can actually address a message. Missing, every email
+	// notification would dead-letter on its first attempt.
+	if c.EmailAddressResolver == nil {
+		errs = append(errs, errors.New("notification: an email address resolver is required when email.enabled is true"))
+	}
+	if e.Timeout <= 0 {
+		errs = append(errs, errors.New("notification: email.timeout must be positive"))
+	}
 
 	// Fail closed, all three of them. Email that is switched on with nowhere
 	// to connect, no sender address, or no credential does not degrade into

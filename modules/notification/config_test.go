@@ -1,13 +1,24 @@
 package notification_test
 
 import (
+	"context"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/sujanto-gaws/kopiochi/internal/platform/secret"
 	"github.com/sujanto-gaws/kopiochi/modules/notification"
 )
+
+// stubResolver stands in for the composition root's adapter over the identity
+// module's user table. Config only cares that one is present.
+type stubResolver struct{}
+
+func (stubResolver) ResolveEmail(context.Context, uuid.UUID) (string, error) {
+	return "someone@example.test", nil
+}
 
 // validConfig is the shipped default set, as config/default.yaml spells it,
 // plus the one value that file cannot carry (the SMTP password is env-only).
@@ -36,7 +47,9 @@ func withEmail(c notification.Config) notification.Config {
 		SMTPPort: 587,
 		From:     "no-reply@example.test",
 		Password: secret.String("a-real-credential"),
+		Timeout:  10 * time.Second,
 	}
+	c.EmailAddressResolver = stubResolver{}
 	return c
 }
 
@@ -169,6 +182,31 @@ func TestConfigValidate(t *testing.T) {
 			want: "APP_NOTIFICATION_EMAIL_PASSWORD",
 		},
 		{
+			// A sender with no timeout parks a dispatcher worker on a TCP
+			// handshake until the kernel gives up, which is minutes.
+			name: "email enabled with no timeout",
+			cfg:  mutateEmail(func(e *notification.EmailConfig) { e.Timeout = 0 }),
+			want: "email.timeout must be positive",
+		},
+		{
+			// Without it every email notification dead-letters on its first
+			// attempt: the sender has a mail server and no way to address a
+			// message.
+			name: "email enabled with no address resolver",
+			cfg: func() notification.Config {
+				c := withEmail(validConfig())
+				c.EmailAddressResolver = nil
+				return c
+			}(),
+			want: "address resolver is required",
+		},
+		{
+			// The resolver is a dependency of the email sender and nothing
+			// else, so a deployment that does not send email owes none.
+			name: "email disabled and no resolver",
+			cfg:  validConfig(),
+		},
+		{
 			// The whole email block is inert when it is off, including the
 			// credential it does not have.
 			name: "email disabled and unconfigured",
@@ -240,7 +278,8 @@ func TestConfigValidateReportsEveryFaultAtOnce(t *testing.T) {
 	cfg := validConfig()
 	cfg.Dispatcher.Workers = 0
 	cfg.Dispatcher.BatchSize = 0
-	cfg.Email = notification.EmailConfig{Enabled: true, SMTPPort: 587}
+	cfg.Email = notification.EmailConfig{Enabled: true, SMTPPort: 587, Timeout: time.Second}
+	cfg.EmailAddressResolver = stubResolver{}
 
 	err := cfg.Validate()
 	if err == nil {

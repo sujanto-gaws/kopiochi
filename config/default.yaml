@@ -188,8 +188,18 @@ notification:
     # silently dropped.
     enabled: false
     smtp_host: ""
+    # 587 is STARTTLS. 465 is implicit TLS, and the sender infers the
+    # transport from the port because that is what every mail client does.
     smtp_port: 587
     from: ""
+    # SMTP AUTH identity. Empty authenticates as `from`, which is what a
+    # mailbox provider expects; a relay whose credential is not an address
+    # (SES, SendGrid, Mailgun) needs this set.
+    username: ""
+    # Bounds one SMTP conversation end to end. net/smtp takes no context, so
+    # without it an unreachable server parks a dispatcher worker until the
+    # kernel abandons the TCP handshake.
+    timeout: "10s"
     # password intentionally omitted - set via APP_NOTIFICATION_EMAIL_PASSWORD
 
   log_sender:
