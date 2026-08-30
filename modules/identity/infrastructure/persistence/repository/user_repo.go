@@ -120,31 +120,64 @@ func (r *UserRepo) Save(ctx context.Context, user *domain.User) error {
 // Map domain User to BunUser
 func fromDomainUser(u *domain.User) *models.BunUser {
 	return &models.BunUser{
-		ID:                  u.ID,
-		Username:            u.Username,
-		Email:               u.Email,
-		Name:                u.Name,
-		Roles:               u.Roles,
-		Permissions:         u.Permissions,
-		PasswordHash:        u.PasswordHash,
+		ID:          u.ID,
+		Username:    u.Username,
+		Email:       u.Email,
+		Name:        u.Name,
+		Roles:       u.Roles,
+		Permissions: u.Permissions,
+		// "" becomes NULL on the way out, the inverse of toDomainUser's collapse,
+		// so the round trip is stable: a domain user with no MFA secret stores
+		// NULL rather than an empty string, and the column keeps meaning "never
+		// set" instead of accumulating rows that say "set to nothing". Those are
+		// the rows E10 turned into a public second factor.
+		PasswordHash:        nilIfEmpty(u.PasswordHash),
 		MFAEnabled:          u.MFAEnabled,
-		MFASecret:           u.MFASecret,
+		MFASecret:           nilIfEmpty(u.MFASecret),
 		FailedLoginAttempts: u.FailedLoginAttempts,
 		LockedUntil:         u.LockedUntil,
 	}
 }
 
+// deref returns the pointed-to string, or "" when the column was NULL.
+func deref(p *string) string {
+	if p == nil {
+		return ""
+	}
+	return *p
+}
+
+// nilIfEmpty returns nil for "", so an unset value stores as NULL.
+func nilIfEmpty(v string) *string {
+	if v == "" {
+		return nil
+	}
+	return &v
+}
+
 func toDomainUser(row *models.BunUser) *domain.User {
 	return &domain.User{
-		ID:                  row.ID,
-		Username:            row.Username,
-		Email:               row.Email,
-		Name:                row.Name,
-		Roles:               row.Roles,
-		Permissions:         row.Permissions,
-		PasswordHash:        row.PasswordHash,
+		ID:          row.ID,
+		Username:    row.Username,
+		Email:       row.Email,
+		Name:        row.Name,
+		Roles:       row.Roles,
+		Permissions: row.Permissions,
+		// NULL becomes "" here, deliberately and in one place.
+		//
+		// The domain keeps plain strings because the empty string is safe for
+		// both, and safe by construction rather than by luck:
+		// bcrypt.CompareHashAndPassword rejects an empty hash, and since E10
+		// TOTPService.ValidateCode rejects an empty secret. The pointer exists on
+		// the row so the collapse is a decision made here, visible in review,
+		// instead of something bun's scanner did on the way past.
+		//
+		// If either guard is ever removed, this line is what makes it
+		// exploitable — which is the point of putting it here rather than
+		// leaving the model lying about the column.
+		PasswordHash:        deref(row.PasswordHash),
 		MFAEnabled:          row.MFAEnabled,
-		MFASecret:           row.MFASecret,
+		MFASecret:           deref(row.MFASecret),
 		FailedLoginAttempts: row.FailedLoginAttempts,
 		LockedUntil:         row.LockedUntil,
 	}
