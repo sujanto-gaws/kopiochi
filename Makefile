@@ -83,11 +83,20 @@ coverage-check: ## Enforce the per-package coverage floors and the no-regression
 	@# where no Postgres is reachable, and the tool names them as NOT CHECKED
 	@# rather than either failing or silently passing. CI runs it with a
 	@# service container and the flag, which is where those floors bite.
-	-$(GO) test -coverprofile=coverage.out -covermode=atomic ./...
+	-$(GO) test -p 1 -coverprofile=coverage.out -covermode=atomic ./...
 	$(GO) run ./tools/coverage -profile coverage.out
 
+# -p 1 for the reason T7 put it on the CI job: every integration test resolves
+# to the same TEST_DATABASE_URL, and package binaries running concurrently
+# truncate each other's rows mid-test. The `-` above means make ignores the
+# resulting failures, so without this a corrupted run still updates the baseline.
+#
+# Set TEST_DATABASE_URL before running this if you want the database-backed
+# packages recorded. Without one, `-update` skips them rather than writing down
+# a number that was never measured — so a laptop run is safe, just incomplete.
+# Add -with-database to the second line when a Postgres is reachable.
 coverage-update: ## Raise the coverage baseline to match the current run
-	-$(GO) test -coverprofile=coverage.out -covermode=atomic ./...
+	-$(GO) test -p 1 -coverprofile=coverage.out -covermode=atomic ./...
 	$(GO) run ./tools/coverage -profile coverage.out -update
 
 test-verbose: ## Run tests with verbose output
