@@ -67,7 +67,7 @@ cmd/api (BuildApp)  ──builds──►  modules/notification
 
 ```
 modules/notification/
-├── module.go                     # New(deps module.Deps, cfg Config) (*module.Module, *application.Service, error)
+├── module.go                     # New(deps module.Deps, cfg Config) (*module.Module, error)   -- see the note in §10
 ├── config.go                     # typed Config + Validate(); fails closed
 ├── domain/
 │   ├── notification.go           # entity, Status/Channel/Category value types, transitions
@@ -91,7 +91,7 @@ modules/notification/
 │   │   └── log.go                # dev/test sender: writes to zerolog, always succeeds
 │   ├── template/
 │   │   ├── renderer.go           # html/template + text/template over embed.FS
-│   │   └── templates/            # *.subject.tmpl, *.html.tmpl, *.text.tmpl
+│   │   └── templates/            # <key>.<channel>.<part>.tmpl -- part is subject|text|html
 │   └── dispatcher/
 │       └── dispatcher.go         # ticker loop, batch claim, jittered backoff, Stop()
 └── transport/
@@ -140,14 +140,34 @@ are a filter at enqueue time, and password-changed mails must not be filterable.
 
 ## 5. Ports (application layer)
 
+> **Amended 2026-08-30 (E11, E14).** `RenderedMessage` and `ErrNonRetryable` live in
+> **`modules/notification/domain`**, not here. A sender in `infrastructure` must *name*
+> those types to spell its own method, and **R1 forbids infrastructure importing
+> application** — a port declared here would have forced a choice between an adapter that
+> cannot be written and a weakened rule. The interfaces themselves stay in this package:
+> Go satisfies interfaces structurally, so an adapter never names `ChannelSender`, only
+> its parameters.
+>
+> `RenderedMessage` also carries **`HTMLBody`** since E14. `Body` is plain text and
+> **mandatory**; `HTMLBody` is optional and empty means none. That asymmetry is the point —
+> an email sent HTML-only is penalised by spam filters and unreadable to a text client, and
+> the mail most likely to be filtered is the security mail. `#80`'s renderer refuses a
+> template family with an `html` part and no `text` part, so an HTML-only message is not
+> merely forbidden but unconstructable.
+>
+> A practical consequence, discovered building #80: **`tools/archtest` loads test files
+> too**, so an infrastructure package's tests cannot import `application` either — they
+> copy the port interfaces rather than importing them.
+
 ```go
+// The INTERFACES live in application. The TYPES they name live in domain.
 type ChannelSender interface {
     Channel() domain.Channel
-    Send(ctx context.Context, msg RenderedMessage) error
+    Send(ctx context.Context, msg domain.RenderedMessage) error
 }
 
 type TemplateRenderer interface {
-    Render(key string, channel domain.Channel, payload map[string]any) (RenderedMessage, error)
+    Render(key string, channel domain.Channel, payload map[string]any) (domain.RenderedMessage, error)
 }
 
 type Clock interface { Now() time.Time }   // deterministic backoff tests
@@ -299,10 +319,26 @@ app.Modules = append(app.Modules, idMod, userMod, notifMod)
 `application.EnqueueRequest` (template key, category, idempotency key like
 `pwchange:<userID>:<eventID>`). `cmd/**` is the only place allowed to see both sides.
 
-Note: `New` returning `(*module.Module, *application.Service, error)` is a deliberate,
-minor extension of the current one-return convention — the service handle is what adapters
-in `cmd/api` consume. Alternative: export a `notification.Service` interface and keep the
-module constructor uniform.
+Note: `New` returns **`(*module.Module, error)`** — the alternative this section named,
+and the shape `modules/identity` and `modules/user` already use.
+
+> **Resolved 2026-08-30.** This paragraph proposed `(*module.Module, *application.Service,
+> error)` as "a deliberate, minor extension", and named the alternative in its own last
+> sentence. The alternative wins, and the reasoning is worth keeping because **the need
+> stated here is real** — `adaptNotifier` genuinely wants a service handle.
+>
+> It is just not D6's need. **`adaptNotifier` is D9**, and nothing consumes a returned
+> service until it exists. When it does, R2 makes a cross-module need *"an interface
+> declared by the consumer and satisfied at the composition root"* — identity declares
+> what it wants and `cmd/api` satisfies it, which may not change this signature at all.
+> `module.Module` already carries `Close func() error`, so the dispatcher's shutdown — the
+> other reason a handle looked necessary — has a home without one.
+>
+> This section was the most honest of the four places that described this constructor: it
+> flagged its own deviation and offered the way out. The plan's D6 entry called a
+> three-value shape "the settled constructor decision" when no such constructor existed,
+> and `.claude/agents/docs-scribe.md:33` still claims a `RootInterface` that appears
+> nowhere in the Go tree — **that one is E25, still open, and the human's to close.**
 
 ## 11. Testing plan
 
