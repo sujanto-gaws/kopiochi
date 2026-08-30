@@ -37,7 +37,9 @@ States: pending | dispatched | in-review | blocked | merged | escalated
 | **E16-P2** | *(in-session, ungated)* | **merged** | #58 (`49ee321`) | **none — see PROCESS-7** |
 | **E21-1** | *(in-session, ungated)* | **merged** | #61 (`af83214`) | **none — see PROCESS-7** |
 | **E9b/E9c-FIX** | *(in-session, ungated)* | **merged** | #63 (`aa784a1`) | **none — see PROCESS-7** |
-| **E26-FIX** | *(in-session, ungated)* | **in review** | **#73** (`d3611a0`) | **none** |
+| **E26-FIX** | *(in-session, ungated)* | **merged** | #73 (`d3611a0`) | **none — see PROCESS-7** |
+| **E10-FIX** | *(in-session, ungated)* | **in review** | **#75** (`b586c71`) | **none** |
+| **BL33/E10-2** | *(unassigned)* | **READY** — schemacheck `is_nullable == pointer-ness`, with the `*string` refactor it forces | - | - |
 | **E12-FIX** | *(in-session, ungated)* | **in review** | **#65** (`ae8f61e`) — 7/7 green | **none** |
 | D5  | platform-engineer | **UNBLOCKED 2026-08-29** — E11, E13, E14 all answered. Scope grew: `sender/inapp.go`, and its file list must say `domain/message.go`, not `application/ports.go` | - | - |
 | D6  | platform-engineer | **UNBLOCKED 2026-08-29** — E9b/E9c answered and implemented (#63); E12 answered and additive, not a dependency | - | - |
@@ -244,7 +246,7 @@ against `main` rather than a fix on an open branch. The T2 review is being re-po
 
 ---
 
-# ESCALATIONS — OPEN (2)
+# ESCALATIONS — OPEN (1)
 **Was 17. Fourteen were resolved on 2026-08-29** — E7, E8, E9b, E9c, E11, E12, E13, E14, E15,
 E18, E19, E21, E23 and E24 — each now headed RESOLVED or ANSWERED below.
 
@@ -252,11 +254,17 @@ E18, E19, E21, E23 and E24 — each now headed RESOLVED or ANSWERED below.
 was **dissolved on 2026-08-30** rather than answered, by specifying E16-1 to be correct whichever
 way the unanswerable question falls.
 
+**E10 was answered 2026-08-30 (#75)**, and the entry was wrong in three places — most
+importantly that it was unreachable, and that the fix is a `NOT NULL` migration. See its entry.
+
 **E26 was answered the same day it was opened** (#73): asks 2 and 3 from the repository, ask 1
 dissolved by ceasing to advertise what nothing enforces. **It no longer blocks E16-5 part 2** —
 answering it showed that claim was wrong. **Nothing on this board is blocked on the human.**
-E10 and E17 remain open and block nothing; whether roles should mean anything at all is still
-yours, and nothing waits on it.
+**E17 is the only escalation still open**, and it blocks nothing. Whether roles should mean
+anything at all is still yours, and nothing waits on it.
+
+**One task remains from E10's answer: BL33/E10-2**, the `schemacheck` rule that makes the whole
+nullable-to-non-pointer class unrepresentable. It is ready and needs no answer from anyone.
 
 Ordered by severity.
 
@@ -1116,7 +1124,58 @@ worktree's paths, so findings were **silently dropped**. An isolated `GOCACHE` g
 two. **Any lint green from a worktree may be false** — including some of mine. Use an
 isolated `GOCACHE`.
 
-## E10 — second-factor bypass shape in merged identity code
+## E10 — **ANSWERED 2026-08-30 (human, delegated). Closed in #75 — and this entry was wrong in three places.**
+**The mechanism is real and is now demonstrated rather than asserted:**
+
+    totp.GenerateCode("", now)   -> "277847", err=nil
+    totp.Validate("277847", "")  -> true
+    totp.Validate("000000", "")  -> false
+
+**It is not that any code passes.** It is that THE code is computable by anyone holding a clock,
+in three lines of Go. Worth stating precisely — "fails open" reads as "accepts anything", and a
+reviewer who tries `000000` would wrongly conclude this entry was bogus.
+
+**WRONG #1 — "Not reachable through current app paths."** It was reachable by calling one
+endpoint out of order. `SetupMFA` is what stores the secret, and `VerifyMFASetup` never required
+it to have run: a caller who posts to `/auth/mfa/setup/verify` **without** first calling
+`/auth/mfa/setup` arrives with an empty secret, validates the public code, receives backup codes,
+and reaches `user.MFAEnabled = true`. The account then advertises a second factor **any attacker
+holding the password satisfies with a public constant.** It needs the victim's own session to set
+up, so not a remote takeover — but it converts a security feature into a security belief.
+
+**WRONG #2 — the proposed `NOT NULL` migration is the wrong fix, and must not be done.**
+`mfa_secret` **legitimately IS null**: that is the state of every account which has never run
+setup. `NOT NULL DEFAULT ''` would change nothing semantically — the empty string is the same
+hazard the guard now handles — while **destroying the distinction between "never set" and "set
+to empty"**. The schema-side change this actually wants is **pointer-ness**, which is the third
+bullet's rule, not a constraint.
+
+**WRONG #3, minor — "three nullable columns to plain `string`" is two.** `locked_until` is
+already correctly `*time.Time`. `password_hash` and `mfa_secret` are the two, and `password_hash`
+fails CLOSED (bcrypt against "" rejects), which is why only this one was dangerous.
+
+**What shipped (#75), and the order is the point:**
+- **`ValidateCode` returns false for an empty secret.** Unconditional, needs no data and no
+  migration, covers both call sites — including the login path, where a legacy row could still
+  carry `MFAEnabled` with no secret.
+- **`VerifyMFASetup` refuses before validating**, with a distinct `ErrMFANotStarted`. Not because
+  `ValidateCode` would accept it — it no longer will — but because two independent reasons to
+  refuse is what stops this depending on the other staying correct.
+- Distinct error, not `ErrInvalidMFACode`: "your code is wrong" tells someone with no secret to
+  check an authenticator that has nothing in it, and collapsing the two would **hide this state
+  from anyone reading logs**. Transport maps it to 400, not the 500 it fell through to.
+
+**STILL OPEN, and it is the valuable half — needs a task.** Extend `schemacheck` to assert
+`is_nullable == pointer-ness` (BL33's class). It cannot land alone: the rule immediately fails on
+`mfa_secret` and `password_hash`, so it arrives with the refactor mapping both to `*string` —
+through `domain.User` and the repository mapping. **That is what makes the class unrepresentable
+rather than this instance guarded**, and it is why the guards above are a fix and not a solution.
+
+**Recorded because it is the ratchet's first catch:** the baseline updated in #71 flagged #75
+lowering `modules/identity/transport` from 18.9% to 18.5% — the new error branch had no test, and
+that package had **no handler tests at all**. Covered rather than re-baselined; now 28.9%.
+
+### E10 (original entry, kept) — second-factor bypass shape in merged identity code
 `auth_models.go` maps three **nullable** columns to plain `string`. **`mfa_secret`:**
 `mfa_enabled = true AND mfa_secret IS NULL` → `totp.Validate(code, "")` — an empty secret
 base32-decodes fine and yields a **publicly computable** valid TOTP. Fails **open**. Not
