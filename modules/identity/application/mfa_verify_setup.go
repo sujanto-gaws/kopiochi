@@ -13,6 +13,19 @@ func (s *Service) VerifyMFASetup(ctx context.Context, userID string, code string
 	if err != nil {
 		return nil, err
 	}
+	// Refuse before validating, not because ValidateCode would accept an empty
+	// secret — since E10 it will not — but because two independent reasons to
+	// refuse are what makes this not depend on the other one staying correct.
+	//
+	// This is the reachable half of E10. SetupMFA is what stores the secret, and
+	// nothing here required it to have run: a caller who posts to
+	// /auth/mfa/setup/verify WITHOUT calling /auth/mfa/setup arrives with an
+	// empty secret, and the code derived from the empty secret is public. That
+	// path ended four lines below at `user.MFAEnabled = true` — an account
+	// advertising a second factor that anybody can compute.
+	if user.MFASecret == "" {
+		return nil, ErrMFANotStarted
+	}
 	if !s.mfaService.ValidateCode(user.MFASecret, code) {
 		return nil, ErrInvalidMFACode
 	}

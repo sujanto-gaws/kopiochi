@@ -178,3 +178,58 @@ func TestValidateCode_RejectsAnEmptySecret(t *testing.T) {
 		t.Error("ValidateCode(\"\", ...) = true, want false")
 	}
 }
+
+// TestValidateCodeRejectsAnEmptySecret — E10.
+//
+// The library's Validate returns TRUE for the code derived from the empty
+// secret, and that code is computable by anyone holding a clock. This test
+// exists to state that as a fact about the dependency rather than a suspicion,
+// so nobody removes the guard on the grounds that it looks redundant.
+func TestValidateCodeRejectsAnEmptySecret(t *testing.T) {
+	svc := NewTOTPService("kopiochi-test")
+
+	// The attacker's whole effort, reproduced.
+	public, err := totp.GenerateCode("", time.Now())
+	if err != nil {
+		t.Fatalf("the empty secret did not even produce a code: %v", err)
+	}
+
+	// The dependency's behaviour, pinned. If this ever stops being true the
+	// guard below is no longer load-bearing and someone should be told.
+	if !totp.Validate(public, "") {
+		t.Log("NOTE: the TOTP library no longer accepts codes for the empty " +
+			"secret; the guard below is now belt-and-braces rather than the fix")
+	}
+
+	if svc.ValidateCode("", public) {
+		t.Error("an empty secret accepted a publicly computable code: a second " +
+			"factor anyone can derive is not a second factor (E10)")
+	}
+	if svc.ValidateCode("", "000000") {
+		t.Error("an empty secret accepted an arbitrary code")
+	}
+}
+
+// TestValidateCodeStillAcceptsARealSecret is the control. The guard must reject
+// the empty secret because it is empty, not because ValidateCode stopped
+// working — a fix that breaks the second factor for everyone is not a fix.
+func TestValidateCodeStillAcceptsARealSecret(t *testing.T) {
+	svc := NewTOTPService("kopiochi-test")
+
+	secret, _, err := svc.GenerateSecret("alice@example.com")
+	if err != nil {
+		t.Fatalf("GenerateSecret: %v", err)
+	}
+
+	code, err := totp.GenerateCode(secret, time.Now())
+	if err != nil {
+		t.Fatalf("GenerateCode: %v", err)
+	}
+
+	if !svc.ValidateCode(secret, code) {
+		t.Error("a valid code for a real secret was rejected")
+	}
+	if svc.ValidateCode(secret, "000000") {
+		t.Error("a real secret accepted an arbitrary code")
+	}
+}
