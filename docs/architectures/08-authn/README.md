@@ -393,13 +393,28 @@ func RunMiddlewareSuite(t *testing.T, mw authn.Middleware,
 )                                          // internal/authn/authntest/suite.go:98-101
 ```
 
-`mintInvalid` needs **at least two** cases — the detail-invariance check compares
-the rejections to each other and is vacuous with one
+`mintInvalid` needs **at least two** cases — the indistinguishability check
+compares the rejections to each other and is vacuous with one
 (`internal/authn/authntest/suite.go:199-203`). What the suite asserts:
 the handler is reached with the right `Principal.Subject` on the success path;
 401, a problem+json `Content-Type` and a non-empty `WWW-Authenticate` on every
-failure; an identical `detail` across all of them; no principal left downstream
+failure; **every rejection byte-identical to every other — the whole body and
+every response header except `Date`**; no principal left downstream
 after a rejection; and a handler panic propagating rather than being swallowed
+
+> **Widened by E17.** It used to compare the `detail` member alone, so a
+> middleware leaking the reason through `title`, through the problem `type` URI,
+> or through `WWW-Authenticate` — RFC 6750's `error_description`, which is where
+> most OAuth middleware puts it — **passed with zero findings**. The header was
+> checked for presence only.
+>
+> `instance` is the one member excluded, because RFC 7807 defines it as a URI
+> reference for the specific occurrence and this service sets it to the request
+> path; comparing it would fail a uniform middleware whose cases hit different
+> paths.
+>
+> **An absent `detail` is not a finding.** A middleware answering `{}` for every
+> 401 is uniform and leaks nothing, and RFC 7807 makes `detail` optional.
 (`internal/authn/authntest/suite.go:77-97`). Identity's wiring is the worked
 example: `modules/identity/transport/conformance_test.go:36-54`.
 

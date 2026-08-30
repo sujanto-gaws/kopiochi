@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -132,6 +133,29 @@ type brokenness struct {
 	recoverPanics bool
 	// wrongSubject authenticates somebody other than the credential's subject.
 	wrongSubject bool
+	// challengePerReason puts the reason in WWW-Authenticate instead of the
+	// body — RFC 6750's error_description, and the default shape of most OAuth
+	// middleware. This is E17: the suite checked the header for PRESENCE only,
+	// so this leaked past it with zero findings.
+	challengePerReason bool
+	// titlePerReason puts the reason in the problem "title" and leaves "detail"
+	// invariant. Also E17: only "detail" was parsed, so nothing looked here.
+	titlePerReason bool
+	// varyingDate sets a different Date header on each rejection, the way a
+	// middleware writing its own clock reading would. Not a leak, and the suite
+	// must not report it — time passing between two cases is not an oracle.
+	varyingDate bool
+	// notJSON writes a body that is not JSON at all, which the suite must
+	// report rather than silently fingerprint as empty.
+	notJSON bool
+	// noBody writes the 401 status and headers and no body at all. Some
+	// middleware does. Uniform, so not a defect — and it is the fixture that
+	// reaches the empty-body path in the fingerprint.
+	noBody bool
+	// emptyBody answers every 401 with {}. NOT a defect: it is uniform, it
+	// leaks nothing, and RFC 7807 makes "detail" optional. It is a fixture for
+	// the case the suite must NOT report.
+	emptyBody bool
 }
 
 // fixtureMiddleware is a hand-written authn.Middleware, canonical when handed a
@@ -204,15 +228,46 @@ func fixtureReject(w http.ResponseWriter, b brokenness, reason string) {
 	}
 
 	if !b.omitChallenge {
-		w.Header().Set("WWW-Authenticate", `Bearer realm="fixture"`)
+		challenge := `Bearer realm="fixture"`
+		if b.challengePerReason {
+			challenge = `Bearer realm="fixture", error="invalid_token", error_description="` + reason + `"`
+		}
+		w.Header().Set("WWW-Authenticate", challenge)
+	}
+	if b.varyingDate {
+		// Distinct per call, which is the point: two rejections a moment apart
+		// legitimately differ here and nowhere else.
+		w.Header().Set("Date", time.Now().Format(time.RFC3339Nano))
 	}
 	w.Header().Set("Content-Type", contentType)
 	w.WriteHeader(status)
+
+	if b.notJSON {
+		_, _ = w.Write([]byte("Unauthorized"))
+		return
+	}
+	if b.noBody {
+		return
+	}
+	if b.emptyBody {
+		_, _ = w.Write([]byte("{}"))
+		return
+	}
+
+	title := "Unauthorized"
+	if b.titlePerReason {
+		title = "Unauthorized: " + reason
+	}
+
 	_ = json.NewEncoder(w).Encode(map[string]any{
 		"type":   "about:blank",
-		"title":  "Unauthorized",
+		"title":  title,
 		"status": status,
 		"detail": detail,
+		// instance echoes the request, and is the one member the suite
+		// normalises away. Written here so the fixture proves that carve-out
+		// works rather than only asserting it in prose.
+		"instance": "/protected",
 	})
 }
 
@@ -226,7 +281,7 @@ func fixtureMintValid(t *testing.T, subject string) *http.Request {
 }
 
 // fixtureMintInvalid is three failure cases with three distinct reasons — the
-// minimum that makes the detail-invariance check able to fail.
+// minimum that makes the indistinguishability check able to fail.
 func fixtureMintInvalid() map[string]func(t *testing.T) *http.Request {
 	bearer := func(header string) func(t *testing.T) *http.Request {
 		return func(t *testing.T) *http.Request {
@@ -304,7 +359,76 @@ func TestSuiteRejectsAMissingChallenge(t *testing.T) {
 // human reviewer is most likely to call an improvement.
 func TestSuiteRejectsADetailThatVariesByReason(t *testing.T) {
 	rec := runAgainst(t, fixtureMiddleware(brokenness{detailPerReason: true}))
-	rec.requireFinding(t, "detail = ", "every rejection must emit the same detail")
+	rec.requireFinding(t, "body = ", "every rejection must emit the same body")
+}
+
+// TestSuiteRejectsAChallengeThatVariesByReason — E17, and the leak that matters
+// most in practice.
+//
+// RFC 6750's error_description in WWW-Authenticate is where most OAuth
+// middleware puts the reason, and it is not a body, so an author who was careful
+// about the body can still ship the oracle. This suite checked the header for
+// PRESENCE only, so a textbook middleware leaking here passed with zero
+// findings.
+func TestSuiteRejectsAChallengeThatVariesByReason(t *testing.T) {
+	rec := runAgainst(t, fixtureMiddleware(brokenness{challengePerReason: true}))
+	rec.requireFinding(t, "response headers differ", "error_description")
+}
+
+// TestSuiteRejectsATitleThatVariesByReason — E17. The suite parsed only
+// "detail", so a reason in "title" — or in the problem "type" URI — was
+// invisible to it while sitting in the same body.
+func TestSuiteRejectsATitleThatVariesByReason(t *testing.T) {
+	rec := runAgainst(t, fixtureMiddleware(brokenness{titlePerReason: true}))
+	rec.requireFinding(t, "body = ", "every rejection must emit the same body")
+}
+
+// TestSuiteAcceptsAnEmptyBodyOnEveryRejection is the case E17 wanted reported
+// and should not be.
+//
+// {} for every 401 is UNIFORM: it leaks nothing, and RFC 7807 makes "detail"
+// optional. E17 proposed treating an absent detail as a finding, which would
+// fail a conformant replacement for a reason unrelated to leaking. The vacuity
+// it worried about came from comparing one optional member, and is gone now
+// that the whole response is compared.
+func TestSuiteAcceptsAnEmptyBodyOnEveryRejection(t *testing.T) {
+	rec := runAgainst(t, fixtureMiddleware(brokenness{emptyBody: true}))
+	if len(rec.failures) != 0 {
+		t.Errorf("a middleware answering {} for every rejection was reported: %v\n"+
+			"it is uniform, it leaks nothing, and RFC 7807 makes detail optional",
+			rec.failures)
+	}
+}
+
+// TestSuiteAcceptsARejectionWithNoBodyAtAll: a middleware that writes the
+// status and headers and nothing else is still uniform, so the suite must not
+// invent a finding for it. It also exercises the fingerprint's empty-body path,
+// which would otherwise treat "" as malformed JSON and report a false defect
+// about the body not parsing.
+// TestSuiteRejectsANonJSONBody: the Content-Type claims problem+json, so a body
+// that is not JSON is a contract the middleware broke, and it must be reported
+// rather than quietly compared as if it were empty.
+// TestSuiteIgnoresAVaryingDateHeader: Date is a clock reading, not a choice the
+// middleware made about this credential. It is the only header excluded from
+// the comparison, and excluding it is what stops the suite failing a perfectly
+// uniform middleware because two cases ran a millisecond apart.
+func TestSuiteIgnoresAVaryingDateHeader(t *testing.T) {
+	rec := runAgainst(t, fixtureMiddleware(brokenness{varyingDate: true}))
+	if len(rec.failures) != 0 {
+		t.Errorf("a varying Date header was reported as a difference: %v", rec.failures)
+	}
+}
+
+func TestSuiteRejectsANonJSONBody(t *testing.T) {
+	rec := runAgainst(t, fixtureMiddleware(brokenness{notJSON: true}))
+	rec.requireFinding(t, "is not JSON")
+}
+
+func TestSuiteAcceptsARejectionWithNoBodyAtAll(t *testing.T) {
+	rec := runAgainst(t, fixtureMiddleware(brokenness{noBody: true}))
+	if len(rec.failures) != 0 {
+		t.Errorf("a middleware writing no body on rejection was reported: %v", rec.failures)
+	}
 }
 
 func TestSuiteRejectsAPrincipalLeftBehindAfterRejection(t *testing.T) {

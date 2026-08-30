@@ -22,11 +22,14 @@
 package authntest
 
 import (
+	"bytes"
 	"encoding/json"
+	"fmt"
 	"mime"
 	"net/http"
 	"net/http/httptest"
 	"sort"
+	"strings"
 	"testing"
 
 	"github.com/sujanto-gaws/kopiochi/internal/authn"
@@ -80,15 +83,38 @@ type reporter interface {
 //     is present in its context, and Principal.Subject is the subject that was
 //     minted. Asserting "not a 401" is not enough — a middleware that panics,
 //     or one that authenticates the wrong account, passes that.
+//
 //   - Every invalid credential: HTTP 401, a problem+json Content-Type, and a
 //     non-empty WWW-Authenticate (RFC 9110 requires a 401 to carry a
 //     challenge).
-//   - The "detail" member is identical across every invalid case. This is the
-//     security property: a body that says "expired" for one credential and
-//     "bad signature" for another is an oracle telling an attacker which
-//     tokens are structurally valid. It is asserted by comparing the responses
-//     to each other, which is why at least two invalid cases are required.
+//
+//   - EVERY rejection is byte-identical to every other: the whole body, and
+//     every response header except Date. This is the security property: a
+//     rejection that says "expired" for one credential and "bad signature" for
+//     another is an oracle telling an attacker which tokens are structurally
+//     valid. Asserted by comparing the responses to each other, which is why at
+//     least two invalid cases are required.
+//
+//     The whole response, and not just the "detail" member, because a middleware
+//     that leaks through "title", through the problem "type" URI, or through
+//     WWW-Authenticate — RFC 6750's error_description, which is the default
+//     shape of most OAuth middleware — was passing this suite with zero
+//     findings (E17).
+//
+//     "instance" is normalised before comparing, and it is the ONLY exception.
+//     RFC 7807 defines it as a URI reference for the specific occurrence, and
+//     this repository's writer sets it to the request path; a caller whose
+//     invalid cases hit different paths would otherwise get a false failure
+//     from a perfectly uniform middleware. Everything the SERVER chooses is
+//     compared; the one member that echoes the REQUEST is not.
+//
+//     An absent "detail" is NOT a finding. A middleware that answers every 401
+//     with {} is uniform — it leaks nothing, and RFC 7807 makes "detail"
+//     optional. Requiring it would fail a conformant replacement for a reason
+//     unrelated to leaking.
+//
 //   - A rejected request leaves no principal downstream.
+//
 //   - A panicking handler's panic propagates out of mw. Middleware that
 //     recovers turns a handler bug into a 500 with no stack, and hides it from
 //     every test that only checks the status.
@@ -198,7 +224,7 @@ func checkInvalidCredentialsAreRejected(report reporter, mint *testing.T, mw aut
 	// that keeps the error body from being an oracle.
 	if len(mintInvalid) < 2 {
 		report.Errorf("authntest: mintInvalid has %d case(s); the suite needs at least two, "+
-			"because the detail-invariance check compares the rejections to each other",
+			"because the indistinguishability check compares the rejections to each other",
 			len(mintInvalid))
 	}
 
@@ -210,14 +236,14 @@ func checkInvalidCredentialsAreRejected(report reporter, mint *testing.T, mw aut
 	}
 	sort.Strings(names)
 
-	details := make(map[string]string, len(names))
+	rejections := make(map[string]rejection, len(names))
 	for _, name := range names {
-		if detail, ok := checkOneRejection(report, mint, mw, name, mintInvalid[name]); ok {
-			details[name] = detail
+		if fp, ok := checkOneRejection(report, mint, mw, name, mintInvalid[name]); ok {
+			rejections[name] = fp
 		}
 	}
 
-	checkDetailIsInvariant(report, names, details)
+	checkRejectionsAreIndistinguishable(report, names, rejections)
 }
 
 // checkOneRejection asserts the canonical 401 for a single case and returns the
@@ -228,17 +254,17 @@ func checkInvalidCredentialsAreRejected(report reporter, mint *testing.T, mw aut
 // silently compared as the empty string.
 func checkOneRejection(report reporter, mint *testing.T, mw authn.Middleware,
 	name string, minter func(t *testing.T) *http.Request,
-) (string, bool) {
+) (rejection, bool) {
 	report.Helper()
 
 	if minter == nil {
 		report.Errorf("invalid[%s]: the minter is nil", name)
-		return "", false
+		return rejection{}, false
 	}
 	req := minter(mint)
 	if req == nil {
 		report.Errorf("invalid[%s]: the minter returned a nil request", name)
-		return "", false
+		return rejection{}, false
 	}
 
 	var (
@@ -295,42 +321,123 @@ func checkOneRejection(report reporter, mint *testing.T, mw authn.Middleware,
 			"a challenge", name)
 	}
 
-	var body struct {
-		Detail string `json:"detail"`
-	}
-	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+	fp, err := fingerprint(rec)
+	if err != nil {
 		report.Errorf("invalid[%s]: the response body is not JSON (%v): %q",
 			name, err, rec.Body.String())
-		return "", false
+		return rejection{}, false
 	}
-	return body.Detail, true
+	return fp, true
 }
 
-// checkDetailIsInvariant asserts every rejection said the same thing.
+// rejection is everything about a 401 that the middleware chose, in a form two
+// of them can be compared by.
+type rejection struct {
+	// headers is every response header except Date, canonicalised and sorted so
+	// two equal rejections produce equal strings.
+	headers string
+	// body is the parsed body re-encoded with "instance" removed, so member
+	// order and whitespace do not count as a difference and the one
+	// request-dependent member does not.
+	body string
+}
+
+// fingerprint reduces a recorded rejection to its comparable form.
+func fingerprint(rec *httptest.ResponseRecorder) (rejection, error) {
+	var headers []string
+	for k, v := range rec.Header() {
+		// Date is a clock reading, not a choice the middleware made. It is the
+		// only header excluded: a leak can hide in any of the others, including
+		// ones invented by the middleware, so the comparison is a denylist of
+		// exactly one rather than an allowlist of the ones thought of here.
+		if http.CanonicalHeaderKey(k) == "Date" {
+			continue
+		}
+		headers = append(headers, fmt.Sprintf("%s: %s", http.CanonicalHeaderKey(k), strings.Join(v, ", ")))
+	}
+	sort.Strings(headers)
+
+	body := rec.Body.Bytes()
+	if len(bytes.TrimSpace(body)) == 0 {
+		return rejection{headers: strings.Join(headers, "\n"), body: ""}, nil
+	}
+
+	var parsed map[string]any
+	if err := json.Unmarshal(body, &parsed); err != nil {
+		return rejection{}, err
+	}
+	delete(parsed, "instance")
+
+	// Rendered as sorted key=value pairs rather than re-marshalled, so member
+	// order and whitespace do not count as a difference — and so there is no
+	// second error path. Marshalling a map that came from json.Unmarshal cannot
+	// fail, which would leave a branch no test can reach.
+	keys := make([]string, 0, len(parsed))
+	for k := range parsed {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	pairs := make([]string, 0, len(keys))
+	for _, k := range keys {
+		pairs = append(pairs, fmt.Sprintf("%s=%v", k, parsed[k]))
+	}
+	return rejection{headers: strings.Join(headers, "\n"), body: strings.Join(pairs, " ")}, nil
+}
+
+// checkRejectionsAreIndistinguishable asserts every rejection is the same
+// response: same headers, same body.
 //
 // Compared against the first case in sorted order rather than pairwise, so N
 // divergent cases produce N-1 failures naming a fixed reference instead of
 // N*(N-1)/2 naming each other.
-func checkDetailIsInvariant(report reporter, names []string, details map[string]string) {
+//
+// Headers and body are reported separately because they are different mistakes
+// with different fixes. A body difference is usually a message built from the
+// validation error; a header difference is usually RFC 6750's
+// error_description, which a middleware author may not think of as a body at
+// all — and which this suite used to accept without looking (E17).
+func checkRejectionsAreIndistinguishable(report reporter, names []string, rejections map[string]rejection) {
 	report.Helper()
 
-	var reference, referenceName string
+	var reference rejection
+	var referenceName string
 	for _, name := range names {
-		detail, ok := details[name]
+		fp, ok := rejections[name]
 		if !ok {
 			continue
 		}
 		if referenceName == "" {
-			reference, referenceName = detail, name
+			reference, referenceName = fp, name
 			continue
 		}
-		if detail != reference {
-			report.Errorf("invalid[%s]: detail = %q, but invalid[%s] answered %q — every "+
-				"rejection must emit the same detail, or the body tells an attacker which "+
-				"credentials are structurally valid and which are merely stale",
-				name, detail, referenceName, reference)
+
+		if fp.headers != reference.headers {
+			report.Errorf("invalid[%s]: response headers differ from invalid[%s].\n"+
+				"  %s:\n%s\n  %s:\n%s\n"+
+				"every rejection must be indistinguishable, and a challenge that names the "+
+				"reason — RFC 6750's error_description is the usual one — is an oracle "+
+				"telling an attacker which credentials are structurally valid",
+				name, referenceName, name, indent(fp.headers), referenceName, indent(reference.headers))
+		}
+		if fp.body != reference.body {
+			report.Errorf("invalid[%s]: body = %s, but invalid[%s] answered %s — every "+
+				"rejection must emit the same body, or it tells an attacker which "+
+				"credentials are structurally valid and which are merely stale. "+
+				"(\"instance\" is excluded from this comparison; every other member counts.)",
+				name, fp.body, referenceName, reference.body)
 		}
 	}
+}
+
+// indent prefixes each line, so a multi-line header block in a failure message
+// is readable next to the case names.
+//
+// No empty case: this is only reached from a headers-differ failure, and a
+// rejection that reached that point has at least a Content-Type. A branch for
+// a state the caller cannot produce is a branch no test can reach.
+func indent(s string) string {
+	return "    " + strings.ReplaceAll(s, "\n", "\n    ")
 }
 
 // panicValue is what the panicking handler panics with. A sentinel rather than
