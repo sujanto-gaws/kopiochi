@@ -645,3 +645,151 @@ func TestDefaultYAMLShipsSafeDefaults(t *testing.T) {
 		t.Errorf("config/default.yaml trusts proxies %v; the default must trust nothing", cfg.Server.TrustedProxies)
 	}
 }
+
+// The notification section has more defaults than any other, and every one of
+// them is a value the module refuses to run without. A key that silently fails
+// to default is a boot failure with a confusing message, so they are asserted
+// here rather than discovered there.
+func TestLoad_NotificationDefaults(t *testing.T) {
+	cfg, err := Load(writeConfig(t, validYAML))
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+
+	n := cfg.Notification
+	if !n.Enabled {
+		t.Error("notification.enabled defaults to false; the module is a capability, not an optional middleware")
+	}
+
+	for _, tc := range []struct {
+		name string
+		got  any
+		want any
+	}{
+		{"dispatcher.poll_interval", n.Dispatcher.PollInterval, 5 * time.Second},
+		{"dispatcher.batch_size", n.Dispatcher.BatchSize, 50},
+		{"dispatcher.workers", n.Dispatcher.Workers, 2},
+		{"dispatcher.max_attempts", n.Dispatcher.MaxAttempts, 6},
+		{"dispatcher.backoff_base", n.Dispatcher.BackoffBase, 30 * time.Second},
+		{"dispatcher.backoff_cap", n.Dispatcher.BackoffCap, time.Hour},
+		{"dispatcher.stalled_after", n.Dispatcher.StalledAfter, 5 * time.Minute},
+		{"dispatcher.drain_timeout", n.Dispatcher.DrainTimeout, 30 * time.Second},
+		{"email.smtp_port", n.Email.SMTPPort, 587},
+		{"log_sender.channel", n.LogSender.Channel, "email"},
+	} {
+		if tc.got != tc.want {
+			t.Errorf("notification.%s = %v, want %v", tc.name, tc.got, tc.want)
+		}
+	}
+
+	// Both of these settle rows without sending anything, or send without
+	// being configured to. Neither may arrive by omission.
+	if n.Email.Enabled {
+		t.Error("notification.email.enabled defaults to true")
+	}
+	if n.LogSender.Enabled {
+		t.Error("notification.log_sender.enabled defaults to true; the log sender settles rows as sent without sending")
+	}
+}
+
+// The same Viper trap db.password has: the key is absent from every YAML file,
+// so AutomaticEnv alone would not surface it to Unmarshal and the module would
+// refuse to start with email enabled and a credential that was set correctly.
+func TestLoad_NotificationEmailPasswordEnvFallback(t *testing.T) {
+	cfgPath := writeConfig(t, validYAML)
+
+	t.Run("env set", func(t *testing.T) {
+		t.Setenv("APP_NOTIFICATION_EMAIL_PASSWORD", "smtp-secret-from-env")
+
+		cfg, err := Load(cfgPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := cfg.Notification.Email.Password.Reveal(); got != "smtp-secret-from-env" {
+			t.Errorf("password = %q, want it from the environment", got)
+		}
+	})
+
+	t.Run("env unset", func(t *testing.T) {
+		cfg, err := Load(cfgPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !cfg.Notification.Email.Password.IsEmpty() {
+			t.Error("a password appeared from somewhere other than the environment")
+		}
+	})
+}
+
+func TestLoad_NotificationEnvOverrides(t *testing.T) {
+	t.Setenv("APP_NOTIFICATION_ENABLED", "false")
+	t.Setenv("APP_NOTIFICATION_DISPATCHER_WORKERS", "8")
+	t.Setenv("APP_NOTIFICATION_DISPATCHER_BATCH_SIZE", "5")
+	t.Setenv("APP_NOTIFICATION_DISPATCHER_STALLED_AFTER", "90s")
+	t.Setenv("APP_NOTIFICATION_EMAIL_ENABLED", "true")
+	t.Setenv("APP_NOTIFICATION_EMAIL_SMTP_HOST", "smtp.example.test")
+	t.Setenv("APP_NOTIFICATION_LOG_SENDER_ENABLED", "true")
+
+	cfg, err := Load(writeConfig(t, validYAML))
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+
+	n := cfg.Notification
+	if n.Enabled {
+		t.Error("APP_NOTIFICATION_ENABLED did not take effect")
+	}
+	if n.Dispatcher.Workers != 8 {
+		t.Errorf("workers = %d, want 8", n.Dispatcher.Workers)
+	}
+	if n.Dispatcher.BatchSize != 5 {
+		t.Errorf("batch_size = %d, want 5", n.Dispatcher.BatchSize)
+	}
+	if n.Dispatcher.StalledAfter != 90*time.Second {
+		t.Errorf("stalled_after = %s, want 90s", n.Dispatcher.StalledAfter)
+	}
+	if !n.Email.Enabled || n.Email.SMTPHost != "smtp.example.test" {
+		t.Errorf("email overrides did not take effect: %+v", n.Email)
+	}
+	if !n.LogSender.Enabled {
+		t.Error("APP_NOTIFICATION_LOG_SENDER_ENABLED did not take effect")
+	}
+}
+
+// config/default.yaml carries the section, and carries it correctly: bad
+// indentation in a nested block maps nothing and is invisible, because every
+// key defaults to the same value the file states.
+func TestDefaultYAMLShipsTheNotificationSection(t *testing.T) {
+	t.Setenv("APP_DB_PASSWORD", "a-real-dev-password")
+
+	cfg, err := Load(filepath.Join("..", "..", "config", "default.yaml"))
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+
+	n := cfg.Notification
+	if !n.Enabled {
+		t.Error("config/default.yaml disables the notification module")
+	}
+	if n.Dispatcher.BatchSize == 0 || n.Dispatcher.PollInterval == 0 || n.Dispatcher.DrainTimeout == 0 {
+		t.Errorf("the dispatcher block did not map: %+v", n.Dispatcher)
+	}
+	if n.Email.SMTPPort == 0 {
+		t.Errorf("the email block did not map: %+v", n.Email)
+	}
+	if n.LogSender.Channel == "" {
+		t.Errorf("the log_sender block did not map: %+v", n.LogSender)
+	}
+
+	// The credential is env-only, and a YAML file that carried it would be a
+	// secret in the repository.
+	if !n.Email.Password.IsEmpty() {
+		t.Error("config/default.yaml ships an SMTP password")
+	}
+	if n.Email.Enabled {
+		t.Error("config/default.yaml enables SMTP delivery")
+	}
+	if n.LogSender.Enabled {
+		t.Error("config/default.yaml enables the log sender")
+	}
+}

@@ -28,6 +28,66 @@ type Config struct {
 	Security Security `mapstructure:"security"`
 	// Metrics is named for the same reason as Security.
 	Metrics Metrics `mapstructure:"metrics"`
+	// Notification is named for the same reason as Security, and carries
+	// three nested sections of its own.
+	Notification Notification `mapstructure:"notification"`
+}
+
+// Notification configures the notification module: whether it runs at all, the
+// background dispatcher that drains its outbox, and the delivery channels it
+// can route.
+//
+// The module owns the meaning of these values and validates them —
+// modules/notification/config.go, called from its constructor at boot. This
+// package only carries and defaults them, because internal/** must not import
+// a business module (R3, and the depguard rule that enforces it), so the
+// section cannot be validated where it is loaded. Both are boot failures
+// either way: the module is constructed by BuildApp before the server listens.
+type Notification struct {
+	Enabled    bool                   `mapstructure:"enabled"`
+	Dispatcher NotificationDispatcher `mapstructure:"dispatcher"`
+	Email      NotificationEmail      `mapstructure:"email"`
+	LogSender  NotificationLogSender  `mapstructure:"log_sender"`
+}
+
+// NotificationDispatcher tunes the background worker. See
+// modules/notification/config.go for what each value means to the code that
+// reads it.
+type NotificationDispatcher struct {
+	PollInterval time.Duration `mapstructure:"poll_interval"`
+	BatchSize    int           `mapstructure:"batch_size"`
+	Workers      int           `mapstructure:"workers"`
+	MaxAttempts  int           `mapstructure:"max_attempts"`
+	BackoffBase  time.Duration `mapstructure:"backoff_base"`
+	BackoffCap   time.Duration `mapstructure:"backoff_cap"`
+	// StalledAfter is how long a row may sit in "sending" before the sweep
+	// treats the worker that claimed it as dead.
+	StalledAfter time.Duration `mapstructure:"stalled_after"`
+	// DrainTimeout bounds shutdown: how long Close waits for in-flight
+	// deliveries to settle before giving up on them.
+	DrainTimeout time.Duration `mapstructure:"drain_timeout"`
+}
+
+// NotificationEmail configures SMTP delivery.
+type NotificationEmail struct {
+	Enabled  bool   `mapstructure:"enabled"`
+	SMTPHost string `mapstructure:"smtp_host"`
+	SMTPPort int    `mapstructure:"smtp_port"`
+	From     string `mapstructure:"from"`
+	// Password is bound from APP_NOTIFICATION_EMAIL_PASSWORD and is
+	// deliberately absent from every YAML file, exactly like db.password. It
+	// is a secret.String so that a stray %v or a marshalled config dump
+	// prints the redaction instead of the credential.
+	Password secret.String `mapstructure:"password"`
+}
+
+// NotificationLogSender configures the development sender, which writes a
+// rendered message to the log instead of delivering it. Off by default: it
+// settles rows as sent, so it must never be something a deployment gets by
+// omission.
+type NotificationLogSender struct {
+	Enabled bool   `mapstructure:"enabled"`
+	Channel string `mapstructure:"channel"`
 }
 
 // Metrics configures the Prometheus scrape endpoint.
@@ -202,6 +262,13 @@ func Load(cfgPath string) (*Config, error) {
 		return nil, fmt.Errorf("bind db.name env: %w", err)
 	}
 
+	// The notification module's SMTP credential has the same shape as
+	// db.password: never in a YAML file, so Viper has no key for it and
+	// AutomaticEnv alone would not surface it to Unmarshal.
+	if err := v.BindEnv("notification.email.password", "APP_NOTIFICATION_EMAIL_PASSWORD"); err != nil {
+		return nil, fmt.Errorf("bind notification.email.password env: %w", err)
+	}
+
 	// Defaults
 	v.SetDefault("server.host", "0.0.0.0")
 	v.SetDefault("server.port", 8080)
@@ -262,6 +329,32 @@ func Load(cfgPath string) (*Config, error) {
 	v.SetDefault("metrics.enabled", false)
 	v.SetDefault("metrics.addr", "127.0.0.1:9090")
 	v.SetDefault("metrics.path", "/metrics")
+	// The notification module is on by default: it is a capability of this
+	// application, not an optional middleware, and with no email sender
+	// configured its dispatcher only drains the in-app channel.
+	v.SetDefault("notification.enabled", true)
+	v.SetDefault("notification.dispatcher.poll_interval", "5s")
+	v.SetDefault("notification.dispatcher.batch_size", 50)
+	v.SetDefault("notification.dispatcher.workers", 2)
+	v.SetDefault("notification.dispatcher.max_attempts", 6)
+	v.SetDefault("notification.dispatcher.backoff_base", "30s")
+	v.SetDefault("notification.dispatcher.backoff_cap", "1h")
+	// Five minutes: an SMTP conversation still unfinished after that is not
+	// going to finish, and a shorter window would recover rows that are merely
+	// slow — which costs them an attempt.
+	v.SetDefault("notification.dispatcher.stalled_after", "5m")
+	v.SetDefault("notification.dispatcher.drain_timeout", "30s")
+	// Email delivery is off until it is configured. Turning it on requires a
+	// host, a from address and APP_NOTIFICATION_EMAIL_PASSWORD, and the module
+	// refuses to build without them.
+	v.SetDefault("notification.email.enabled", false)
+	v.SetDefault("notification.email.smtp_host", "")
+	v.SetDefault("notification.email.smtp_port", 587)
+	v.SetDefault("notification.email.from", "")
+	// The log sender settles rows as sent without sending anything. It is a
+	// development tool and must be asked for by name.
+	v.SetDefault("notification.log_sender.enabled", false)
+	v.SetDefault("notification.log_sender.channel", "email")
 
 	if err := v.ReadInConfig(); err != nil {
 		if _, ok := err.(viper.ConfigFileNotFoundError); !ok {

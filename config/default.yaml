@@ -134,3 +134,68 @@ metrics:
   # feature.
   addr: "127.0.0.1:9090"
   path: "/metrics"
+
+# Notification module: the outbox, the background dispatcher that drains it,
+# and the channels it can deliver over.
+#
+# The module validates this section itself (modules/notification/config.go),
+# from its constructor, so a bad value fails the boot that read it rather than
+# the first notification that needs it. internal/config carries and defaults
+# these values but cannot validate them: the shared kernel must not import a
+# business module.
+notification:
+  # Off means no routes, no dispatcher goroutine, and no database access at
+  # all -- the module still builds and its Close is still safe to call.
+  enabled: true
+
+  dispatcher:
+    # How often each worker looks for claimable rows, and how often the
+    # stalled-row sweep runs.
+    poll_interval: "5s"
+    # Rows per claim. A cycle that claims a full batch claims again
+    # immediately rather than waiting for the next tick, so this bounds one
+    # round trip, not the drain rate.
+    batch_size: 50
+    # Concurrent claim-render-send loops. Claiming is exclusive in the
+    # database (FOR UPDATE SKIP LOCKED), so this is a throughput knob, not a
+    # correctness one.
+    workers: 2
+    # Retry budget. A row that has failed this many times is dead-lettered.
+    max_attempts: 6
+    # min(backoff_base * 2^attempts, backoff_cap), jittered inside the cap so
+    # a retry never waits longer than backoff_cap. base must not exceed cap --
+    # a cap below the base clamps the very first retry and the exponential
+    # never happens.
+    backoff_base: "30s"
+    backoff_cap: "1h"
+    # How long a row may sit in "sending" before the sweep treats the worker
+    # that claimed it as dead and recovers it. It must be comfortably longer
+    # than the slowest sender: recovering a row that is merely slow costs it
+    # an attempt and can dead-letter it.
+    stalled_after: "5m"
+    # How long Close waits for in-flight deliveries to settle before giving up
+    # on them. Rows still in flight after this are left in "sending" for the
+    # next process's sweep -- delivery is at-least-once either way.
+    drain_timeout: "30s"
+
+  email:
+    # Off until it is configured. Turning it on requires smtp_host, from, and
+    # APP_NOTIFICATION_EMAIL_PASSWORD; the module refuses to build without
+    # them rather than starting and dead-lettering every mail.
+    #
+    # With it off, no email sender is registered and an enqueue for the email
+    # channel is REFUSED at the producer -- loudly -- instead of accepted and
+    # silently dropped.
+    enabled: false
+    smtp_host: ""
+    smtp_port: 587
+    from: ""
+    # password intentionally omitted - set via APP_NOTIFICATION_EMAIL_PASSWORD
+
+  log_sender:
+    # The development sender: writes the rendered message to the log and
+    # settles the row as sent. Because it settles rows as sent without sending
+    # anything, it is never a fallback -- it must be asked for by name, and it
+    # cannot claim a channel that already has a real sender.
+    enabled: false
+    channel: "email"
