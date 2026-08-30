@@ -177,7 +177,7 @@ func TestNullableColumnsMapToNilableFields(t *testing.T) {
 // canBeNil reports whether a value of t can represent absence.
 func canBeNil(t reflect.Type) bool {
 	switch t.Kind() {
-	case reflect.Ptr, reflect.Map, reflect.Slice, reflect.Interface:
+	case reflect.Pointer, reflect.Map, reflect.Slice, reflect.Interface:
 		return true
 	default:
 		return false
