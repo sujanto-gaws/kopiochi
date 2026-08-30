@@ -6,12 +6,14 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
+	"github.com/sujanto-gaws/kopiochi/internal/httpx"
 	"github.com/sujanto-gaws/kopiochi/internal/testsupport"
 	domain "github.com/sujanto-gaws/kopiochi/modules/user/domain"
 )
@@ -200,7 +202,8 @@ func TestResponseCarriesNoIdentityData(t *testing.T) {
 // caller(): the token verified, but its subject is not an id this service can
 // act for.
 //
-// It must be 401 and not 400, and it must not reach the service. A subject that
+// It must be 401 and not 400, it must not reach the service, and it must be the
+// SAME 401 the rest of the tree emits. A subject that
 // does not parse is an authentication problem — nothing about the client's
 // request is wrong — and treating it as a bad request would invite a handler to
 // carry on with a zero uuid, which is a profile belonging to nobody.
@@ -215,6 +218,24 @@ func TestAMalformedSubjectIs401NotAProfile(t *testing.T) {
 			}
 			if svc.calls != 0 {
 				t.Errorf("the service ran %d times for a caller with no usable id", svc.calls)
+			}
+
+			// Byte-identical to the shared writer, not merely 401. Asserting
+			// the status alone is what let this module hand-roll its own body
+			// for the length of a release: the test stayed green while the one
+			// response A3 exists to keep uniform diverged from every other 401
+			// in the tree. Comparing against httpx.Unauthorized itself means a
+			// future hand-rolled body cannot pass, and means this test does not
+			// restate the challenge or the media type — httpx owns those, and
+			// a deliberate change there should not have to be echoed here.
+			want := httptest.NewRecorder()
+			httpx.Unauthorized(want, httptest.NewRequest(method, "/api/v1/users/me", nil))
+
+			if got := rec.Header(); !reflect.DeepEqual(map[string][]string(got), map[string][]string(want.Header())) {
+				t.Errorf("headers = %v, want the shared writer's %v", got, want.Header())
+			}
+			if got := rec.Body.String(); got != want.Body.String() {
+				t.Errorf("body = %s, want the shared writer's %s", got, want.Body.String())
 			}
 		})
 	}
