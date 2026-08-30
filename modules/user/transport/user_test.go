@@ -173,6 +173,68 @@ func TestGetReportsNotFoundForACallerWithNoProfile(t *testing.T) {
 	}
 }
 
+// TestEveryFailureIsProblemJSON is E32: this module answered its 404 and its
+// two 500s with {"error": "..."} under application/json, the only failures in
+// the tree that were not problem+json.
+//
+// The existing tests asserted the status code and that nothing leaked, which
+// both remained true across the whole divergence — the same gap that let the
+// hand-rolled 401 survive until #88. This one asserts the shape, so a future
+// writeJSON(w, someStatus, ...) on a failure path cannot pass.
+//
+// It deliberately checks the envelope rather than the prose: type, title and
+// status are the contract, detail is wording, and pinning wording would make
+// this test an obstacle to improving a message rather than a guard on a shape.
+func TestEveryFailureIsProblemJSON(t *testing.T) {
+	boom := errors.New("dial tcp 10.0.0.5:5432: connection refused")
+
+	for _, tc := range []struct {
+		name     string
+		method   string
+		svc      *fakeService
+		wantCode int
+		wantType string
+	}{
+		{"get: no profile", http.MethodGet, &fakeService{getErr: domain.ErrUserNotFound}, http.StatusNotFound, "not_found"},
+		{"get: outage", http.MethodGet, &fakeService{getErr: boom}, http.StatusInternalServerError, "internal_error"},
+		{"ensure: outage", http.MethodPost, &fakeService{ensureErr: boom}, http.StatusInternalServerError, "internal_error"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := do(t, router(tc.svc, testSubject.String()), tc.method, "/api/v1/users/me")
+
+			if rec.Code != tc.wantCode {
+				t.Fatalf("status = %d, want %d", rec.Code, tc.wantCode)
+			}
+			if got := rec.Header().Get("Content-Type"); got != httpx.ProblemContentType {
+				t.Errorf("Content-Type = %q, want %q", got, httpx.ProblemContentType)
+			}
+
+			var p httpx.Problem
+			if err := json.Unmarshal(rec.Body.Bytes(), &p); err != nil {
+				t.Fatalf("response is not a problem document: %v (%q)", err, rec.Body)
+			}
+			if p.Type != tc.wantType {
+				t.Errorf("type = %q, want %q", p.Type, tc.wantType)
+			}
+			if p.Status != tc.wantCode {
+				t.Errorf("body status = %d, want %d — a problem document that disagrees with its own status line", p.Status, tc.wantCode)
+			}
+			if p.Title == "" {
+				t.Error("title is empty; RFC 7807 makes it the human-readable summary of the type")
+			}
+			if p.Instance != "/api/v1/users/me" {
+				t.Errorf("instance = %q, want the request path — the hand-rolled writer filled neither instance nor request_id", p.Instance)
+			}
+
+			// Unchanged from the previous shape and still the point: the
+			// document must carry the status, not the cause.
+			if strings.Contains(rec.Body.String(), "10.0.0.5") {
+				t.Errorf("the response leaked the underlying error: %s", rec.Body)
+			}
+		})
+	}
+}
+
 // TestResponseCarriesNoIdentityData: the profile echoes back the caller's own
 // id and its timestamps. A name or an email appearing here would be a second
 // copy of data the identity owns (E20).
