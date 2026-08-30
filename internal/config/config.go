@@ -74,6 +74,12 @@ type NotificationEmail struct {
 	SMTPHost string `mapstructure:"smtp_host"`
 	SMTPPort int    `mapstructure:"smtp_port"`
 	From     string `mapstructure:"from"`
+	// Username is the SMTP AUTH identity. Empty means "authenticate as from",
+	// which is what a mailbox provider expects; a relay whose credential is
+	// not an address (SES, SendGrid, Mailgun) needs this set.
+	Username string `mapstructure:"username"`
+	// Timeout bounds one SMTP conversation end to end.
+	Timeout time.Duration `mapstructure:"timeout"`
 	// Password is bound from APP_NOTIFICATION_EMAIL_PASSWORD and is
 	// deliberately absent from every YAML file, exactly like db.password. It
 	// is a secret.String so that a stray %v or a marshalled config dump
@@ -351,6 +357,12 @@ func Load(cfgPath string) (*Config, error) {
 	v.SetDefault("notification.email.smtp_host", "")
 	v.SetDefault("notification.email.smtp_port", 587)
 	v.SetDefault("notification.email.from", "")
+	// Empty means "authenticate as from".
+	v.SetDefault("notification.email.username", "")
+	// Ten seconds for a whole SMTP conversation. net/smtp is not
+	// context-aware, so without this an unreachable server parks a dispatcher
+	// worker until the kernel abandons the TCP handshake.
+	v.SetDefault("notification.email.timeout", "10s")
 	// The log sender settles rows as sent without sending anything. It is a
 	// development tool and must be asked for by name.
 	v.SetDefault("notification.log_sender.enabled", false)

@@ -16,6 +16,7 @@ import (
 	"github.com/uptrace/bun/dialect/pgdialect"
 
 	"github.com/sujanto-gaws/kopiochi/internal/module"
+	"github.com/sujanto-gaws/kopiochi/internal/platform/secret"
 	"github.com/sujanto-gaws/kopiochi/modules/notification"
 )
 
@@ -182,5 +183,70 @@ func TestNewWiresTheLogSenderWhenItIsAskedFor(t *testing.T) {
 	// The collision cases are config_test's; this asserts the wiring runs.
 	if m.Name != notification.Name {
 		t.Errorf("Name = %q, want %q", m.Name, notification.Name)
+	}
+}
+
+// enabledEmailConfig points at a port nothing listens on, deliberately. See
+// TestModuleRegistersTheEmailSender.
+func enabledEmailConfig(t *testing.T, port int) notification.Config {
+	t.Helper()
+
+	cfg := enabledConfig()
+	cfg.Email = notification.EmailConfig{
+		Enabled:  true,
+		SMTPHost: "127.0.0.1",
+		SMTPPort: port,
+		From:     "no-reply@example.test",
+		Password: secret.String("a-real-credential"),
+		Timeout:  time.Second,
+	}
+	cfg.EmailAddressResolver = stubResolver{}
+	return cfg
+}
+
+func TestNewBuildsTheEmailSenderWhenEmailIsConfigured(t *testing.T) {
+	t.Parallel()
+
+	m, err := notification.New(deps(t, lazyDB(t)), enabledEmailConfig(t, 587))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	t.Cleanup(func() { _ = m.Close() })
+}
+
+// The SMTP sender parses the From address at construction, so an address that
+// no mail server will accept fails the boot rather than every delivery.
+//
+// The value here passes Config.Validate's "it contains an @" check on purpose:
+// that check exists to catch a display name pasted into the wrong field, and
+// this asserts the stricter parse behind it rather than re-asserting the same
+// rule twice.
+func TestNewRefusesAnUnparsableFromAddress(t *testing.T) {
+	t.Parallel()
+
+	cfg := enabledEmailConfig(t, 587)
+	cfg.Email.From = "Ada <ada@example.test"
+
+	m, err := notification.New(deps(t, lazyDB(t)), cfg)
+	if err == nil {
+		t.Fatalf("New accepted an unparsable from address: %+v", m)
+	}
+	if !strings.Contains(err.Error(), "from address") {
+		t.Errorf("error does not name the setting: %v", err)
+	}
+}
+
+func TestNewRefusesEmailWithoutAnAddressResolver(t *testing.T) {
+	t.Parallel()
+
+	cfg := enabledEmailConfig(t, 587)
+	cfg.EmailAddressResolver = nil
+
+	m, err := notification.New(deps(t, lazyDB(t)), cfg)
+	if err == nil {
+		t.Fatalf("New accepted email with no resolver: %+v", m)
+	}
+	if !strings.Contains(err.Error(), "address resolver is required") {
+		t.Errorf("error does not name the missing dependency: %v", err)
 	}
 }
