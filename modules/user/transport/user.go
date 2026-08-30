@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/sujanto-gaws/kopiochi/internal/authn"
+	"github.com/sujanto-gaws/kopiochi/internal/httpx"
 	domain "github.com/sujanto-gaws/kopiochi/modules/user/domain"
 )
 
@@ -45,6 +46,19 @@ func NewUserHandler(svc UserService, authMW authn.Middleware) *UserHandler {
 // is a 401 and not a 400: the token verified but does not identify anybody this
 // service can act for, and that is an authentication problem, not the client's
 // request being wrong.
+//
+// The 401 itself is httpx.Unauthorized, not a hand-rolled body. This package
+// answered it with writeJSON(w, 401, {"error": ...}) until now — the only place
+// in the tree where an authentication failure did not look like the others, and
+// written by the same change that closed E16, which was busy with the ownership
+// hole and hand-rolled the one response shape A3 exists to make uniform.
+//
+// It was unreachable through this issuer: every "sub" this service signs is
+// user.ID.String() on a uuid column, so a non-uuid subject needs the private key.
+// It stops being unreachable the moment a second middleware exists, which is the
+// entire premise of internal/authn — a real OIDC subject is not a uuid (Google's
+// is numeric, Auth0's is auth0|abc123), so this becomes the COMMON path for every
+// federated caller on the day one is mounted.
 func caller(r *http.Request) (uuid.UUID, bool) {
 	p, ok := authn.FromContext(r.Context())
 	if !ok {
@@ -72,7 +86,7 @@ func (h *UserHandler) EnsureOwnProfile() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id, ok := caller(r)
 		if !ok {
-			writeJSON(w, http.StatusUnauthorized, errorResponse("unauthorized"))
+			httpx.Unauthorized(w, r)
 			return
 		}
 
@@ -104,7 +118,7 @@ func (h *UserHandler) GetOwnProfile() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id, ok := caller(r)
 		if !ok {
-			writeJSON(w, http.StatusUnauthorized, errorResponse("unauthorized"))
+			httpx.Unauthorized(w, r)
 			return
 		}
 
