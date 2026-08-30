@@ -273,13 +273,14 @@ same shape: **a contract that reads as explicit and has nothing enforcing it.**
 - **E29** — the composition root's config mapping silently drops newly added fields, and its own
   doc comment claims a guarantee that covers renames but not additions.
 
-- **E30** — `MarkRead` and `MarkAllRead` disagree about which rows they own.
+- **E30** — `MarkRead` and `MarkAllRead` disagree about which rows they own. **Fixed in #90.**
 - **E31** — Guardrail 5 documents who may import `internal/authn`, not who may not.
 - **E32** — `modules/user/transport` is the only place emitting `{"error": ...}`.
 
 None blocks anything: D6 and D8 worked around the first three. **Each of those will be hit
 again** — E27 and E28 by the next module, E29 by D9 and D10, which edit that mapping. E30, E31
-and E32 are one line, one sentence and one small refactor respectively. Nothing is blocked, on
+and E32 were one line, one sentence and one small refactor respectively; **E30 is fixed (#90)**
+and E31 and E32 remain open. Nothing is blocked, on
 the human or on anything else.
 
 **Fixed rather than escalated, 2026-08-30:** `modules/user/transport` answered an unusable
@@ -384,7 +385,7 @@ are safe) is only half the exposure.
 **Same family as E27 and E28:** a contract that reads as explicit and has nothing enforcing it.
 All three were found by building against the contract, not by reading it.
 
-## E30 — `MarkRead` AND `MarkAllRead` DISAGREE ABOUT WHICH ROWS THEY OWN ⚠ NEW
+## E30 — **FIXED 2026-08-30 in #90.** `MarkRead` and `MarkAllRead` disagreed about which rows they own
 **Found by the D7 transport agent reviewing #87, outside its own scope.** Three queries in
 `modules/notification/infrastructure/persistence/repository/notification_repo.go` write or read
 `read_at`, and one of them is not channel-scoped:
@@ -411,9 +412,18 @@ of the three queries, and the one where it does not hold is **the one an id reac
 outside**. The agent's first framing of this was against a hypothetical GET-one endpoint; it
 withdrew that and filed the sharper version above, which is already in the tree.
 
-**Fix:** one line — add `channel = 'inapp'` to `MarkRead`. Consistent with #87: a non-in-app id
-becomes not-found, the same answer a foreign id already gets, so the indistinguishability
-property is preserved rather than weakened. **Blocks nothing.**
+**Fixed in #90:** `MarkRead` carries `channel = 'inapp'`, the same predicate as the other two.
+A non-in-app id now returns `ErrNotFound` — the answer a foreign id and a missing id already
+get — so all three stay indistinguishable and #87's property is preserved rather than weakened.
+
+`TestNotificationRepo_MarkReadRefusesANonInAppRow` covers it, mirroring the channel assertion
+`TestNotificationRepo_MarkAllRead` already made, and also asserts the caller's own in-app row
+still marks read: the predicate narrowed the set rather than breaking the feature.
+Mutation-checked by removing only the predicate.
+
+**Sharper than when filed.** E30 was opened before #87 merged. With the route live, the query
+that lacked the channel boundary is reachable from outside as `POST /notifications/{id}/read` —
+the endpoint existing makes the entry more material, not less.
 
 ## E31 — GUARDRAIL 5 SAYS WHO MAY IMPORT `internal/authn`, NOT WHO MAY NOT ⚠ NEW, docs
 **Found building D7 (#87).** `tools/archtest` fences `internal/authn` to `modules/*`,
