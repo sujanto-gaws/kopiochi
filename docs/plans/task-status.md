@@ -243,22 +243,73 @@ against `main` rather than a fix on an open branch. The T2 review is being re-po
 
 ---
 
-# ESCALATIONS — OPEN (2)
+# ESCALATIONS — OPEN (3)
 **Was 17. Fourteen were resolved on 2026-08-29** — E7, E8, E9b, E9c, E11, E12, E13, E14, E15,
 E18, E19, E21, E23 and E24 — each now headed RESOLVED or ANSWERED below.
 
-**What remains: E10 and E17, and neither blocks anything.** E22 was the last blocking
-escalation; it was **dissolved on 2026-08-30** rather than answered, by specifying E16-1 to be
-correct whichever way the unanswerable question falls.
+**What remains: E26, E10 and E17.** E22 was the last blocking escalation of the original set; it
+was **dissolved on 2026-08-30** rather than answered, by specifying E16-1 to be correct whichever
+way the unanswerable question falls.
 
-**The largest open question on this effort is not numbered here:** this repository has no
-authorization primitive at all. It is why E16 was expressible, and it is recorded under E21.
-
-**One NEW question surfaced and deliberately not numbered by me: this repository has no
-authorization primitive at all.** It is why the IDOR was expressible, it blocks E21 part 2, and
-it is framed under E21 below rather than opened as an escalation, because naming it is yours.
+**E26 is the largest open question on this codebase.** It was carried unnumbered under E21 for a
+day and opened on 2026-08-30 at the human's request: the tokens carry privileges nothing
+enforces. It blocks **E16-5 part 2**. E10 and E17 block nothing.
 
 Ordered by severity.
+
+## E26 — **THE TOKENS CARRY PRIVILEGES NOTHING ENFORCES** ⚠ NEW, opened 2026-08-30 on request
+**This repository has no authorization primitive — and not because one was forgotten. A complete
+authorization DATA path exists, with no decision point anywhere on it.**
+
+**Verified end to end, not inferred:**
+
+    00003_create_auth_users.sql:13-14   roles TEXT[], permissions TEXT[]  — stored
+    application/login.go:98-99          copied onto the authenticated user
+    infrastructure/token/jwt.go:87-88   MINTED INTO EVERY ACCESS TOKEN, and signed
+    infrastructure/token/jwt.go:188-189 parsed back out on every validation
+    application/dto.go:27-28            returned to the client in the login response
+
+    grep -rnE "RequireRole|RequirePermission|Authorize|HasRole|HasPermission|CanAccess"
+      -> nothing outside comments, anywhere in the tree
+    grep -rn "\.Scopes"
+      -> nothing reads authn.Principal.Scopes either
+
+**Every token this service issues advertises privileges, cryptographically, that no code path
+consults — and the API hands the same list to the client at login.** A reader of that response,
+or of the JWT, would reasonably conclude the roles mean something. **A decorative signed claim is
+worse than none: an absent feature is obvious, a present-looking one is trusted.**
+
+**The omission was DELIBERATE and is documented**, which is why this is a decision to revisit
+rather than a bug to fix. `internal/authn/authn.go:25`: *"No Authorizer, no roles, no
+permissions. **No consumer needs one today.**"* Reasonable when written; false twice over now:
+- **E16 needed one.** It was closed by deleting the addressable surface — correct for a profile
+  that is 1:1 with its identity, and **it does not generalise** to any resource that is not.
+- **E21 part 2 is blocked on one.** A generator cannot emit a safe CRUD template when the
+  codebase cannot express "this caller may act on this row", and a code generator is the worst
+  available place to invent that model.
+
+**This is why E16 was expressible at all.** The board has recorded since E16 was raised that "no
+authorization layer exists in this repository" — as a supporting fact for one escalation. It is
+the larger finding, and it outlived the escalation that surfaced it.
+
+**What is NOT claimed:** that anything is exploitable today. Every route behind `authMW` requires
+a valid token, `modules/user` no longer exposes another user's data, and no current endpoint is
+documented as role-gated. **The gap is that there is no way to write one** — and the shape of the
+data says somebody expected there to be.
+
+**The asks. Each is a product decision, not a technical one, which is why they are yours:**
+1. **Do roles and permissions mean anything?** If yes, this needs a primitive and the claims need
+   enforcing. If no, stop minting them, stop returning them at login, and drop the columns — a
+   signed claim nobody checks is a liability, not a no-op.
+2. **If yes: where does the decision live?** Middleware over routes, a check inside use cases, or
+   a policy port satisfied at the composition root. This is the same shape of question E11
+   answered for ports, and it wants answering once rather than per module.
+3. **Does it gate E16-5?** Part 2 of E21 cannot proceed without (2). Recorded as blocked rather
+   than pending.
+
+**Deliberately not decided here.** Every other escalation this session was answered on evidence
+in the repository. This one asks what the product intends, and the repository cannot say.
+
 
 ## E16 — **CLOSED 2026-08-30 in #68 (`b21b907`), by removing the addressable id.**
 **Not by adding an ownership check.** This entry's own diagnosis is why: the defect was never a
@@ -567,11 +618,11 @@ done now:
   the template now would mean **inventing the authorization model inside a code generator**,
   which is the worst possible place to invent it.
 
-**⚠ THE SECOND POINT IS A NEW ESCALATION IN ITS OWN RIGHT.** "This repository has no
-authorization primitive" is bigger than E21, bigger than E16-3, and is the reason the IDOR was
-expressible at all. E16-3 closes the surface for one module by deleting it; nothing yet decides
-what an authorized route looks like in this codebase. **Recorded here rather than opened as a
-numbered escalation only because it deserves the human's framing, not mine.**
+**⚠ THE SECOND POINT IS NOW E26**, opened 2026-08-30 at the human's request after being carried
+here for a day. "This repository has no authorization primitive" is bigger than E21, bigger than
+E16-3, and is the reason the IDOR was expressible at all. E16-3 closed the surface for one module
+by deleting it; nothing yet decides what an authorized route looks like in this codebase.
+**E21 part 2 is blocked on E26, not merely sequenced after E16-3.**
 
 **When part 2 runs:** default the PK to uuid (`auth_users` and `notifications` already do; only
 the legacy `users`/`products` use `BIGSERIAL`), drop `strconv.ParseInt` and `@Param id path int`
