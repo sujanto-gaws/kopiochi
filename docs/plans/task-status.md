@@ -37,6 +37,7 @@ States: pending | dispatched | in-review | blocked | merged | escalated
 | **E16-P2** | *(in-session, ungated)* | **merged** | #58 (`49ee321`) | **none — see PROCESS-7** |
 | **E21-1** | *(in-session, ungated)* | **merged** | #61 (`af83214`) | **none — see PROCESS-7** |
 | **E9b/E9c-FIX** | *(in-session, ungated)* | **merged** | #63 (`aa784a1`) | **none — see PROCESS-7** |
+| **E26-FIX** | *(in-session, ungated)* | **in review** | **#73** (`d3611a0`) | **none** |
 | **E12-FIX** | *(in-session, ungated)* | **in review** | **#65** (`ae8f61e`) — 7/7 green | **none** |
 | D5  | platform-engineer | **UNBLOCKED 2026-08-29** — E11, E13, E14 all answered. Scope grew: `sender/inapp.go`, and its file list must say `domain/message.go`, not `application/ports.go` | - | - |
 | D6  | platform-engineer | **UNBLOCKED 2026-08-29** — E9b/E9c answered and implemented (#63); E12 answered and additive, not a dependency | - | - |
@@ -46,7 +47,7 @@ States: pending | dispatched | in-review | blocked | merged | escalated
 | E16-P | test-guardian | **merged** | #37 (`1dc6aa7`) | **APPROVE-WITH-NOTES** |
 | **E16-1/2/3** | *(in-session, ungated)* | **in review — SHIPPED AS ONE PR** | **#68** (`b21b907`) — 7/7 green | **none — see PROCESS-7** |
 | E16-4 | docs-scribe | **READY** once #68 merges; carries **E19**, BL40, and the exemplar gap (E24) | - | - |
-| E16-5 | platform-engineer | **part 1 merged (#61)**; part 2 **BLOCKED — no authorization primitive exists**. Its other precondition is met: #68 settles the safe shape | - | - |
+| E16-5 | platform-engineer | **part 1 merged (#61)**; part 2 **UNBLOCKED 2026-08-30** — E26 showed the row-scoped shape needs no role primitive (R5). Ready | - | - |
 
 **Phase A and Phase B are complete on `main`.** `main` is **`5030e7f`**.
 
@@ -243,7 +244,7 @@ against `main` rather than a fix on an open branch. The T2 review is being re-po
 
 ---
 
-# ESCALATIONS — OPEN (3)
+# ESCALATIONS — OPEN (2)
 **Was 17. Fourteen were resolved on 2026-08-29** — E7, E8, E9b, E9c, E11, E12, E13, E14, E15,
 E18, E19, E21, E23 and E24 — each now headed RESOLVED or ANSWERED below.
 
@@ -251,13 +252,63 @@ E18, E19, E21, E23 and E24 — each now headed RESOLVED or ANSWERED below.
 was **dissolved on 2026-08-30** rather than answered, by specifying E16-1 to be correct whichever
 way the unanswerable question falls.
 
-**E26 is the largest open question on this codebase.** It was carried unnumbered under E21 for a
-day and opened on 2026-08-30 at the human's request: the tokens carry privileges nothing
-enforces. It blocks **E16-5 part 2**. E10 and E17 block nothing.
+**E26 was answered the same day it was opened** (#73): asks 2 and 3 from the repository, ask 1
+dissolved by ceasing to advertise what nothing enforces. **It no longer blocks E16-5 part 2** —
+answering it showed that claim was wrong. **Nothing on this board is blocked on the human.**
+E10 and E17 remain open and block nothing; whether roles should mean anything at all is still
+yours, and nothing waits on it.
 
 Ordered by severity.
 
-## E26 — **THE TOKENS CARRY PRIVILEGES NOTHING ENFORCES** ⚠ NEW, opened 2026-08-30 on request
+## E26 — **ANSWERED 2026-08-30 (human, delegated). Asks 2 and 3 settled from the repository; ask 1 dissolved. #73.**
+**I opened this saying it asks what the product intends. That was right about ask 1 and wrong
+about asks 2 and 3** — and ask 3's answer contradicts something I told you about E21.
+
+**Ask 2 — where does the decision live? It is TWO questions, and conflating them is what made
+this look unanswerable.**
+- **"May this caller touch this ROW?"** is **not a check.** The use case takes the caller as a
+  parameter and the repository query is scoped by it, so there is no branch to forget.
+- **"May this caller call this ENDPOINT at all?"** is coarse route-level middleware, a separate
+  mechanism this repository does not have and needs only if roles come to mean something.
+
+**No route-level rule can express "this row is yours", which is why middleware could never have
+caught E16.** The row-level answer is **already merged practice**, and
+`modules/notification/domain/repository.go:161` states the reason better than a rule could:
+*"Scoped by recipient in the query rather than filtered afterwards: an ownership check a caller
+can forget is an ownership check that will be forgotten."* `ListForRecipient` puts
+`recipient_id` in the `WHERE`; `modules/user`'s use cases take `caller` and have no parameter
+that could name anybody else. **Written down as R5** in `dependency-rules.md`, because E16 would
+have satisfied a rule phrased as "check ownership" with code that had nothing to check with.
+
+**Ask 3 — and this CORRECTS E21.** I wrote there that E16-5 part 2 is blocked because "a
+generator cannot emit a correct ownership check when the codebase has no primitive for one."
+**That is wrong.** A generator does not need a role primitive to emit the row-scoped shape: it
+emits handlers that take the caller from the Principal and repositories whose queries are scoped
+by it, which is what both modules now do. **E16-5 part 2 is UNBLOCKED for the half that matters**,
+and only the coarse role-gating half waits on ask 1.
+
+**Ask 1 — dissolved, not decided. #73.** The liability is not whether roles mean something; it is
+**advertising them before anything acts on them**, which is true under either answer.
+- **Stopped minting `roles`/`permissions` into the access token.** A signed claim travels, and a
+  downstream reader can trust it without asking this service — an authorization decision made on
+  data nobody checks.
+- **Kept the columns** (dropping them is irreversible and gains nothing while the question is
+  open), **the login-response fields** (documented as advisory; removing them breaks a client
+  showing a user what their account claims to be, for no security gain while nothing is enforced
+  either way), and **the parse side** (a pre-E26 token stays valid, and a validator that dropped
+  the fields would return a different `Claims` for the same token depending on when it was
+  issued — reading a claim commits to nothing, minting one does).
+- **The rule, which needs no product decision: a claim is minted when something enforces it, and
+  not before.** When a primitive lands, these come back alongside the code that checks them.
+
+**Worth recording about how this was found:** every existing test in the token package **passed
+unchanged** when the claims were removed. Nothing had ever asserted they were minted. A claim
+nobody tests and nobody enforces is a claim nobody decided to have — and that is how one sits in
+a signed token for the life of a codebase.
+
+**What remains yours:** whether roles should mean anything at all. Nothing is blocked on it now.
+
+### E26 (original entry, kept) — THE TOKENS CARRY PRIVILEGES NOTHING ENFORCES
 **This repository has no authorization primitive — and not because one was forgotten. A complete
 authorization DATA path exists, with no decision point anywhere on it.**
 
@@ -622,7 +673,11 @@ done now:
 here for a day. "This repository has no authorization primitive" is bigger than E21, bigger than
 E16-3, and is the reason the IDOR was expressible at all. E16-3 closed the surface for one module
 by deleting it; nothing yet decides what an authorized route looks like in this codebase.
-**E21 part 2 is blocked on E26, not merely sequenced after E16-3.**
+**CORRECTED 2026-08-30 by E26's answer: part 2 is NOT blocked.** The claim above — that a
+generator cannot emit a safe template without an authorization primitive — was wrong. The
+row-scoped shape needs no role primitive: emit handlers that take the caller from the Principal
+and repositories whose queries are scoped by it, which is R5 and which both modules already do.
+**Only coarse role-gating waits on E26's ask 1, and no generated module needs it.**
 
 **When part 2 runs:** default the PK to uuid (`auth_users` and `notifications` already do; only
 the legacy `users`/`products` use `BIGSERIAL`), drop `strconv.ParseInt` and `@Param id path int`
