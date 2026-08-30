@@ -33,8 +33,23 @@ type EnqueueRequest struct {
 	// IdempotencyKey deduplicates enqueues of the same business event — a
 	// retried request, a replayed message. Empty means no deduplication. A key
 	// already in the outbox makes Enqueue a successful no-op, so the natural
-	// form is one that is derivable from the event itself, e.g.
-	// "password_changed:<userID>:<eventID>".
+	// form is one that is derivable from the event itself.
+	//
+	// It MUST include the channel when one event fans out to more than one:
+	// "password_changed:<userID>:<eventID>:email". idx_notifications_idem is a
+	// single partial-unique index over the whole outbox — ON (idempotency_key)
+	// WHERE idempotency_key IS NOT NULL — and is NOT scoped by channel. A key
+	// shared across channels therefore does not deduplicate a retry; it makes
+	// the second channel's Enqueue collide with the first channel's row and
+	// vanish through ON CONFLICT DO NOTHING. The caller is told the enqueue
+	// succeeded, no dead row is written, and the notification is simply never
+	// delivered on that channel.
+	//
+	// This comment previously gave the three-segment form as the natural one.
+	// D9 (#95) was written against it, found the collision by reading the
+	// migration rather than trusting this line, and shipped a four-segment key.
+	// The wording is corrected here so the next producer does not have to
+	// rediscover it.
 	IdempotencyKey string
 }
 
